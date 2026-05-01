@@ -40,6 +40,9 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 	if !ok {
 		return RunResult{}, fmt.Errorf("pipeline %q not found", in.Name)
 	}
+	if pb, ok := e.be.(backend.PipelineBackend); ok {
+		return e.runViaPipelineBackend(ctx, pb, in, pl)
+	}
 	runID := in.RunID
 	if runID == "" {
 		runID = newRunID()
@@ -360,4 +363,57 @@ var provisionResultsDir = func(parent, taskName string) (string, error) { return
 // this — the unit test fake backend ignores the empty path.
 func SetResultsDirProvisioner(fn func(parent, taskName string) (string, error)) {
 	provisionResultsDir = fn
+}
+
+func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineBackend, in PipelineInput, pl tektontypes.Pipeline) (RunResult, error) {
+	runID := in.RunID
+	if runID == "" {
+		runID = newRunID()
+	}
+	pipelineRunName := pl.Metadata.Name + "-" + runID[:8]
+
+	params, err := applyDefaults(pl.Spec.Params, in.Params)
+	if err != nil {
+		return RunResult{}, err
+	}
+
+	images := uniqueImages(in.Bundle, pl)
+	if err := pb.Prepare(ctx, backend.RunSpec{RunID: runID, Pipeline: pl.Metadata.Name, Images: images, Workspaces: in.Workspaces}); err != nil {
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Message: err.Error()})
+		return RunResult{Status: "failed"}, err
+	}
+
+	e.rep.Emit(reporter.Event{Kind: reporter.EvtRunStart, Time: time.Now(), RunID: runID, Pipeline: pl.Metadata.Name})
+
+	var paramList []tektontypes.Param
+	for k, v := range params {
+		paramList = append(paramList, tektontypes.Param{Name: k, Value: v})
+	}
+
+	wsMap := map[string]backend.WorkspaceMount{}
+	for k, host := range in.Workspaces {
+		wsMap[k] = backend.WorkspaceMount{HostPath: host}
+	}
+
+	start := time.Now()
+	res, err := pb.RunPipeline(ctx, backend.PipelineRunInvocation{
+		RunID:           runID,
+		PipelineRunName: pipelineRunName,
+		Pipeline:        pl,
+		Tasks:           in.Bundle.Tasks,
+		Params:          paramList,
+		Workspaces:      wsMap,
+		LogSink:         reporter.NewLogSink(e.rep),
+	})
+	dur := time.Since(start)
+	if err != nil {
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Duration: dur, Message: err.Error()})
+		return RunResult{Status: "failed"}, err
+	}
+	e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: res.Status, Duration: dur})
+	out := RunResult{Status: res.Status, Tasks: map[string]TaskOutcome{}}
+	for n, oc := range res.Tasks {
+		out.Tasks[n] = TaskOutcome{Status: oc.Status, Message: oc.Message, Results: oc.Results}
+	}
+	return out, nil
 }
