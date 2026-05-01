@@ -3,7 +3,6 @@
 package reporter
 
 import (
-	"io"
 	"time"
 )
 
@@ -80,5 +79,3 @@ func (t *Tee) Close() error {
 	return first
 }
 
-// helper used by sink ctors
-func writeLine(w io.Writer, s string) { _, _ = io.WriteString(w, s) }

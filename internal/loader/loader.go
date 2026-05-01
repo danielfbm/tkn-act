@@ -77,7 +77,7 @@ func loadOne(out *Bundle, data []byte) error {
 	case "Task":
 		var t tektontypes.Task
 		if err := yaml.Unmarshal(data, &t); err != nil {
-			return fmt.Errorf("Task: %w", err)
+			return fmt.Errorf("task: %w", err)
 		}
 		if _, dup := out.Tasks[t.Metadata.Name]; dup {
 			return fmt.Errorf("duplicate Task %q", t.Metadata.Name)
@@ -86,7 +86,7 @@ func loadOne(out *Bundle, data []byte) error {
 	case "Pipeline":
 		var p tektontypes.Pipeline
 		if err := yaml.Unmarshal(data, &p); err != nil {
-			return fmt.Errorf("Pipeline: %w", err)
+			return fmt.Errorf("pipeline: %w", err)
 		}
 		if _, dup := out.Pipelines[p.Metadata.Name]; dup {
 			return fmt.Errorf("duplicate Pipeline %q", p.Metadata.Name)

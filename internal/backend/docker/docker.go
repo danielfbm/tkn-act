@@ -134,7 +134,7 @@ func (b *Backend) ensureImage(ctx context.Context, img, policy string) error {
 	if err != nil {
 		return fmt.Errorf("pull %s: %w", img, err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	_, _ = io.Copy(io.Discard, rc) // drain to ensure pull completes
 	return nil
 }
@@ -190,12 +190,12 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 	if step.Resources != nil {
 		if step.Resources.Limits.Memory != "" {
 			if v, err := parseMemory(step.Resources.Limits.Memory); err == nil {
-				hostConf.Resources.Memory = v
+				hostConf.Memory = v
 			}
 		}
 		if step.Resources.Limits.CPU != "" {
 			if v, err := parseCPU(step.Resources.Limits.CPU); err == nil {
-				hostConf.Resources.NanoCPUs = v
+				hostConf.NanoCPUs = v
 			}
 		}
 	}
@@ -245,7 +245,7 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 }
 
 func streamLogs(rc io.ReadCloser, sink backend.LogSink, _ tektontypes.TaskSpec, stepName string) {
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	if sink == nil {
 		_, _ = io.Copy(io.Discard, rc)
 		return

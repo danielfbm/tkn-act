@@ -34,7 +34,7 @@ func (p *prettySink) Emit(e Event) {
 	case EvtRunStart:
 		p.startAt = e.Time
 		p.pipeline = e.Pipeline
-		fmt.Fprintf(p.w, "▶ %s\n", or(e.Pipeline, "pipeline"))
+		_, _ = fmt.Fprintf(p.w, "▶ %s\n", or(e.Pipeline, "pipeline"))
 	case EvtTaskStart:
 		// nothing — print on end
 		p.taskBuf[e.Task] = &taskState{}
@@ -46,31 +46,31 @@ func (p *prettySink) Emit(e Event) {
 			}
 		}
 	case EvtTaskSkip:
-		fmt.Fprintf(p.w, "%s %s  skipped (%s)\n", glyph("skipped", p.color), e.Task, e.Message)
+		_, _ = fmt.Fprintf(p.w, "%s %s  skipped (%s)\n", glyph("skipped", p.color), e.Task, e.Message)
 	case EvtTaskEnd:
 		dur := e.Duration.Round(time.Millisecond)
-		fmt.Fprintf(p.w, "%s %s  (%s)", glyph(e.Status, p.color), e.Task, dur)
+		_, _ = fmt.Fprintf(p.w, "%s %s  (%s)", glyph(e.Status, p.color), e.Task, dur)
 		if e.Message != "" {
-			fmt.Fprintf(p.w, "  %s", e.Message)
+			_, _ = fmt.Fprintf(p.w, "  %s", e.Message)
 		}
-		fmt.Fprintln(p.w)
+		_, _ = fmt.Fprintln(p.w)
 		if e.Status == "failed" {
 			if st, ok := p.taskBuf[e.Task]; ok {
 				for _, l := range st.logs {
-					fmt.Fprintf(p.w, "    │ %s\n", l)
+					_, _ = fmt.Fprintf(p.w, "    │ %s\n", l)
 				}
 			}
 		}
 	case EvtRunEnd:
 		dur := e.Duration.Round(time.Millisecond)
-		fmt.Fprintln(p.w, strings.Repeat("─", 40))
-		fmt.Fprintf(p.w, "PipelineRun %s in %s", e.Status, dur)
+		_, _ = fmt.Fprintln(p.w, strings.Repeat("─", 40))
+		_, _ = fmt.Fprintf(p.w, "PipelineRun %s in %s", e.Status, dur)
 		if e.Message != "" {
-			fmt.Fprintf(p.w, "  (%s)", e.Message)
+			_, _ = fmt.Fprintf(p.w, "  (%s)", e.Message)
 		}
-		fmt.Fprintln(p.w)
+		_, _ = fmt.Fprintln(p.w)
 	case EvtError:
-		fmt.Fprintf(p.w, "error: %s\n", e.Message)
+		_, _ = fmt.Fprintf(p.w, "error: %s\n", e.Message)
 	}
 }
 
@@ -105,4 +105,3 @@ func or(a, b string) string {
 	return b
 }
 
-func writeBytes(w io.Writer, p []byte) (int, error) { return w.Write(p) } // placeholder to silence unused imports if vet is picky

@@ -297,7 +297,7 @@ func lookupTaskSpec(b *loader.Bundle, pt tektontypes.PipelineTask) (tektontypes.
 	if pt.TaskRef != nil {
 		t, ok := b.Tasks[pt.TaskRef.Name]
 		if !ok {
-			return tektontypes.TaskSpec{}, fmt.Errorf("Task %q not loaded", pt.TaskRef.Name)
+			return tektontypes.TaskSpec{}, fmt.Errorf("task %q not loaded", pt.TaskRef.Name)
 		}
 		return t.Spec, nil
 	}
