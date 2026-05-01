@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/docker/docker v27.5.1+incompatible
+	golang.org/x/sync v0.20.0
 	sigs.k8s.io/yaml v1.6.0
 )
 
