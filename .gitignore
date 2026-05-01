@@ -13,3 +13,6 @@
 
 # Local cache
 .cache/
+
+# Local Claude Code state
+.claude/
