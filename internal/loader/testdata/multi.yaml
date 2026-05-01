@@ -1,0 +1,19 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: greet
+spec:
+  steps:
+    - name: hi
+      image: alpine:3
+      script: echo hi
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: chain
+spec:
+  tasks:
+    - name: a
+      taskRef:
+        name: greet
