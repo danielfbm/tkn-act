@@ -72,3 +72,23 @@ func TestArrayParamStarExpansion(t *testing.T) {
 		t.Errorf("got %v", args)
 	}
 }
+
+func TestResultsPath(t *testing.T) {
+	got, err := resolver.Substitute("$(results.foo.path)", resolver.Context{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "/tekton/results/foo" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestWorkspacePath(t *testing.T) {
+	got, err := resolver.Substitute("$(workspaces.shared.path)", resolver.Context{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "/workspace/shared" {
+		t.Errorf("got %q", got)
+	}
+}

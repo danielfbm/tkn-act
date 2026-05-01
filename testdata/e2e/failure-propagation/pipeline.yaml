@@ -1,0 +1,22 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: ok}
+spec:
+  steps: [{name: s, image: alpine:3, script: 'true'}]
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: fail}
+spec:
+  steps: [{name: s, image: alpine:3, script: 'exit 1'}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: failprop}
+spec:
+  tasks:
+    - {name: a, taskRef: {name: ok}}
+    - {name: b, taskRef: {name: fail}, runAfter: [a]}
+    - {name: c, taskRef: {name: ok}, runAfter: [b]}
+  finally:
+    - {name: cleanup, taskRef: {name: ok}}

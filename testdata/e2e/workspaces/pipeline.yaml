@@ -1,0 +1,47 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: write}
+spec:
+  workspaces: [{name: data}]
+  steps:
+    - name: w
+      image: alpine:3
+      script: echo first > $(workspaces.data.path)/log
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: append}
+spec:
+  workspaces: [{name: data}]
+  steps:
+    - name: a
+      image: alpine:3
+      script: echo second >> $(workspaces.data.path)/log
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: read}
+spec:
+  workspaces: [{name: data, readOnly: true}]
+  steps:
+    - name: r
+      image: alpine:3
+      script: cat $(workspaces.data.path)/log
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: ws-chain}
+spec:
+  workspaces: [{name: shared}]
+  tasks:
+    - name: w
+      taskRef: {name: write}
+      workspaces: [{name: data, workspace: shared}]
+    - name: a
+      taskRef: {name: append}
+      runAfter: [w]
+      workspaces: [{name: data, workspace: shared}]
+    - name: r
+      taskRef: {name: read}
+      runAfter: [a]
+      workspaces: [{name: data, workspace: shared}]

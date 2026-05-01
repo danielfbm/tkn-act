@@ -1,0 +1,30 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: noop}
+spec:
+  params: [{name: msg, default: ""}]
+  steps:
+    - name: s
+      image: alpine:3
+      script: echo $(params.msg)
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: whens}
+spec:
+  params: [{name: env, type: string}]
+  tasks:
+    - name: prod-only
+      taskRef: {name: noop}
+      params: [{name: msg, value: "running prod"}]
+      when:
+        - input: $(params.env)
+          operator: in
+          values: [prod]
+    - name: always
+      taskRef: {name: noop}
+      params: [{name: msg, value: "always"}]
+  finally:
+    - name: notify
+      taskRef: {name: noop}
+      params: [{name: msg, value: "finally"}]

@@ -1,0 +1,36 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: emit}
+spec:
+  results:
+    - name: version
+  steps:
+    - name: emit
+      image: alpine:3
+      script: printf 1.2.3 > $(results.version.path)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: consume}
+spec:
+  params:
+    - name: v
+      type: string
+  steps:
+    - name: print
+      image: alpine:3
+      script: echo "got $(params.v)"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: chain}
+spec:
+  tasks:
+    - name: emit
+      taskRef: {name: emit}
+    - name: consume
+      taskRef: {name: consume}
+      runAfter: [emit]
+      params:
+        - name: v
+          value: $(tasks.emit.results.version)

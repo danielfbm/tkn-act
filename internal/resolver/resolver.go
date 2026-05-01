@@ -117,6 +117,20 @@ func lookup(key string, ctx Context) (string, error) {
 			return v, nil
 		}
 		return "", fmt.Errorf("unknown context var %q", rest)
+	case strings.HasPrefix(key, "results."):
+		rest := strings.TrimPrefix(key, "results.")
+		if strings.HasSuffix(rest, ".path") {
+			name := strings.TrimSuffix(rest, ".path")
+			return "/tekton/results/" + name, nil
+		}
+		return "", fmt.Errorf("unknown results ref %q", key)
+	case strings.HasPrefix(key, "workspaces."):
+		rest := strings.TrimPrefix(key, "workspaces.")
+		if strings.HasSuffix(rest, ".path") {
+			name := strings.TrimSuffix(rest, ".path")
+			return "/workspace/" + name, nil
+		}
+		return "", fmt.Errorf("unknown workspaces ref %q", key)
 	default:
 		return "", fmt.Errorf("unknown reference $(%s)", key)
 	}
