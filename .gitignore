@@ -1,0 +1,15 @@
+# Binaries
+/tkn-act
+/dist/
+
+# Test outputs
+/coverage.out
+/coverage.html
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Local cache
+.cache/
