@@ -1,0 +1,240 @@
+// Package tektontypes defines minimal Go types matching the tekton.dev/v1 schema
+// for Task, TaskRun, Pipeline, and PipelineRun. JSON tags align with upstream so
+// `kubectl apply -f` and `tkn-act` parse the same YAML identically.
+//
+// Scope is intentionally narrow — only fields that the v1 implementation actually
+// reads. Fields we don't support (sidecars, stepActions, retries, resolvers) are
+// not parsed.
+package tektontypes
+
+import (
+	"encoding/json"
+	"fmt"
+)
+
+// Object is the common envelope shared by Task/Pipeline/TaskRun/PipelineRun.
+type Object struct {
+	APIVersion string   `json:"apiVersion"`
+	Kind       string   `json:"kind"`
+	Metadata   Metadata `json:"metadata"`
+}
+
+type Metadata struct {
+	Name        string            `json:"name"`
+	Namespace   string            `json:"namespace,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+// ---- Task ----
+
+type Task struct {
+	Object `json:",inline"`
+	Spec   TaskSpec `json:"spec"`
+}
+
+type TaskSpec struct {
+	Params      []ParamSpec     `json:"params,omitempty"`
+	Results     []ResultSpec    `json:"results,omitempty"`
+	Workspaces  []WorkspaceDecl `json:"workspaces,omitempty"`
+	Steps       []Step          `json:"steps"`
+	Description string          `json:"description,omitempty"`
+}
+
+type Step struct {
+	Name            string         `json:"name"`
+	Image           string         `json:"image"`
+	Command         []string       `json:"command,omitempty"`
+	Args            []string       `json:"args,omitempty"`
+	Script          string         `json:"script,omitempty"`
+	Env             []EnvVar       `json:"env,omitempty"`
+	WorkingDir      string         `json:"workingDir,omitempty"`
+	Resources       *StepResources `json:"resources,omitempty"`
+	ImagePullPolicy string         `json:"imagePullPolicy,omitempty"` // Always | IfNotPresent | Never
+}
+
+type EnvVar struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type StepResources struct {
+	Limits   ResourceList `json:"limits,omitempty"`
+	Requests ResourceList `json:"requests,omitempty"`
+}
+
+type ResourceList struct {
+	CPU    string `json:"cpu,omitempty"`
+	Memory string `json:"memory,omitempty"`
+}
+
+type ParamSpec struct {
+	Name        string      `json:"name"`
+	Type        ParamType   `json:"type,omitempty"` // default string
+	Description string      `json:"description,omitempty"`
+	Default     *ParamValue `json:"default,omitempty"`
+}
+
+type ResultSpec struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Type        string `json:"type,omitempty"` // string|array|object; default string
+}
+
+type WorkspaceDecl struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	MountPath   string `json:"mountPath,omitempty"`
+	ReadOnly    bool   `json:"readOnly,omitempty"`
+	Optional    bool   `json:"optional,omitempty"`
+}
+
+// ---- Pipeline ----
+
+type Pipeline struct {
+	Object `json:",inline"`
+	Spec   PipelineSpec `json:"spec"`
+}
+
+type PipelineSpec struct {
+	Description string                  `json:"description,omitempty"`
+	Params      []ParamSpec             `json:"params,omitempty"`
+	Workspaces  []PipelineWorkspaceDecl `json:"workspaces,omitempty"`
+	Tasks       []PipelineTask          `json:"tasks"`
+	Finally     []PipelineTask          `json:"finally,omitempty"`
+	Results     []PipelineResultSpec    `json:"results,omitempty"`
+}
+
+type PipelineWorkspaceDecl struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Optional    bool   `json:"optional,omitempty"`
+}
+
+type PipelineResultSpec struct {
+	Name        string     `json:"name"`
+	Description string     `json:"description,omitempty"`
+	Value       ParamValue `json:"value"`
+}
+
+type PipelineTask struct {
+	Name       string             `json:"name"`
+	TaskRef    *TaskRef           `json:"taskRef,omitempty"`
+	TaskSpec   *TaskSpec          `json:"taskSpec,omitempty"` // inline task
+	Params     []Param            `json:"params,omitempty"`
+	Workspaces []WorkspaceBinding `json:"workspaces,omitempty"`
+	RunAfter   []string           `json:"runAfter,omitempty"`
+	When       []WhenExpression   `json:"when,omitempty"`
+}
+
+type TaskRef struct {
+	Name string `json:"name"`
+	Kind string `json:"kind,omitempty"` // Task|ClusterTask; default Task
+}
+
+type WorkspaceBinding struct {
+	Name      string `json:"name"`      // workspace name as declared in the Task
+	Workspace string `json:"workspace"` // pipeline workspace it binds to
+	SubPath   string `json:"subPath,omitempty"`
+}
+
+type WhenExpression struct {
+	Input    string   `json:"input"`
+	Operator string   `json:"operator"` // "in" | "notin"
+	Values   []string `json:"values"`
+}
+
+// ---- PipelineRun & TaskRun (sparse — we synthesize most of these) ----
+
+type PipelineRun struct {
+	Object `json:",inline"`
+	Spec   PipelineRunSpec `json:"spec"`
+}
+
+type PipelineRunSpec struct {
+	PipelineRef  *PipelineRef           `json:"pipelineRef,omitempty"`
+	PipelineSpec *PipelineSpec          `json:"pipelineSpec,omitempty"`
+	Params       []Param                `json:"params,omitempty"`
+	Workspaces   []PipelineRunWSBinding `json:"workspaces,omitempty"`
+}
+
+type PipelineRef struct {
+	Name string `json:"name"`
+}
+
+type PipelineRunWSBinding struct {
+	Name     string    `json:"name"`
+	EmptyDir *struct{} `json:"emptyDir,omitempty"`
+	HostPath string    `json:"-"` // tkn-act extension; populated from CLI -w flag
+}
+
+type TaskRun struct {
+	Object `json:",inline"`
+	Spec   TaskRunSpec `json:"spec"`
+}
+
+type TaskRunSpec struct {
+	TaskRef    *TaskRef           `json:"taskRef,omitempty"`
+	TaskSpec   *TaskSpec          `json:"taskSpec,omitempty"`
+	Params     []Param            `json:"params,omitempty"`
+	Workspaces []WorkspaceBinding `json:"workspaces,omitempty"`
+}
+
+// ---- Param value (scalar | array | object) ----
+
+type Param struct {
+	Name  string     `json:"name"`
+	Value ParamValue `json:"value"`
+}
+
+type ParamType string
+
+const (
+	ParamTypeString ParamType = "string"
+	ParamTypeArray  ParamType = "array"
+	ParamTypeObject ParamType = "object"
+)
+
+// ParamValue can be a string, []string, or map[string]string. Custom JSON
+// unmarshaler picks the right shape from the input.
+type ParamValue struct {
+	Type      ParamType
+	StringVal string
+	ArrayVal  []string
+	ObjectVal map[string]string
+}
+
+func (v *ParamValue) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		return nil
+	}
+	switch data[0] {
+	case '"':
+		v.Type = ParamTypeString
+		return json.Unmarshal(data, &v.StringVal)
+	case '[':
+		v.Type = ParamTypeArray
+		return json.Unmarshal(data, &v.ArrayVal)
+	case '{':
+		v.Type = ParamTypeObject
+		return json.Unmarshal(data, &v.ObjectVal)
+	default:
+		// numbers / bools / etc. — coerce to string per Tekton convention
+		v.Type = ParamTypeString
+		v.StringVal = string(data)
+		return nil
+	}
+}
+
+func (v ParamValue) MarshalJSON() ([]byte, error) {
+	switch v.Type {
+	case ParamTypeArray:
+		return json.Marshal(v.ArrayVal)
+	case ParamTypeObject:
+		return json.Marshal(v.ObjectVal)
+	case ParamTypeString, "":
+		return json.Marshal(v.StringVal)
+	default:
+		return nil, fmt.Errorf("unknown param type %q", v.Type)
+	}
+}
