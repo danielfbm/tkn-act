@@ -9,7 +9,10 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/danielfbm/tkn-act/internal/backend"
+	clusterbe "github.com/danielfbm/tkn-act/internal/backend/cluster"
 	"github.com/danielfbm/tkn-act/internal/backend/docker"
+	"github.com/danielfbm/tkn-act/internal/cluster/k3d"
 	"github.com/danielfbm/tkn-act/internal/discovery"
 	"github.com/danielfbm/tkn-act/internal/engine"
 	"github.com/danielfbm/tkn-act/internal/loader"
@@ -147,12 +150,21 @@ func runWith(rf runFlags) error {
 	}
 
 	// Build backend.
+	var be backend.Backend
 	if gf.cluster {
-		return fmt.Errorf("--cluster (k3d) backend is not yet implemented in v1; coming in v1.x")
-	}
-	be, err := docker.New(docker.Options{})
-	if err != nil {
-		return fmt.Errorf("docker backend: %w", err)
+		be = clusterbe.New(clusterbe.Options{
+			CacheDir: cacheRoot,
+			Driver: k3d.New(k3d.Options{
+				ClusterName:    "tkn-act",
+				KubeconfigPath: filepath.Join(cacheRoot, "cluster", "kubeconfig"),
+			}),
+		})
+	} else {
+		dockerBe, err := docker.New(docker.Options{})
+		if err != nil {
+			return fmt.Errorf("docker backend: %w", err)
+		}
+		be = dockerBe
 	}
 
 	// Cancel on signals.
