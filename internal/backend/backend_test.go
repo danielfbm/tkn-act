@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dfbmorinigo/tkn-act/internal/backend"
+	"github.com/danielfbm/tkn-act/internal/backend"
 )
 
 type fake struct {

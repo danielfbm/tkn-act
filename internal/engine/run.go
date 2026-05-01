@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/dfbmorinigo/tkn-act/internal/loader"
-	"github.com/dfbmorinigo/tkn-act/internal/tektontypes"
+	"github.com/danielfbm/tkn-act/internal/loader"
+	"github.com/danielfbm/tkn-act/internal/tektontypes"
 )
 
 // PipelineInput names what to run and how.

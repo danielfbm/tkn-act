@@ -8,7 +8,7 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/dfbmorinigo/tkn-act/internal/tektontypes"
+	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	"sigs.k8s.io/yaml"
 )
 

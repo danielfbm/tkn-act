@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/dfbmorinigo/tkn-act/internal/discovery"
-	"github.com/dfbmorinigo/tkn-act/internal/loader"
+	"github.com/danielfbm/tkn-act/internal/discovery"
+	"github.com/danielfbm/tkn-act/internal/loader"
 	"github.com/spf13/cobra"
 )
 

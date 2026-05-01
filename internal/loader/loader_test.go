@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dfbmorinigo/tkn-act/internal/loader"
+	"github.com/danielfbm/tkn-act/internal/loader"
 )
 
 func TestLoadFiles(t *testing.T) {

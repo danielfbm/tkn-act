@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dfbmorinigo/tkn-act/internal/reporter"
+	"github.com/danielfbm/tkn-act/internal/reporter"
 )
 
 func TestJSONSinkEmitsOnePerLine(t *testing.T) {

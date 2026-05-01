@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/dfbmorinigo/tkn-act/internal/engine/dag"
+	"github.com/danielfbm/tkn-act/internal/engine/dag"
 )
 
 func TestLevelsLinear(t *testing.T) {

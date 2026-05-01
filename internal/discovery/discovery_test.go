@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dfbmorinigo/tkn-act/internal/discovery"
+	"github.com/danielfbm/tkn-act/internal/discovery"
 )
 
 func TestFindsPipelineYAMLAtRoot(t *testing.T) {

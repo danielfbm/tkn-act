@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dfbmorinigo/tkn-act/internal/loader"
-	"github.com/dfbmorinigo/tkn-act/internal/validator"
+	"github.com/danielfbm/tkn-act/internal/loader"
+	"github.com/danielfbm/tkn-act/internal/validator"
 )
 
 func TestRejectsUnknownTaskRef(t *testing.T) {

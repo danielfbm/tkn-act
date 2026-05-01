@@ -1,4 +1,4 @@
-module github.com/dfbmorinigo/tkn-act
+module github.com/danielfbm/tkn-act
 
 go 1.25.0
 

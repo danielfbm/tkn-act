@@ -9,12 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dfbmorinigo/tkn-act/internal/backend"
-	"github.com/dfbmorinigo/tkn-act/internal/engine/dag"
-	"github.com/dfbmorinigo/tkn-act/internal/loader"
-	"github.com/dfbmorinigo/tkn-act/internal/reporter"
-	"github.com/dfbmorinigo/tkn-act/internal/resolver"
-	"github.com/dfbmorinigo/tkn-act/internal/tektontypes"
+	"github.com/danielfbm/tkn-act/internal/backend"
+	"github.com/danielfbm/tkn-act/internal/engine/dag"
+	"github.com/danielfbm/tkn-act/internal/loader"
+	"github.com/danielfbm/tkn-act/internal/reporter"
+	"github.com/danielfbm/tkn-act/internal/resolver"
+	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	"golang.org/x/sync/errgroup"
 )
 

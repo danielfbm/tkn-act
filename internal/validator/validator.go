@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dfbmorinigo/tkn-act/internal/engine/dag"
-	"github.com/dfbmorinigo/tkn-act/internal/loader"
-	"github.com/dfbmorinigo/tkn-act/internal/tektontypes"
+	"github.com/danielfbm/tkn-act/internal/engine/dag"
+	"github.com/danielfbm/tkn-act/internal/loader"
+	"github.com/danielfbm/tkn-act/internal/tektontypes"
 )
 
 // Validate checks the named pipeline against the bundle. providedParams names

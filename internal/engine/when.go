@@ -3,8 +3,8 @@ package engine
 import (
 	"strings"
 
-	"github.com/dfbmorinigo/tkn-act/internal/resolver"
-	"github.com/dfbmorinigo/tkn-act/internal/tektontypes"
+	"github.com/danielfbm/tkn-act/internal/resolver"
+	"github.com/danielfbm/tkn-act/internal/tektontypes"
 )
 
 // evaluateWhen returns true if all when expressions are satisfied. An empty

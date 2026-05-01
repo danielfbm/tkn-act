@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dfbmorinigo/tkn-act/internal/backend"
-	"github.com/dfbmorinigo/tkn-act/internal/tektontypes"
+	"github.com/danielfbm/tkn-act/internal/backend"
+	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"

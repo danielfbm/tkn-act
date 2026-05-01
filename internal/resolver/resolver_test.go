@@ -3,7 +3,7 @@ package resolver_test
 import (
 	"testing"
 
-	"github.com/dfbmorinigo/tkn-act/internal/resolver"
+	"github.com/danielfbm/tkn-act/internal/resolver"
 )
 
 func TestSubstituteParam(t *testing.T) {

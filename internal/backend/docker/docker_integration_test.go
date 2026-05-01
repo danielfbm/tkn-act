@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dfbmorinigo/tkn-act/internal/backend"
-	"github.com/dfbmorinigo/tkn-act/internal/backend/docker"
-	"github.com/dfbmorinigo/tkn-act/internal/tektontypes"
+	"github.com/danielfbm/tkn-act/internal/backend"
+	"github.com/danielfbm/tkn-act/internal/backend/docker"
+	"github.com/danielfbm/tkn-act/internal/tektontypes"
 )
 
 type captureLogs struct{ lines []string }

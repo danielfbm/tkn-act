@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dfbmorinigo/tkn-act/internal/workspace"
+	"github.com/danielfbm/tkn-act/internal/workspace"
 )
 
 func TestProvisionAllocatesTmpdir(t *testing.T) {
