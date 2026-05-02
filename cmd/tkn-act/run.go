@@ -15,6 +15,7 @@ import (
 	"github.com/danielfbm/tkn-act/internal/cluster/k3d"
 	"github.com/danielfbm/tkn-act/internal/discovery"
 	"github.com/danielfbm/tkn-act/internal/engine"
+	"github.com/danielfbm/tkn-act/internal/exitcode"
 	"github.com/danielfbm/tkn-act/internal/loader"
 	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
@@ -36,6 +37,21 @@ func newRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run a pipeline on the local backend",
+		Long: `Run a Tekton Pipeline on the local Docker (or k3d) backend.
+
+If -f is not given, tkn-act discovers Tekton YAML in the current directory
+(pipeline.yaml or .tekton/). If multiple Pipelines are loaded, -p is required.`,
+		Example: `  # Auto-discover and run the only pipeline in the current dir
+  tkn-act run
+
+  # Run a specific file with a parameter and a workspace
+  tkn-act run -f pipeline.yaml -p revision=main -w shared=./build
+
+  # Emit machine-readable JSON events to stdout (for AI agents / scripts)
+  tkn-act run -f pipeline.yaml -o json
+
+  # Run on the ephemeral k3d cluster instead of plain Docker
+  tkn-act run --cluster -f pipeline.yaml`,
 		RunE: func(c *cobra.Command, args []string) error {
 			return runWith(rf)
 		},
@@ -62,14 +78,14 @@ func runWith(rf runFlags) error {
 	if len(files) == 0 {
 		disc, err := discovery.Find(dir)
 		if err != nil {
-			return err
+			return exitcode.Wrap(exitcode.Usage, err)
 		}
 		files = disc
 	}
 
 	b, err := loader.LoadFiles(files)
 	if err != nil {
-		return err
+		return exitcode.Wrap(exitcode.Validate, err)
 	}
 
 	// Pick pipeline.
@@ -77,7 +93,7 @@ func runWith(rf runFlags) error {
 	if pipe == "" {
 		switch len(b.Pipelines) {
 		case 0:
-			return fmt.Errorf("no Pipeline found in loaded files")
+			return exitcode.Wrap(exitcode.Usage, fmt.Errorf("no Pipeline found in loaded files"))
 		case 1:
 			for n := range b.Pipelines {
 				pipe = n
@@ -87,7 +103,7 @@ func runWith(rf runFlags) error {
 			for n := range b.Pipelines {
 				names = append(names, n)
 			}
-			return fmt.Errorf("multiple pipelines loaded (%v); specify -p", names)
+			return exitcode.Wrap(exitcode.Usage, fmt.Errorf("multiple pipelines loaded (%v); specify -p", names))
 		}
 	}
 
@@ -96,7 +112,7 @@ func runWith(rf runFlags) error {
 		for _, e := range errs {
 			fmt.Fprintln(os.Stderr, "error:", e)
 		}
-		return fmt.Errorf("%d validation error(s)", len(errs))
+		return exitcode.Wrap(exitcode.Validate, fmt.Errorf("%d validation error(s)", len(errs)))
 	}
 
 	// Parse params.
@@ -104,7 +120,7 @@ func runWith(rf runFlags) error {
 	for _, kv := range rf.params {
 		k, v, ok := strings.Cut(kv, "=")
 		if !ok {
-			return fmt.Errorf("--param expects key=value, got %q", kv)
+			return exitcode.Wrap(exitcode.Usage, fmt.Errorf("--param expects key=value, got %q", kv))
 		}
 		paramsMap[k] = tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: v}
 	}
@@ -123,14 +139,14 @@ func runWith(rf runFlags) error {
 	for _, kv := range rf.workspaces {
 		k, v, ok := strings.Cut(kv, "=")
 		if !ok {
-			return fmt.Errorf("--workspace expects name=hostpath, got %q", kv)
+			return exitcode.Wrap(exitcode.Usage, fmt.Errorf("--workspace expects name=hostpath, got %q", kv))
 		}
 		userPaths[k] = v
 	}
 	for _, w := range b.Pipelines[pipe].Spec.Workspaces {
 		host, err := mgr.Provision(w.Name, userPaths[w.Name])
 		if err != nil {
-			return err
+			return exitcode.Wrap(exitcode.Env, err)
 		}
 		wsHost[w.Name] = host
 	}
@@ -162,7 +178,7 @@ func runWith(rf runFlags) error {
 	} else {
 		dockerBe, err := docker.New(docker.Options{})
 		if err != nil {
-			return fmt.Errorf("docker backend: %w", err)
+			return exitcode.Wrap(exitcode.Env, fmt.Errorf("docker backend: %w", err))
 		}
 		be = dockerBe
 	}
@@ -178,14 +194,17 @@ func runWith(rf runFlags) error {
 		Workspaces: wsHost,
 	})
 	if err != nil {
-		return err
+		if ctx.Err() != nil {
+			return exitcode.Wrap(exitcode.Cancelled, err)
+		}
+		return exitcode.Wrap(exitcode.Pipeline, err)
 	}
 
 	if !gf.cleanup {
 		fmt.Fprintf(os.Stderr, "workspace tmpdirs preserved at: %s\n", filepath.Join(cacheRoot, "run"))
 	}
 	if res.Status != "succeeded" {
-		os.Exit(1)
+		return exitcode.Wrap(exitcode.Pipeline, fmt.Errorf("pipeline %q %s", pipe, res.Status))
 	}
 	return nil
 }

@@ -16,8 +16,26 @@ var gf globalFlags
 func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tkn-act",
-		Short: "Run Tekton Pipelines locally on Docker",
-		Long:  "tkn-act runs Tekton Tasks and Pipelines locally without a Kubernetes cluster.",
+		Short: "Run Tekton Pipelines locally on Docker (Tekton's `act`)",
+		Long: `tkn-act runs Tekton Tasks and Pipelines locally without a Kubernetes cluster.
+
+Designed for both humans and AI agents:
+  - Every command supports --output json with stable shapes.
+  - Every error returns a documented, stable exit code (see 'tkn-act agent-guide').
+  - 'tkn-act help-json' emits the full command+flag tree as JSON.
+  - 'tkn-act doctor' verifies the local environment.
+  - 'tkn-act agent-guide' prints the embedded AI-agent guide (AGENTS.md).`,
+		Example: `  # Auto-discover and run a pipeline
+  tkn-act
+
+  # Run a specific file with JSON event output
+  tkn-act run -f pipeline.yaml -o json
+
+  # Verify the environment
+  tkn-act doctor -o json
+
+  # Introspect the CLI surface programmatically
+  tkn-act help-json`,
 		// default behavior: same as `run` with no args
 		RunE: func(c *cobra.Command, args []string) error {
 			return runDefault(c, args)
@@ -37,5 +55,8 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newValidateCmd())
 	cmd.AddCommand(newVersionCmd())
 	cmd.AddCommand(newClusterCmd())
+	cmd.AddCommand(newDoctorCmd())
+	cmd.AddCommand(newHelpJSONCmd())
+	cmd.AddCommand(newAgentGuideCmd())
 	return cmd
 }
