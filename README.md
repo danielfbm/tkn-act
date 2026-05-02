@@ -51,6 +51,18 @@ For Tekton-fidelity runs (real controller, real entrypoint shim):
 
 Requires `k3d` and `kubectl` on PATH.
 
+## For AI agents
+
+`tkn-act` has first-class support for AI agents and scripts:
+
+- [`AGENTS.md`](AGENTS.md) — canonical guide (also embedded; print with
+  `tkn-act agent-guide`).
+- `tkn-act doctor -o json` — preflight: Docker, k3d, kubectl, cache dir.
+- `tkn-act help-json` — full command/flag/example tree as JSON.
+- Every command supports `--output json` with a stable shape.
+- Stable, documented exit codes (0 ok, 2 usage, 3 env, 4 validate, 5 pipeline,
+  130 cancelled).
+
 ## License
 
 Apache 2.0
