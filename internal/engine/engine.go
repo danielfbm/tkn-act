@@ -253,6 +253,7 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 	res, err := e.be.RunTask(ctx, backend.TaskInvocation{
 		RunID:       runID,
 		PipelineRun: pipelineRunName,
+		TaskName:    pt.Name,
 		TaskRunName: taskRunName,
 		Task:        resolved,
 		Params:      taskParams,

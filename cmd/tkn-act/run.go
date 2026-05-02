@@ -157,12 +157,9 @@ func runWith(rf runFlags) error {
 	})
 
 	// Build reporter.
-	var rep reporter.Reporter
-	switch gf.output {
-	case "json":
-		rep = reporter.NewJSON(os.Stdout)
-	default:
-		rep = reporter.NewPretty(os.Stdout, !gf.noColor && isTerminal(os.Stdout))
+	rep, err := buildReporter(os.Stdout)
+	if err != nil {
+		return exitcode.Wrap(exitcode.Usage, err)
 	}
 
 	// Build backend.
@@ -225,4 +222,35 @@ func isTerminal(f *os.File) bool {
 		return false
 	}
 	return (st.Mode() & os.ModeCharDevice) != 0
+}
+
+// buildReporter constructs the reporter for the current global flags. Output
+// "json" always returns a JSON reporter (no color, no verbosity — its shape is
+// the agent contract). Otherwise we resolve color and verbosity from the
+// flags and the environment.
+func buildReporter(out *os.File) (reporter.Reporter, error) {
+	if gf.output == "json" {
+		return reporter.NewJSON(out), nil
+	}
+	if gf.quiet && gf.verbose {
+		return nil, fmt.Errorf("--quiet and --verbose are mutually exclusive")
+	}
+	mode, err := reporter.ParseColorMode(gf.color)
+	if err != nil {
+		return nil, err
+	}
+	if gf.noColor {
+		// --no-color is a hard override (for backwards compatibility).
+		mode = reporter.ColorNever
+	}
+	color := reporter.ResolveColor(mode, isTerminal(out), os.LookupEnv)
+
+	verb := reporter.Normal
+	switch {
+	case gf.quiet:
+		verb = reporter.Quiet
+	case gf.verbose:
+		verb = reporter.Verbose
+	}
+	return reporter.NewPretty(out, reporter.PrettyOptions{Color: color, Verbosity: verb}), nil
 }

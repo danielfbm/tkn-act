@@ -68,6 +68,7 @@ func runFixture(t *testing.T, fixture, pipelineName string, params map[string]st
 }
 
 func TestE2EHello(t *testing.T)              { runFixture(t, "hello", "hello", nil, "succeeded") }
+func TestE2EMultilog(t *testing.T)            { runFixture(t, "multilog", "multilog", nil, "succeeded") }
 func TestE2EParamsAndResults(t *testing.T)   { runFixture(t, "params-and-results", "chain", nil, "succeeded") }
 func TestE2EWorkspaces(t *testing.T)         { runFixture(t, "workspaces", "ws-chain", nil, "succeeded") }
 func TestE2EWhenSkipsDev(t *testing.T)       { runFixture(t, "when-and-finally", "whens", map[string]string{"env": "dev"}, "succeeded") }

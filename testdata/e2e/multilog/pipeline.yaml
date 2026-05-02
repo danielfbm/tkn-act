@@ -1,0 +1,36 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: chatter
+spec:
+  params:
+    - name: tag
+      type: string
+  steps:
+    - name: hello
+      image: alpine:3
+      script: |
+        echo "$(params.tag) hello-1"
+        echo "$(params.tag) hello-2"
+    - name: world
+      image: alpine:3
+      script: |
+        echo "$(params.tag) world-1" >&2
+        echo "$(params.tag) world-2"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: multilog
+spec:
+  tasks:
+    # Two parallel tasks (no runAfter) so the pretty reporter has to interleave
+    # their step logs in arrival order.
+    - name: alpha
+      taskRef: { name: chatter }
+      params:
+        - { name: tag, value: alpha }
+    - name: beta
+      taskRef: { name: chatter }
+      params:
+        - { name: tag, value: beta }
