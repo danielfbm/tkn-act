@@ -20,7 +20,15 @@ import (
 
 type Options struct {
 	MaxParallel int
+	// VolumeResolver materialises a Task's volumes onto host paths just
+	// before the task runs. The CLI sets this; tests may leave it nil
+	// (volumes are then unsupported in that test).
+	VolumeResolver VolumeResolver
 }
+
+// VolumeResolver is the engine's hook for the volumes package. Returns
+// map[volumeName] -> hostPath.
+type VolumeResolver func(taskName string, vs []tektontypes.Volume) (map[string]string, error)
 
 type Engine struct {
 	be   backend.Backend
@@ -267,6 +275,19 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		return TaskOutcome{Status: "failed", Message: err.Error()}
 	}
 
+	// Materialise Task volumes (emptyDir / hostPath / configMap / secret).
+	var volumeHosts map[string]string
+	if len(resolved.Volumes) > 0 {
+		if e.opts.VolumeResolver == nil {
+			return TaskOutcome{Status: "infrafailed", Message: "volumes declared but no VolumeResolver configured"}
+		}
+		var verr error
+		volumeHosts, verr = e.opts.VolumeResolver(pt.Name, resolved.Volumes)
+		if verr != nil {
+			return TaskOutcome{Status: "infrafailed", Message: verr.Error()}
+		}
+	}
+
 	taskRunName := pipelineRunName + "-" + pt.Name
 	start := time.Now()
 	res, err := e.be.RunTask(ctx, backend.TaskInvocation{
@@ -279,6 +300,7 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		Workspaces:  wsMap,
 		ContextVars: taskCtx.ContextVars,
 		ResultsHost: resultsDir,
+		VolumeHosts: volumeHosts,
 		LogSink:     reporter.NewLogSink(e.rep),
 	})
 	dur := time.Since(start)

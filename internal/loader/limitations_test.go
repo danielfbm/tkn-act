@@ -20,7 +20,6 @@ func TestLimitationsFixturesParse(t *testing.T) {
 	}{
 		{"step-state", "leaky"},
 		{"sidecars", "with-redis"},
-		{"step-volumes", "configmap-eater"},
 	}
 	for _, d := range dirs {
 		t.Run(d.name, func(t *testing.T) {

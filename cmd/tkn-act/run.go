@@ -20,6 +20,7 @@ import (
 	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	"github.com/danielfbm/tkn-act/internal/validator"
+	"github.com/danielfbm/tkn-act/internal/volumes"
 	"github.com/danielfbm/tkn-act/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -156,6 +157,19 @@ func runWith(rf runFlags) error {
 		return mgr.ProvisionResultsDir(taskName)
 	})
 
+	// ConfigMap / Secret stores for volumes.
+	cmStore, secStore, err := buildVolumeStores(cacheRoot)
+	if err != nil {
+		return exitcode.Wrap(exitcode.Usage, err)
+	}
+	volResolver := func(taskName string, vs []tektontypes.Volume) (map[string]string, error) {
+		volBase, perr := mgr.ProvisionVolumesDir(taskName)
+		if perr != nil {
+			return nil, perr
+		}
+		return volumes.MaterializeForTask(taskName, vs, volBase, cmStore, secStore)
+	}
+
 	// Build reporter.
 	rep, err := buildReporter(os.Stdout)
 	if err != nil {
@@ -184,7 +198,7 @@ func runWith(rf runFlags) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	res, err := engine.New(be, rep, engine.Options{MaxParallel: gf.maxParallel}).RunPipeline(ctx, engine.PipelineInput{
+	res, err := engine.New(be, rep, engine.Options{MaxParallel: gf.maxParallel, VolumeResolver: volResolver}).RunPipeline(ctx, engine.PipelineInput{
 		Bundle:     b,
 		Name:       pipe,
 		Params:     paramsMap,
@@ -257,4 +271,47 @@ func buildReporter(out *os.File) (reporter.Reporter, error) {
 		verb = reporter.Verbose
 	}
 	return reporter.NewPretty(out, reporter.PrettyOptions{Color: color, Verbosity: verb}), nil
+}
+
+// buildVolumeStores assembles the configMap / secret stores from the global
+// flags. --configmap-dir / --secret-dir default to subdirs of the cache.
+// --configmap / --secret entries (repeatable) override on a per-key basis.
+func buildVolumeStores(cacheRoot string) (cm *volumes.Store, sec *volumes.Store, err error) {
+	cmDir := gf.configMapDir
+	if cmDir == "" {
+		cmDir = filepath.Join(cacheRoot, "configmaps")
+	}
+	secDir := gf.secretDir
+	if secDir == "" {
+		secDir = filepath.Join(cacheRoot, "secrets")
+	}
+	cm = volumes.NewStore(cmDir)
+	sec = volumes.NewStore(secDir)
+	if err := parseInlineFlags(cm, gf.configMaps, "configmap"); err != nil {
+		return nil, nil, err
+	}
+	if err := parseInlineFlags(sec, gf.secrets, "secret"); err != nil {
+		return nil, nil, err
+	}
+	return cm, sec, nil
+}
+
+// parseInlineFlags accepts entries shaped <name>=<k1>=<v1>[,<k2>=<v2>...] and
+// records them on the store. Whitespace around the inner key/value pairs is
+// trimmed; values are taken verbatim.
+func parseInlineFlags(s *volumes.Store, entries []string, kind string) error {
+	for _, entry := range entries {
+		name, kvs, ok := strings.Cut(entry, "=")
+		if !ok || name == "" {
+			return fmt.Errorf("--%s expects <name>=<k>=<v>[,...], got %q", kind, entry)
+		}
+		for _, kv := range strings.Split(kvs, ",") {
+			k, v, ok := strings.Cut(kv, "=")
+			if !ok {
+				return fmt.Errorf("--%s %q: each entry must be key=value, got %q", kind, name, kv)
+			}
+			s.Add(name, strings.TrimSpace(k), v)
+		}
+	}
+	return nil
 }

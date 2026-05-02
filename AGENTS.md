@@ -161,6 +161,11 @@ esac
   https://no-color.org). Equivalent to `--color=never`.
 - `FORCE_COLOR` / `CLICOLOR_FORCE` — any non-empty value forces color in
   pretty output even when stdout is not a TTY. `--color=always` does the same.
+- `--configmap-dir <path>` / `--secret-dir <path>` — directory layout
+  `<path>/<name>/<key>` per source for configMap and secret volumes.
+  Defaults: `$XDG_CACHE_HOME/tkn-act/{configmaps,secrets}/`. Inline form:
+  `--configmap <name>=<k1>=<v1>[,<k2>=<v2>...]` (repeatable; same shape
+  for `--secret`). Inline overrides win over the on-disk dir per key.
 
 `tkn-act` never reads or modifies your shell's `~/.kube/config`.
 

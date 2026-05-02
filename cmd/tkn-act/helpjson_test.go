@@ -21,7 +21,11 @@ func TestHelpJSONShape(t *testing.T) {
 	for _, f := range out.GlobalFlags {
 		got[f.Name] = true
 	}
-	for _, want := range []string{"output", "debug", "cleanup", "max-parallel", "cluster", "no-color", "color", "quiet", "verbose"} {
+	for _, want := range []string{
+		"output", "debug", "cleanup", "max-parallel", "cluster",
+		"no-color", "color", "quiet", "verbose",
+		"configmap-dir", "secret-dir", "configmap", "secret",
+	} {
 		if !got[want] {
 			t.Errorf("missing global flag %q", want)
 		}

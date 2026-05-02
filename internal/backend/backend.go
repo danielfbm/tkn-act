@@ -43,6 +43,10 @@ type TaskInvocation struct {
 	ContextVars map[string]string                 // $(context.taskRun.name) etc.
 	LogSink     LogSink                           // engine-supplied sink
 	ResultsHost string                            // host dir bind-mounted as /tekton/results
+	// VolumeHosts maps each Task-level Volume name to its materialised host
+	// path (emptyDir tmpdir, hostPath, or a configMap/secret projection).
+	// Step.VolumeMounts entries reference these names.
+	VolumeHosts map[string]string
 }
 
 type WorkspaceMount struct {

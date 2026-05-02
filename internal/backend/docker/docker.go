@@ -280,6 +280,25 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 		}
 	}
 
+	// Step volumeMounts. Each one references a Task-level volume that the
+	// engine has already materialised onto a host path.
+	for _, vm := range step.VolumeMounts {
+		hostPath, ok := inv.VolumeHosts[vm.Name]
+		if !ok {
+			return 0, fmt.Errorf("step %q volumeMount %q: no host path for volume", step.Name, vm.Name)
+		}
+		src := hostPath
+		if vm.SubPath != "" {
+			src = filepath.Join(hostPath, vm.SubPath)
+		}
+		extraMounts = append(extraMounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   src,
+			Target:   vm.MountPath,
+			ReadOnly: vm.ReadOnly,
+		})
+	}
+
 	env := make([]string, 0, len(step.Env))
 	for _, e := range step.Env {
 		env = append(env, e.Name+"="+e.Value)

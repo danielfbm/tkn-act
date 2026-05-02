@@ -53,6 +53,17 @@ func (m *Manager) ProvisionResultsDir(taskName string) (string, error) {
 	return dir, nil
 }
 
+// ProvisionVolumesDir creates a fresh per-task scratch dir for materialised
+// emptyDir/configMap/secret volumes. Subdirs are added by the volumes package.
+func (m *Manager) ProvisionVolumesDir(taskName string) (string, error) {
+	dir := filepath.Join(m.root, m.runID, "volumes", taskName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir volumes %q: %w", taskName, err)
+	}
+	m.resultsDirs = append(m.resultsDirs, dir)
+	return dir, nil
+}
+
 // Cleanup removes only directories Provision/ProvisionResultsDir allocated.
 // User-supplied paths are never touched.
 func (m *Manager) Cleanup() error {

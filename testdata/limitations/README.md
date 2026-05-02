@@ -13,7 +13,6 @@ features below.
 |--------------------------|-----------------------------------------------|----------------------------------------------------------------------------|
 | `step-state/`            | (none — illustrates step-isolation foot-gun)  | Each step is a fresh container; cwd / env / `/tmp` from prior steps gone.   |
 | `sidecars/`              | `Task.sidecars`                               | Field dropped at parse time; no shared network namespace.                   |
-| `step-volumes/`          | `Task.volumes` + `Step.volumeMounts`          | (To be addressed in phase 3 of the v1.2 fidelity work.)                     |
 
 This list is short by design — features documented here either are
 **fundamentally Kubernetes-shaped** (sidecars need a shared network
