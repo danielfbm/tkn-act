@@ -77,3 +77,4 @@ func TestE2EFailurePropagation(t *testing.T) { runFixture(t, "failure-propagatio
 func TestE2EOnErrorContinue(t *testing.T)    { runFixture(t, "onerror", "best-effort", nil, "succeeded") }
 func TestE2ERetries(t *testing.T)            { runFixture(t, "retries", "retries", nil, "succeeded") }
 func TestE2ETimeout(t *testing.T)            { runFixture(t, "timeout", "hangs", nil, "timeout") }
+func TestE2EStepResults(t *testing.T)        { runFixture(t, "step-results", "stepres", nil, "succeeded") }

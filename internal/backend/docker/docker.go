@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/danielfbm/tkn-act/internal/backend"
+	"github.com/danielfbm/tkn-act/internal/resolver"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -68,7 +69,22 @@ func (b *Backend) Cleanup(ctx context.Context) error {
 func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (backend.TaskResult, error) {
 	res := backend.TaskResult{Started: time.Now(), Status: backend.TaskSucceeded, Results: map[string]string{}}
 
-	for _, step := range inv.Task.Steps {
+	// stepResults accumulates as each step finishes. Earlier steps are
+	// substituted into later steps' refs ($(steps.<step>.results.<name>)).
+	stepResults := map[string]map[string]string{}
+
+	for _, rawStep := range inv.Task.Steps {
+		// Per-step substitution pass: resolves the placeholders the engine's
+		// task-level pass intentionally left intact. The Context is minimal
+		// — only step refs need resolving here.
+		step, err := substituteStepRefs(rawStep, stepResults)
+		if err != nil {
+			res.Status = backend.TaskInfraFailed
+			res.Err = fmt.Errorf("step %q: %w", rawStep.Name, err)
+			res.Ended = time.Now()
+			return res, nil
+		}
+
 		stepRes := backend.StepResult{Name: step.Name, Started: time.Now()}
 
 		policy := step.ImagePullPolicy
@@ -83,6 +99,16 @@ func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (back
 			return res, nil
 		}
 
+		// Ensure this step's per-step results dir exists on the host before
+		// the container starts; later steps see it read-only.
+		stepResultsHost := filepath.Join(inv.ResultsHost, "steps", step.Name)
+		if err := os.MkdirAll(stepResultsHost, 0o755); err != nil {
+			res.Status = backend.TaskInfraFailed
+			res.Err = fmt.Errorf("step %q: mkdir step results: %w", step.Name, err)
+			res.Ended = time.Now()
+			return res, nil
+		}
+
 		exitCode, err := b.runStep(ctx, inv, step)
 		stepRes.ExitCode = exitCode
 		stepRes.Ended = time.Now()
@@ -94,11 +120,23 @@ func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (back
 			res.Ended = time.Now()
 			return res, nil
 		}
+
+		// Read this step's declared per-step results so later steps in the
+		// same Task can substitute them.
+		if len(step.Results) > 0 {
+			rs := map[string]string{}
+			for _, decl := range step.Results {
+				p := filepath.Join(stepResultsHost, decl.Name)
+				if data, err := os.ReadFile(p); err == nil {
+					rs[decl.Name] = strings.TrimRight(string(data), "\n")
+				}
+			}
+			stepResults[step.Name] = rs
+		}
+
 		if exitCode != 0 {
 			stepRes.Status = backend.StepFailed
 			res.Steps = append(res.Steps, stepRes)
-			// onError: continue -> step recorded as failed, but Task continues.
-			// Default ("" or "stopAndFail") short-circuits the Task.
 			if step.OnError == "continue" {
 				continue
 			}
@@ -110,7 +148,7 @@ func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (back
 		res.Steps = append(res.Steps, stepRes)
 	}
 
-	// Read result files.
+	// Read Task-level result files (existing behavior).
 	for _, decl := range inv.Task.Results {
 		p := filepath.Join(inv.ResultsHost, decl.Name)
 		if data, err := os.ReadFile(p); err == nil {
@@ -120,6 +158,45 @@ func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (back
 
 	res.Ended = time.Now()
 	return res, nil
+}
+
+// substituteStepRefs runs a per-step substitution pass on a Step, resolving
+// any remaining $(step.results.X.path) and $(steps.<step>.results.<name>)
+// placeholders. All other refs were already resolved by the engine.
+func substituteStepRefs(st tektontypes.Step, stepResults map[string]map[string]string) (tektontypes.Step, error) {
+	rctx := resolver.Context{StepResults: stepResults, CurrentStep: st.Name}
+	out := st
+	var err error
+	if out.Image, err = resolver.Substitute(st.Image, rctx); err != nil {
+		return st, err
+	}
+	if out.Script, err = resolver.Substitute(st.Script, rctx); err != nil {
+		return st, err
+	}
+	if out.WorkingDir, err = resolver.Substitute(st.WorkingDir, rctx); err != nil {
+		return st, err
+	}
+	if len(st.Command) > 0 {
+		if out.Command, err = resolver.SubstituteArgs(st.Command, rctx); err != nil {
+			return st, err
+		}
+	}
+	if len(st.Args) > 0 {
+		if out.Args, err = resolver.SubstituteArgs(st.Args, rctx); err != nil {
+			return st, err
+		}
+	}
+	if len(st.Env) > 0 {
+		out.Env = make([]tektontypes.EnvVar, len(st.Env))
+		for i, e := range st.Env {
+			v, eErr := resolver.Substitute(e.Value, rctx)
+			if eErr != nil {
+				return st, eErr
+			}
+			out.Env[i] = tektontypes.EnvVar{Name: e.Name, Value: v}
+		}
+	}
+	return out, nil
 }
 
 func (b *Backend) ensureImage(ctx context.Context, img, policy string) error {
@@ -179,12 +256,29 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 		})
 	}
 
-	// Results mount.
+	// Task-level results mount.
 	extraMounts = append(extraMounts, mount.Mount{
 		Type:   mount.TypeBind,
 		Source: inv.ResultsHost,
 		Target: "/tekton/results",
 	})
+
+	// Per-step results: this step's own dir RW, every earlier step's RO.
+	stepsRoot := filepath.Join(inv.ResultsHost, "steps")
+	if entries, err := os.ReadDir(stepsRoot); err == nil {
+		for _, ent := range entries {
+			if !ent.IsDir() {
+				continue
+			}
+			ro := ent.Name() != step.Name
+			extraMounts = append(extraMounts, mount.Mount{
+				Type:     mount.TypeBind,
+				Source:   filepath.Join(stepsRoot, ent.Name()),
+				Target:   "/tekton/steps/" + ent.Name() + "/results",
+				ReadOnly: ro,
+			})
+		}
+	}
 
 	env := make([]string, 0, len(step.Env))
 	for _, e := range step.Env {

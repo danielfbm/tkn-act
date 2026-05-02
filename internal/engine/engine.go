@@ -330,18 +330,18 @@ func substituteSpec(spec tektontypes.TaskSpec, ctx resolver.Context) tektontypes
 	out.Steps = make([]tektontypes.Step, len(spec.Steps))
 	for i, st := range spec.Steps {
 		ns := st
-		ns.Image, _ = resolver.Substitute(st.Image, ctx)
+		ns.Image, _ = resolver.SubstituteAllowStepRefs(st.Image, ctx)
 		if len(st.Command) > 0 {
-			ns.Command, _ = resolver.SubstituteArgs(st.Command, ctx)
+			ns.Command, _ = resolver.SubstituteArgsAllowStepRefs(st.Command, ctx)
 		}
 		if len(st.Args) > 0 {
-			ns.Args, _ = resolver.SubstituteArgs(st.Args, ctx)
+			ns.Args, _ = resolver.SubstituteArgsAllowStepRefs(st.Args, ctx)
 		}
-		ns.Script, _ = resolver.Substitute(st.Script, ctx)
-		ns.WorkingDir, _ = resolver.Substitute(st.WorkingDir, ctx)
+		ns.Script, _ = resolver.SubstituteAllowStepRefs(st.Script, ctx)
+		ns.WorkingDir, _ = resolver.SubstituteAllowStepRefs(st.WorkingDir, ctx)
 		ns.Env = make([]tektontypes.EnvVar, len(st.Env))
 		for j, e := range st.Env {
-			v, _ := resolver.Substitute(e.Value, ctx)
+			v, _ := resolver.SubstituteAllowStepRefs(e.Value, ctx)
 			ns.Env[j] = tektontypes.EnvVar{Name: e.Name, Value: v}
 		}
 		out.Steps[i] = ns

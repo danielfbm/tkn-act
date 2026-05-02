@@ -19,7 +19,6 @@ func TestLimitationsFixturesParse(t *testing.T) {
 		pipeline string
 	}{
 		{"step-state", "leaky"},
-		{"step-results", "stepres"},
 		{"sidecars", "with-redis"},
 		{"step-volumes", "configmap-eater"},
 	}
