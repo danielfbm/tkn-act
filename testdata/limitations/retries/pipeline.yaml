@@ -1,0 +1,39 @@
+# Demonstrates: PipelineTask `retries:` — automatic retry of a flaky Task.
+#
+# Real Tekton:  A Task that fails is retried up to N times. Useful for
+#               network-flaky integration tests, image pulls behind flaky
+#               registries, etc.
+#
+# tkn-act docker backend:
+#               PipelineTask.Retries is not modeled in
+#               internal/tektontypes/types.go and the engine has no retry
+#               loop in internal/engine/engine.go. The first failure is
+#               final; downstream tasks see this as `not-run`.
+#
+# Observed:     `flaky` fails on its first attempt and the Pipeline ends
+#               failed after a single try, even with `retries: 3`.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: flaky
+spec:
+  steps:
+    - name: roll
+      image: alpine:3
+      script: |
+        # Always fails — in real Tekton with retries: 3 we'd get 4 attempts.
+        echo "attempt"
+        exit 1
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: flaky
+spec:
+  tasks:
+    - name: flaky
+      taskRef: { name: flaky }
+      retries: 3                         # <-- silently dropped by tkn-act
+    - name: depends-on-flaky
+      taskRef: { name: flaky }
+      runAfter: [flaky]

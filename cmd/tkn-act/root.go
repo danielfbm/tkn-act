@@ -9,6 +9,9 @@ type globalFlags struct {
 	maxParallel int
 	cluster     bool
 	noColor     bool
+	color       string // auto|always|never
+	quiet       bool
+	verbose     bool
 }
 
 var gf globalFlags
@@ -48,7 +51,10 @@ Designed for both humans and AI agents:
 	cmd.PersistentFlags().BoolVar(&gf.cleanup, "cleanup", false, "remove workspace tmpdirs on success and failure")
 	cmd.PersistentFlags().IntVar(&gf.maxParallel, "max-parallel", 4, "max concurrent tasks at the same DAG level")
 	cmd.PersistentFlags().BoolVar(&gf.cluster, "cluster", false, "use ephemeral k3d cluster instead of Docker")
-	cmd.PersistentFlags().BoolVar(&gf.noColor, "no-color", false, "disable color output")
+	cmd.PersistentFlags().BoolVar(&gf.noColor, "no-color", false, "disable color output (alias for --color=never)")
+	cmd.PersistentFlags().StringVar(&gf.color, "color", "auto", "color mode: auto | always | never")
+	cmd.PersistentFlags().BoolVarP(&gf.quiet, "quiet", "q", false, "suppress step logs and pipeline header (pretty output)")
+	cmd.PersistentFlags().BoolVarP(&gf.verbose, "verbose", "v", false, "show step boundaries in addition to step logs (pretty output)")
 
 	cmd.AddCommand(newRunCmd())
 	cmd.AddCommand(newListCmd())

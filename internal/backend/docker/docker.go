@@ -227,7 +227,7 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 	if err != nil {
 		return 0, fmt.Errorf("logs %s: %w", containerName, err)
 	}
-	go streamLogs(logRC, inv.LogSink, inv.Task, step.Name)
+	go streamLogs(logRC, inv.LogSink, inv.TaskName, step.Name)
 
 	statusCh, errCh := b.cli.ContainerWait(ctx, created.ID, container.WaitConditionNotRunning)
 	select {
@@ -244,7 +244,7 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 	return 0, nil
 }
 
-func streamLogs(rc io.ReadCloser, sink backend.LogSink, _ tektontypes.TaskSpec, stepName string) {
+func streamLogs(rc io.ReadCloser, sink backend.LogSink, taskName, stepName string) {
 	defer func() { _ = rc.Close() }()
 	if sink == nil {
 		_, _ = io.Copy(io.Discard, rc)
@@ -257,15 +257,15 @@ func streamLogs(rc io.ReadCloser, sink backend.LogSink, _ tektontypes.TaskSpec, 
 		_ = stdoutW.Close()
 		_ = stderrW.Close()
 	}()
-	go scan(stdoutR, sink, stepName, "stdout")
-	scan(stderrR, sink, stepName, "stderr")
+	go scan(stdoutR, sink, taskName, stepName, "stdout")
+	scan(stderrR, sink, taskName, stepName, "stderr")
 }
 
-func scan(r io.Reader, sink backend.LogSink, stepName, stream string) {
+func scan(r io.Reader, sink backend.LogSink, taskName, stepName, stream string) {
 	s := bufio.NewScanner(r)
 	s.Buffer(make([]byte, 64*1024), 1024*1024)
 	for s.Scan() {
-		sink.StepLog("", stepName, stream, s.Text())
+		sink.StepLog(taskName, stepName, stream, s.Text())
 	}
 }
 

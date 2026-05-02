@@ -35,6 +35,7 @@ type RunSpec struct {
 type TaskInvocation struct {
 	RunID       string
 	PipelineRun string
+	TaskName    string                            // pipeline-task name (e.g. "build")
 	TaskRunName string                            // <pipelineRun>-<task>
 	Task        tektontypes.TaskSpec              // resolved spec — no $(params.x) left
 	Params      map[string]tektontypes.ParamValue // already-evaluated params

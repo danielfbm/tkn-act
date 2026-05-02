@@ -153,8 +153,34 @@ esac
   client env. Honored via `client.FromEnv`.
 - `KUBECONFIG` — used only by `--cluster` mode for kubectl interactions; the
   cluster driver writes its own kubeconfig under the cache dir.
+- `NO_COLOR` — any non-empty value disables color in pretty output (per
+  https://no-color.org). Equivalent to `--color=never`.
+- `FORCE_COLOR` / `CLICOLOR_FORCE` — any non-empty value forces color in
+  pretty output even when stdout is not a TTY. `--color=always` does the same.
 
 `tkn-act` never reads or modifies your shell's `~/.kube/config`.
+
+---
+
+## Pretty output (humans only)
+
+Pretty output is the default for `tkn-act run`. It streams step logs **in
+arrival order**, prefixing each line with `<task>/<step>` so parallel tasks
+remain readable. Verbosity:
+
+- `-q` / `--quiet` — only task and run summaries; suppresses step logs and
+  the pipeline header.
+- (default) — pipeline header, live step logs, task and run summaries.
+- `-v` / `--verbose` — adds step-start / step-end markers.
+
+Color: `--color=auto` (default) | `always` | `never`. `--no-color` is kept as
+an alias for `--color=never`. Resolution precedence is `--color=never` /
+`--no-color` > `--color=always` > `NO_COLOR` env > `FORCE_COLOR` env > TTY
+detection.
+
+Pretty output is for humans and may change at any time. **Agents should
+always pass `--output json`** — that contract is stable and these pretty
+flags do not affect it.
 
 ---
 

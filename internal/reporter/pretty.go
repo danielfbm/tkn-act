@@ -8,94 +8,182 @@ import (
 	"time"
 )
 
+// Verbosity controls how much the pretty reporter prints.
+//
+//	Quiet  → final task + run summaries only
+//	Normal → pipeline header + live step logs + task/run summaries (default)
+//	Verbose → adds step-start/step-end markers
+type Verbosity int
+
+const (
+	Quiet   Verbosity = -1
+	Normal  Verbosity = 0
+	Verbose Verbosity = 1
+)
+
+// PrettyOptions configures NewPretty.
+type PrettyOptions struct {
+	Color     bool      // already resolved via ResolveColor
+	Verbosity Verbosity // Quiet | Normal | Verbose
+}
+
 type prettySink struct {
 	mu       sync.Mutex
 	w        io.Writer
-	color    bool
-	taskBuf  map[string]*taskState // task name → buffered logs (last N lines)
-	startAt  time.Time
+	pal      palette
+	verb     Verbosity
 	pipeline string
 }
 
-type taskState struct {
-	logs []string
-}
-
-const maxTailLines = 20
-
-func NewPretty(w io.Writer, color bool) Reporter {
-	return &prettySink{w: w, color: color, taskBuf: map[string]*taskState{}}
+// NewPretty returns a Reporter that prints human-readable, live-ordered
+// output. Step logs stream as they arrive, prefixed with their task and step
+// names so parallel runs remain readable.
+func NewPretty(w io.Writer, opt PrettyOptions) Reporter {
+	return &prettySink{
+		w:    w,
+		pal:  newPalette(opt.Color),
+		verb: opt.Verbosity,
+	}
 }
 
 func (p *prettySink) Emit(e Event) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	switch e.Kind {
 	case EvtRunStart:
-		p.startAt = e.Time
 		p.pipeline = e.Pipeline
-		_, _ = fmt.Fprintf(p.w, "▶ %s\n", or(e.Pipeline, "pipeline"))
-	case EvtTaskStart:
-		// nothing — print on end
-		p.taskBuf[e.Task] = &taskState{}
-	case EvtStepLog:
-		if st, ok := p.taskBuf[e.Task]; ok {
-			st.logs = append(st.logs, e.Line)
-			if len(st.logs) > maxTailLines {
-				st.logs = st.logs[len(st.logs)-maxTailLines:]
-			}
+		if p.verb >= Normal {
+			fmt.Fprintf(p.w, "%s %s\n",
+				p.pal.wrap(p.pal.cyan, "▶"),
+				p.pal.wrap(p.pal.bold, or(e.Pipeline, "pipeline")),
+			)
 		}
+
+	case EvtTaskStart:
+		if p.verb >= Verbose {
+			fmt.Fprintf(p.w, "%s %s\n",
+				p.pal.wrap(p.pal.cyan, "▸"),
+				e.Task,
+			)
+		}
+
+	case EvtStepStart:
+		if p.verb >= Verbose {
+			fmt.Fprintf(p.w, "  %s %s started\n",
+				p.pal.wrap(p.pal.dim, "·"),
+				p.pal.wrap(p.pal.dim, prefixOf(e.Task, e.Step)),
+			)
+		}
+
+	case EvtStepEnd:
+		if p.verb >= Verbose {
+			fmt.Fprintf(p.w, "  %s %s finished (exit %d)\n",
+				p.pal.wrap(p.pal.dim, "·"),
+				p.pal.wrap(p.pal.dim, prefixOf(e.Task, e.Step)),
+				e.ExitCode,
+			)
+		}
+
+	case EvtStepLog:
+		if p.verb < Normal {
+			return
+		}
+		// Stream every log line in arrival order. The task/step prefix lets the
+		// user disambiguate parallel tasks; the bar separator keeps the line
+		// itself unindented so copy-paste of error messages is clean.
+		prefix := prefixOf(e.Task, e.Step)
+		stream := ""
+		if e.Stream == "stderr" {
+			stream = p.pal.wrap(p.pal.yellow, "!")
+		} else {
+			stream = " "
+		}
+		fmt.Fprintf(p.w, "  %s %s %s %s\n",
+			p.pal.wrap(p.pal.cyan, prefix),
+			p.pal.wrap(p.pal.dim, "│"),
+			stream,
+			e.Line,
+		)
+
 	case EvtTaskSkip:
-		_, _ = fmt.Fprintf(p.w, "%s %s  skipped (%s)\n", glyph("skipped", p.color), e.Task, e.Message)
+		fmt.Fprintf(p.w, "%s %s  skipped (%s)\n",
+			glyph("skipped", p.pal),
+			e.Task,
+			e.Message,
+		)
+
 	case EvtTaskEnd:
 		dur := e.Duration.Round(time.Millisecond)
-		_, _ = fmt.Fprintf(p.w, "%s %s  (%s)", glyph(e.Status, p.color), e.Task, dur)
+		fmt.Fprintf(p.w, "%s %s  %s",
+			glyph(e.Status, p.pal),
+			e.Task,
+			p.pal.wrap(p.pal.dim, fmt.Sprintf("(%s)", dur)),
+		)
 		if e.Message != "" {
-			_, _ = fmt.Fprintf(p.w, "  %s", e.Message)
+			fmt.Fprintf(p.w, "  %s", p.pal.wrap(p.pal.red, e.Message))
 		}
-		_, _ = fmt.Fprintln(p.w)
-		if e.Status == "failed" {
-			if st, ok := p.taskBuf[e.Task]; ok {
-				for _, l := range st.logs {
-					_, _ = fmt.Fprintf(p.w, "    │ %s\n", l)
-				}
-			}
-		}
+		fmt.Fprintln(p.w)
+
 	case EvtRunEnd:
 		dur := e.Duration.Round(time.Millisecond)
-		_, _ = fmt.Fprintln(p.w, strings.Repeat("─", 40))
-		_, _ = fmt.Fprintf(p.w, "PipelineRun %s in %s", e.Status, dur)
-		if e.Message != "" {
-			_, _ = fmt.Fprintf(p.w, "  (%s)", e.Message)
+		if p.verb >= Normal {
+			fmt.Fprintln(p.w, p.pal.wrap(p.pal.dim, strings.Repeat("─", 40)))
 		}
-		_, _ = fmt.Fprintln(p.w)
+		fmt.Fprintf(p.w, "%s PipelineRun %s in %s",
+			glyph(e.Status, p.pal),
+			p.pal.wrap(p.pal.bold, statusWord(e.Status)),
+			dur,
+		)
+		if e.Message != "" {
+			fmt.Fprintf(p.w, "  %s", p.pal.wrap(p.pal.red, e.Message))
+		}
+		fmt.Fprintln(p.w)
+
 	case EvtError:
-		_, _ = fmt.Fprintf(p.w, "error: %s\n", e.Message)
+		fmt.Fprintf(p.w, "%s %s\n",
+			p.pal.wrap(p.pal.red, "error:"),
+			e.Message,
+		)
 	}
 }
 
 func (p *prettySink) Close() error { return nil }
 
-func glyph(status string, color bool) string {
+// glyph maps a status to its colored single-character symbol.
+func glyph(status string, pal palette) string {
 	switch status {
 	case "succeeded":
-		return tint("✓", color, "\033[32m")
-	case "failed":
-		return tint("✗", color, "\033[31m")
+		return pal.wrap(pal.green, "✓")
+	case "failed", "infrafailed":
+		return pal.wrap(pal.red, "✗")
 	case "skipped":
-		return tint("⊘", color, "\033[33m")
+		return pal.wrap(pal.yellow, "⊘")
 	case "not-run":
-		return tint("·", color, "\033[90m")
+		return pal.wrap(pal.gray, "·")
 	default:
 		return "•"
 	}
 }
 
-func tint(s string, on bool, code string) string {
-	if !on {
-		return s
+func statusWord(s string) string {
+	if s == "" {
+		return "completed"
 	}
-	return code + s + "\033[0m"
+	return s
+}
+
+func prefixOf(task, step string) string {
+	switch {
+	case task == "" && step == "":
+		return "?"
+	case step == "":
+		return task
+	case task == "":
+		return step
+	default:
+		return task + "/" + step
+	}
 }
 
 func or(a, b string) string {
@@ -104,4 +192,3 @@ func or(a, b string) string {
 	}
 	return b
 }
-
