@@ -245,6 +245,27 @@ tkn-act list -o json
 
 ---
 
+## Contribution rule: tests required
+
+**Every PR that changes Go production code must include a test change.**
+Concretely: if a PR's diff modifies any `*.go` file outside `_test.go` and
+outside `vendor/`, it must also modify or add at least one `*_test.go` file.
+
+This rule is enforced in CI by `.github/scripts/tests-required.sh` (run as
+the `tests-required` job in `.github/workflows/ci.yml`). The script fails
+the PR if the diff has Go code changes without an accompanying test change.
+
+For genuinely test-immune changes (dependency bumps, doc typos in Go
+comments, regenerated boilerplate, generated stubs), include the literal
+token `[skip-test-check]` in any commit message in the PR. The script
+greps `git log --format=%B base..head` for it.
+
+The rationale is the usual one: every behavior we ship is one we must be
+able to detect breaks in later. AI agents working on this repo should treat
+this as a hard precondition for opening a PR.
+
+---
+
 ## Conventions
 
 - All JSON shapes documented above are part of the public contract; new
