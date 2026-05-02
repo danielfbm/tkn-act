@@ -5,6 +5,7 @@ package validator
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/danielfbm/tkn-act/internal/engine/dag"
 	"github.com/danielfbm/tkn-act/internal/loader"
@@ -128,6 +129,77 @@ func Validate(b *loader.Bundle, pipelineName string, providedParams map[string]b
 			op := strings.ToLower(w.Operator)
 			if op != "in" && op != "notin" {
 				errs = append(errs, fmt.Errorf("pipeline task %q: unsupported when operator %q (only 'in' and 'notin')", pt.Name, w.Operator))
+			}
+		}
+	}
+
+	// 7. Retries must be non-negative.
+	for _, pt := range all {
+		if pt.Retries < 0 {
+			errs = append(errs, fmt.Errorf("pipeline task %q: retries must be non-negative, got %d", pt.Name, pt.Retries))
+		}
+	}
+
+	// 8. Task timeout must parse as a Go duration.
+	for name, spec := range resolvedTasks {
+		if spec.Timeout == "" {
+			continue
+		}
+		if _, err := time.ParseDuration(spec.Timeout); err != nil {
+			errs = append(errs, fmt.Errorf("pipeline task %q: invalid timeout %q: %v", name, spec.Timeout, err))
+		}
+	}
+
+	// 9. Step.OnError values must be empty, "continue", or "stopAndFail".
+	for taskName, spec := range resolvedTasks {
+		for _, st := range spec.Steps {
+			switch st.OnError {
+			case "", "continue", "stopAndFail":
+			default:
+				errs = append(errs, fmt.Errorf("pipeline task %q step %q: unsupported onError %q (allowed: continue | stopAndFail)", taskName, st.Name, st.OnError))
+			}
+		}
+	}
+
+	// 10. Volume kinds: must be exactly one of emptyDir/hostPath/configMap/secret.
+	for taskName, spec := range resolvedTasks {
+		volNames := map[string]bool{}
+		for _, v := range spec.Volumes {
+			volNames[v.Name] = true
+			n := 0
+			if v.EmptyDir != nil {
+				n++
+			}
+			if v.HostPath != nil {
+				n++
+			}
+			if v.ConfigMap != nil {
+				n++
+			}
+			if v.Secret != nil {
+				n++
+			}
+			switch n {
+			case 0:
+				errs = append(errs, fmt.Errorf("pipeline task %q volume %q: unsupported volume kind (only emptyDir, hostPath, configMap, secret)", taskName, v.Name))
+			case 1:
+				// ok
+			default:
+				errs = append(errs, fmt.Errorf("pipeline task %q volume %q: multiple sources set on a single volume", taskName, v.Name))
+			}
+			if v.HostPath != nil && v.HostPath.Path == "" {
+				errs = append(errs, fmt.Errorf("pipeline task %q volume %q: hostPath.path is required", taskName, v.Name))
+			}
+		}
+		// 11. Every volumeMount must reference a declared volume.
+		for _, st := range spec.Steps {
+			for _, vm := range st.VolumeMounts {
+				if !volNames[vm.Name] {
+					errs = append(errs, fmt.Errorf("pipeline task %q step %q: volumeMount %q references undeclared volume", taskName, st.Name, vm.Name))
+				}
+				if vm.MountPath == "" {
+					errs = append(errs, fmt.Errorf("pipeline task %q step %q: volumeMount %q has empty mountPath", taskName, st.Name, vm.Name))
+				}
 			}
 		}
 	}

@@ -11,19 +11,21 @@ features below.
 
 | Fixture                  | Tekton feature it relies on                   | What `tkn-act --docker` does                                               |
 |--------------------------|-----------------------------------------------|----------------------------------------------------------------------------|
-| `onerror-continue/`      | `Step.onError: continue`                      | Field dropped at parse time; first non-zero exit fails the Task.            |
 | `step-state/`            | (none — illustrates step-isolation foot-gun)  | Each step is a fresh container; cwd / env / `/tmp` from prior steps gone.   |
-| `step-results/`          | per-Step `results:` and `$(steps.X.results.Y)`| Only Task-level results exist; substitution left as literal text.           |
 | `sidecars/`              | `Task.sidecars`                               | Field dropped at parse time; no shared network namespace.                   |
-| `retries/`               | `PipelineTask.retries`                        | Field dropped at parse time; the Task fails on its first attempt.           |
-| `timeout/`               | `Task.timeout` / `PipelineRun.timeouts`       | Field dropped at parse time; hung steps run to completion.                  |
-| `step-volumes/`          | `Task.volumes` + `Step.volumeMounts`          | Fields dropped at parse time; only declared workspaces are mounted.         |
+
+This list is short by design — features documented here either are
+**fundamentally Kubernetes-shaped** (sidecars need a shared network
+namespace) or **by-design behaviors of any container-per-step model**
+(step-state isolation). Earlier entries that have been graduated to
+`testdata/e2e/` are now supported in the docker backend; see
+`docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md`.
 
 Each `pipeline.yaml` has a header comment explaining the discrepancy, what
 real Tekton would do, and what `tkn-act` actually does.
 
 These fixtures are **not** part of the integration suite under
 `internal/e2e/` — running them would fail by design. They are loaded by
-`internal/loader` parser tests (`testdata/limitations/limitations_test.go`)
-to confirm the YAML at least parses cleanly even when the dropped fields
-are present, so we don't ship broken examples.
+`internal/loader/limitations_test.go` to confirm the YAML at least parses
+cleanly even when the dropped fields are present, so we don't ship broken
+examples.

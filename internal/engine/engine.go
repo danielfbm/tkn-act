@@ -117,14 +117,24 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 			}
 
 			eg.Go(func() error {
-				oc := e.runOne(gctx, in, pl, pt, params, results, runID, pipelineRunName)
+				e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskStart, Time: time.Now(), Task: tname})
+				oc := e.runOneWithPolicy(gctx, in, pl, pt, params, results, runID, pipelineRunName)
+				e.rep.Emit(reporter.Event{
+					Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: tname,
+					Status: oc.Status, Duration: oc.Duration, Message: oc.Message, Attempt: oc.Attempt,
+				})
 				mu.Lock()
 				outcomes[tname] = oc
 				if oc.Results != nil {
 					results[tname] = oc.Results
 				}
-				if oc.Status == "failed" || oc.Status == "infrafailed" {
-					overall = "failed"
+				switch oc.Status {
+				case "failed", "infrafailed":
+					if overall != "timeout" {
+						overall = "failed"
+					}
+				case "timeout":
+					overall = "timeout"
 				}
 				mu.Unlock()
 				return nil
@@ -135,10 +145,20 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 
 	// Finally tasks always run.
 	for _, pt := range pl.Spec.Finally {
-		oc := e.runOne(ctx, in, pl, pt, params, results, runID, pipelineRunName)
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskStart, Time: time.Now(), Task: pt.Name})
+		oc := e.runOneWithPolicy(ctx, in, pl, pt, params, results, runID, pipelineRunName)
+		e.rep.Emit(reporter.Event{
+			Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: pt.Name,
+			Status: oc.Status, Duration: oc.Duration, Message: oc.Message, Attempt: oc.Attempt,
+		})
 		outcomes[pt.Name] = oc
-		if oc.Status == "failed" || oc.Status == "infrafailed" {
-			overall = "failed"
+		switch oc.Status {
+		case "failed", "infrafailed":
+			if overall != "timeout" {
+				overall = "failed"
+			}
+		case "timeout":
+			overall = "timeout"
 		}
 	}
 
@@ -248,7 +268,6 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 	}
 
 	taskRunName := pipelineRunName + "-" + pt.Name
-	e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskStart, Time: time.Now(), Task: pt.Name})
 	start := time.Now()
 	res, err := e.be.RunTask(ctx, backend.TaskInvocation{
 		RunID:       runID,
@@ -264,16 +283,14 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 	})
 	dur := time.Since(start)
 	if err != nil {
-		e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: pt.Name, Status: "failed", Duration: dur, Message: err.Error()})
-		return TaskOutcome{Status: "failed", Message: err.Error()}
+		return TaskOutcome{Status: "failed", Message: err.Error(), Duration: dur}
 	}
 	status := string(res.Status)
 	msg := ""
 	if res.Err != nil {
 		msg = res.Err.Error()
 	}
-	e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: pt.Name, Status: status, Duration: dur, Message: msg})
-	return TaskOutcome{Status: status, Message: msg, Results: res.Results}
+	return TaskOutcome{Status: status, Message: msg, Results: res.Results, Duration: dur}
 }
 
 // upstream returns nodes that have a path to target.

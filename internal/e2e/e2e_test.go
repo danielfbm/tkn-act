@@ -74,3 +74,6 @@ func TestE2EWorkspaces(t *testing.T)         { runFixture(t, "workspaces", "ws-c
 func TestE2EWhenSkipsDev(t *testing.T)       { runFixture(t, "when-and-finally", "whens", map[string]string{"env": "dev"}, "succeeded") }
 func TestE2EWhenRunsProd(t *testing.T)       { runFixture(t, "when-and-finally", "whens", map[string]string{"env": "prod"}, "succeeded") }
 func TestE2EFailurePropagation(t *testing.T) { runFixture(t, "failure-propagation", "failprop", nil, "failed") }
+func TestE2EOnErrorContinue(t *testing.T)    { runFixture(t, "onerror", "best-effort", nil, "succeeded") }
+func TestE2ERetries(t *testing.T)            { runFixture(t, "retries", "retries", nil, "succeeded") }
+func TestE2ETimeout(t *testing.T)            { runFixture(t, "timeout", "hangs", nil, "timeout") }

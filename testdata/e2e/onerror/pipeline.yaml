@@ -1,0 +1,24 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: best-effort
+spec:
+  steps:
+    - name: flaky
+      image: alpine:3
+      onError: continue
+      script: |
+        echo "doing risky thing"
+        exit 7
+    - name: cleanup
+      image: alpine:3
+      script: echo "cleaning up after flaky"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: best-effort
+spec:
+  tasks:
+    - name: be
+      taskRef: { name: best-effort }

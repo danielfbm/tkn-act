@@ -200,10 +200,14 @@ func runWith(rf runFlags) error {
 	if !gf.cleanup {
 		fmt.Fprintf(os.Stderr, "workspace tmpdirs preserved at: %s\n", filepath.Join(cacheRoot, "run"))
 	}
-	if res.Status != "succeeded" {
+	switch res.Status {
+	case "succeeded":
+		return nil
+	case "timeout":
+		return exitcode.Wrap(exitcode.Timeout, fmt.Errorf("pipeline %q %s", pipe, res.Status))
+	default:
 		return exitcode.Wrap(exitcode.Pipeline, fmt.Errorf("pipeline %q %s", pipe, res.Status))
 	}
-	return nil
 }
 
 func cacheDir() string {

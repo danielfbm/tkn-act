@@ -1,0 +1,35 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: succeeds-on-third
+spec:
+  workspaces:
+    - name: state
+  steps:
+    - name: try
+      image: alpine:3
+      script: |
+        f=$(workspaces.state.path)/attempt
+        n=$(cat "$f" 2>/dev/null || echo 0)
+        n=$((n + 1))
+        echo "$n" > "$f"
+        echo "attempt $n"
+        if [ "$n" -lt 3 ]; then
+          echo "not yet"
+          exit 1
+        fi
+        echo "third time's the charm"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: retries
+spec:
+  workspaces:
+    - name: state
+  tasks:
+    - name: t
+      taskRef: { name: succeeds-on-third }
+      retries: 3
+      workspaces:
+        - { name: state, workspace: state }

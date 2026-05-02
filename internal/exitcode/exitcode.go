@@ -17,6 +17,7 @@ const (
 	Env       = 3   // environment is missing a dependency (Docker, k3d, ...)
 	Validate  = 4   // Tekton YAML rejected before run
 	Pipeline  = 5   // a Task or finally task failed during run
+	Timeout   = 6   // a Task or finally task ended due to its declared timeout
 	Cancelled = 130 // SIGINT / SIGTERM
 )
 

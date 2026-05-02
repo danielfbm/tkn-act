@@ -97,6 +97,11 @@ func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (back
 		if exitCode != 0 {
 			stepRes.Status = backend.StepFailed
 			res.Steps = append(res.Steps, stepRes)
+			// onError: continue -> step recorded as failed, but Task continues.
+			// Default ("" or "stopAndFail") short-circuits the Task.
+			if step.OnError == "continue" {
+				continue
+			}
 			res.Status = backend.TaskFailed
 			res.Ended = time.Now()
 			return res, nil

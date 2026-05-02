@@ -39,6 +39,10 @@ type TaskSpec struct {
 	Workspaces  []WorkspaceDecl `json:"workspaces,omitempty"`
 	Steps       []Step          `json:"steps"`
 	Description string          `json:"description,omitempty"`
+	// Timeout is a Go duration string (e.g. "30s", "5m"). Empty means no
+	// task-level timeout.
+	Timeout string   `json:"timeout,omitempty"`
+	Volumes []Volume `json:"volumes,omitempty"`
 }
 
 type Step struct {
@@ -51,6 +55,58 @@ type Step struct {
 	WorkingDir      string         `json:"workingDir,omitempty"`
 	Resources       *StepResources `json:"resources,omitempty"`
 	ImagePullPolicy string         `json:"imagePullPolicy,omitempty"` // Always | IfNotPresent | Never
+	// OnError controls Task-level failure semantics. "" or "stopAndFail" is
+	// the default — first non-zero step exit fails the Task. "continue" lets
+	// a non-zero exit be recorded but does not fail the Task.
+	OnError string `json:"onError,omitempty"`
+	// Results are per-step results, mounted at /tekton/steps/<step>/results/
+	// in this step (RW) and in every later step in the same Task (RO).
+	Results      []ResultSpec  `json:"results,omitempty"`
+	VolumeMounts []VolumeMount `json:"volumeMounts,omitempty"`
+}
+
+// Volume is a Task-level volume. Exactly one of EmptyDir/HostPath/ConfigMap/
+// Secret must be set; any other source kind is rejected by the validator.
+type Volume struct {
+	Name      string           `json:"name"`
+	EmptyDir  *EmptyDirSource  `json:"emptyDir,omitempty"`
+	HostPath  *HostPathSource  `json:"hostPath,omitempty"`
+	ConfigMap *ConfigMapSource `json:"configMap,omitempty"`
+	Secret    *SecretSource    `json:"secret,omitempty"`
+}
+
+type EmptyDirSource struct {
+	// Medium: "" (disk-backed tmpdir) or "Memory" (tmpfs on Linux).
+	Medium string `json:"medium,omitempty"`
+}
+
+type HostPathSource struct {
+	Path string `json:"path"`
+	Type string `json:"type,omitempty"` // diagnostic only
+}
+
+type ConfigMapSource struct {
+	Name     string      `json:"name"`
+	Items    []KeyToPath `json:"items,omitempty"`
+	Optional *bool       `json:"optional,omitempty"`
+}
+
+type SecretSource struct {
+	SecretName string      `json:"secretName"`
+	Items      []KeyToPath `json:"items,omitempty"`
+	Optional   *bool       `json:"optional,omitempty"`
+}
+
+type KeyToPath struct {
+	Key  string `json:"key"`
+	Path string `json:"path"`
+}
+
+type VolumeMount struct {
+	Name      string `json:"name"`
+	MountPath string `json:"mountPath"`
+	ReadOnly  bool   `json:"readOnly,omitempty"`
+	SubPath   string `json:"subPath,omitempty"`
 }
 
 type EnvVar struct {
@@ -125,6 +181,9 @@ type PipelineTask struct {
 	Workspaces []WorkspaceBinding `json:"workspaces,omitempty"`
 	RunAfter   []string           `json:"runAfter,omitempty"`
 	When       []WhenExpression   `json:"when,omitempty"`
+	// Retries is the number of additional attempts after the first failure.
+	// 0 (or unset) means run once.
+	Retries int `json:"retries,omitempty"`
 }
 
 type TaskRef struct {

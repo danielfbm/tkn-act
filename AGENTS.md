@@ -102,9 +102,12 @@ Use this to construct correct invocations without scraping `--help` text.
 
 ### `tkn-act run -o json`
 
-Streams one JSON object per line on stdout, one event per line. Event types
-include `pipeline_started`, `task_started`, `step_log`, `task_finished`,
-`pipeline_finished`. The exit code follows the table below.
+Streams one JSON object per line on stdout, one event per line. Event kinds:
+`run-start`, `run-end`, `task-start`, `task-end`, `task-skip`, `task-retry`,
+`step-start`, `step-end`, `step-log`, `error`. `task-retry` fires between
+attempts of a retried task; the terminal `task-end` carries `attempt: N`.
+Task statuses: `succeeded`, `failed`, `infrafailed`, `skipped`, `not-run`,
+`timeout`. The exit code follows the table below.
 
 ### Other JSON outputs
 
@@ -129,6 +132,7 @@ include `pipeline_started`, `task_started`, `step_log`, `task_finished`,
 | 3    | environment | Docker not running, k3d/kubectl missing, cache dir not writable   |
 | 4    | validate    | Tekton YAML rejected (parse, schema, DAG, when, results)          |
 | 5    | pipeline    | run completed but a Task or finally task failed                   |
+| 6    | timeout     | a Task or finally task ended due to its declared timeout          |
 | 130  | cancelled   | SIGINT or SIGTERM during a run                                    |
 
 These codes are part of `tkn-act`'s public contract and are safe to branch on.

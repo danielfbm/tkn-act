@@ -82,6 +82,7 @@ const (
 	TaskInfraFailed TaskStatus = "infrafailed" // backend/env error before/around step
 	TaskNotRun      TaskStatus = "not-run"     // skipped because a dep failed
 	TaskSkipped     TaskStatus = "skipped"     // when expression false
+	TaskTimeout     TaskStatus = "timeout"     // task wall-clock timeout exceeded
 )
 
 type StepStatus string
