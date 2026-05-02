@@ -36,9 +36,20 @@ Or via `tkn`'s plugin discovery — drop the binary on your PATH and run `tkn ac
 ## What's not supported in v1
 
 Sidecars, StepActions, retries, Resolvers (git/hub/cluster), tekton-results,
-custom tasks, `volumeClaimTemplate` workspaces, signed pipelines, Windows.
+custom tasks, signed pipelines, Windows.
 
 See `docs/superpowers/specs/2026-05-01-tkn-act-design.md` for the full spec.
+
+## Cluster backend (v1.1)
+
+For Tekton-fidelity runs (real controller, real entrypoint shim):
+
+    tkn-act cluster up               # one-time, ~30-60s
+    tkn-act run --cluster -f pipeline.yaml
+    tkn-act cluster status
+    tkn-act cluster down
+
+Requires `k3d` and `kubectl` on PATH.
 
 ## License
 

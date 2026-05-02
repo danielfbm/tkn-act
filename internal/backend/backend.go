@@ -90,3 +90,39 @@ const (
 	StepFailed    StepStatus = "failed"
 	StepSkipped   StepStatus = "skipped"
 )
+
+// PipelineBackend is an optional interface a Backend may implement when it
+// wants to execute a whole PipelineRun itself (rather than have the engine
+// orchestrate one Task at a time). The cluster backend uses this so the real
+// Tekton controller drives the DAG.
+type PipelineBackend interface {
+	Backend
+	RunPipeline(ctx context.Context, in PipelineRunInvocation) (PipelineRunResult, error)
+}
+
+// PipelineRunInvocation is what the engine passes when delegating an entire
+// PipelineRun.
+type PipelineRunInvocation struct {
+	RunID           string
+	PipelineRunName string
+	Pipeline        tektontypes.Pipeline
+	Tasks           map[string]tektontypes.Task
+	Params          []tektontypes.Param
+	Workspaces      map[string]WorkspaceMount
+	LogSink         LogSink
+	EmitEvent       func(taskName, status, message string, started, ended time.Time, results map[string]string)
+}
+
+// PipelineRunResult is what RunPipeline returns.
+type PipelineRunResult struct {
+	Status  string // succeeded | failed
+	Tasks   map[string]TaskOutcomeOnCluster
+	Started time.Time
+	Ended   time.Time
+}
+
+type TaskOutcomeOnCluster struct {
+	Status  string
+	Message string
+	Results map[string]string
+}
