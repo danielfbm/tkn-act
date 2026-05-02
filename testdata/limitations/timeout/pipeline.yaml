@@ -1,0 +1,39 @@
+# Demonstrates: per-Task / per-Pipeline `timeout:`.
+#
+# Real Tekton:  `timeout: 30s` on a Task or PipelineRun bounds wall time;
+#               the controller cancels and marks the Task `Timeout` if it
+#               runs past the limit.
+#
+# tkn-act docker backend:
+#               TaskSpec.Timeout / PipelineRunSpec.Timeouts are not modeled
+#               in internal/tektontypes/types.go. The engine has no timeout
+#               enforcement (internal/engine/engine.go runs steps under the
+#               command's parent context). The only way a hung step is
+#               killed today is the user sending SIGINT/SIGTERM, which the
+#               root command translates to exit code 130.
+#
+# Observed:     The 5-minute sleep runs to completion regardless of the
+#               `timeout: 30s` declared below. CI on a hung Task hangs for
+#               the full duration of the sleep.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: hangs
+spec:
+  timeout: 30s                          # <-- silently dropped by tkn-act
+  steps:
+    - name: sleep
+      image: alpine:3
+      script: |
+        echo "sleeping for 5 minutes (real Tekton would kill us at 30s)"
+        sleep 300
+        echo "done"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: hangs
+spec:
+  tasks:
+    - name: hangs
+      taskRef: { name: hangs }

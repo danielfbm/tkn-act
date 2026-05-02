@@ -1,0 +1,44 @@
+# Demonstrates: shell state (cwd, env, mounted /tmp) is NOT shared between
+# steps — each step is its own container.
+#
+# Real Tekton:  Same; this is correct Tekton behavior. The pipeline below is
+#               buggy regardless of runtime — it's here to remind users that
+#               step state must be persisted to a workspace, not assumed.
+#
+# tkn-act docker backend:
+#               Step 2 starts a fresh container with cwd `/` and a fresh
+#               /tmp. The `cd` and `export` from step 1 are gone. The file
+#               written to /tmp is also gone (each step's /tmp is its own
+#               container layer).
+#
+# Observed:     `step2` reads BUILD_TAG="" and fails to find /tmp/built.txt.
+#               Fix: write to a workspace, e.g. /workspace/shared/built.txt.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: leaky
+spec:
+  steps:
+    - name: configure
+      image: alpine:3
+      script: |
+        cd /opt
+        export BUILD_TAG=v1.2.3
+        echo "compiled-bytes" > /tmp/built.txt
+        echo "step1 cwd=$(pwd) tag=$BUILD_TAG"
+    - name: package
+      image: alpine:3
+      script: |
+        # Each of these will surprise the author:
+        echo "step2 cwd=$(pwd)"            # /, not /opt
+        echo "step2 tag=${BUILD_TAG:-MISSING}"
+        cat /tmp/built.txt                 # No such file or directory -> exit 1
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: leaky
+spec:
+  tasks:
+    - name: leaky
+      taskRef: { name: leaky }

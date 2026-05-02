@@ -1,0 +1,45 @@
+# Demonstrates: per-Step results — `$(steps.<step>.results.<name>)`.
+#
+# Real Tekton:  Steps can declare their own `results:` and a later step in
+#               the same Task can reference them via
+#               `$(steps.<step>.results.<name>)`. Useful for splitting
+#               compute / side-effect steps within a single Task.
+#
+# tkn-act docker backend:
+#               Only Task-level results are modeled (TaskSpec.Results) and
+#               only Task-level substitution exists in internal/resolver.
+#               Step.Results does not exist on tektontypes.Step, so the
+#               `results:` block on `compute` is dropped at parse time.
+#               The `$(steps.compute.results.value)` substitution is not
+#               recognised by the resolver and is left as literal text.
+#
+# Observed:     `consume` echoes the literal string
+#                 "value=$(steps.compute.results.value)"
+#               and the test for VALUE=42 fails.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: stepres
+spec:
+  steps:
+    - name: compute
+      image: alpine:3
+      results:                          # <-- silently dropped by tkn-act
+        - name: value
+      script: |
+        printf 42 > $(step.results.value.path)
+    - name: consume
+      image: alpine:3
+      script: |
+        # Real Tekton substitutes 42; tkn-act leaves the placeholder literal.
+        echo "value=$(steps.compute.results.value)"
+        test "$(steps.compute.results.value)" = "42"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: stepres
+spec:
+  tasks:
+    - name: stepres
+      taskRef: { name: stepres }

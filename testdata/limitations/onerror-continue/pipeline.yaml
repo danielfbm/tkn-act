@@ -1,0 +1,39 @@
+# Demonstrates: per-step `onError: continue`.
+#
+# Real Tekton:  `onError: continue` makes a step's non-zero exit not fail
+#               the Task — the next step still runs. Used for cleanup
+#               steps, "best effort" linters, etc.
+#
+# tkn-act docker backend:
+#               Step.OnError is not modeled in internal/tektontypes/types.go,
+#               so the field is silently dropped at parse time. Any non-zero
+#               exit short-circuits the Task at internal/backend/docker/
+#               docker.go:97-103, and `cleanup` never runs.
+#
+# Observed:     Task ends as failed after `flaky`; `cleanup` is not executed
+#               and produces no logs. Real Tekton would run `cleanup` and
+#               report the Task succeeded.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: best-effort
+spec:
+  steps:
+    - name: flaky
+      image: alpine:3
+      onError: continue            # <-- silently dropped by tkn-act
+      script: |
+        echo "doing risky thing"
+        exit 7
+    - name: cleanup
+      image: alpine:3
+      script: echo "cleaning up after flaky"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: best-effort
+spec:
+  tasks:
+    - name: be
+      taskRef: { name: best-effort }
