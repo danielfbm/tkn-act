@@ -1,0 +1,22 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: hangs
+spec:
+  timeout: 1s
+  steps:
+    - name: sleep
+      image: alpine:3
+      script: |
+        echo "sleeping; should be killed at 1s"
+        sleep 30
+        echo "should not reach here"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: hangs
+spec:
+  tasks:
+    - name: hangs
+      taskRef: { name: hangs }

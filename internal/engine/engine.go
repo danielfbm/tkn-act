@@ -20,7 +20,15 @@ import (
 
 type Options struct {
 	MaxParallel int
+	// VolumeResolver materialises a Task's volumes onto host paths just
+	// before the task runs. The CLI sets this; tests may leave it nil
+	// (volumes are then unsupported in that test).
+	VolumeResolver VolumeResolver
 }
+
+// VolumeResolver is the engine's hook for the volumes package. Returns
+// map[volumeName] -> hostPath.
+type VolumeResolver func(taskName string, vs []tektontypes.Volume) (map[string]string, error)
 
 type Engine struct {
 	be   backend.Backend
@@ -117,14 +125,24 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 			}
 
 			eg.Go(func() error {
-				oc := e.runOne(gctx, in, pl, pt, params, results, runID, pipelineRunName)
+				e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskStart, Time: time.Now(), Task: tname})
+				oc := e.runOneWithPolicy(gctx, in, pl, pt, params, results, runID, pipelineRunName)
+				e.rep.Emit(reporter.Event{
+					Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: tname,
+					Status: oc.Status, Duration: oc.Duration, Message: oc.Message, Attempt: oc.Attempt,
+				})
 				mu.Lock()
 				outcomes[tname] = oc
 				if oc.Results != nil {
 					results[tname] = oc.Results
 				}
-				if oc.Status == "failed" || oc.Status == "infrafailed" {
-					overall = "failed"
+				switch oc.Status {
+				case "failed", "infrafailed":
+					if overall != "timeout" {
+						overall = "failed"
+					}
+				case "timeout":
+					overall = "timeout"
 				}
 				mu.Unlock()
 				return nil
@@ -135,10 +153,20 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 
 	// Finally tasks always run.
 	for _, pt := range pl.Spec.Finally {
-		oc := e.runOne(ctx, in, pl, pt, params, results, runID, pipelineRunName)
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskStart, Time: time.Now(), Task: pt.Name})
+		oc := e.runOneWithPolicy(ctx, in, pl, pt, params, results, runID, pipelineRunName)
+		e.rep.Emit(reporter.Event{
+			Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: pt.Name,
+			Status: oc.Status, Duration: oc.Duration, Message: oc.Message, Attempt: oc.Attempt,
+		})
 		outcomes[pt.Name] = oc
-		if oc.Status == "failed" || oc.Status == "infrafailed" {
-			overall = "failed"
+		switch oc.Status {
+		case "failed", "infrafailed":
+			if overall != "timeout" {
+				overall = "failed"
+			}
+		case "timeout":
+			overall = "timeout"
 		}
 	}
 
@@ -247,8 +275,20 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		return TaskOutcome{Status: "failed", Message: err.Error()}
 	}
 
+	// Materialise Task volumes (emptyDir / hostPath / configMap / secret).
+	var volumeHosts map[string]string
+	if len(resolved.Volumes) > 0 {
+		if e.opts.VolumeResolver == nil {
+			return TaskOutcome{Status: "infrafailed", Message: "volumes declared but no VolumeResolver configured"}
+		}
+		var verr error
+		volumeHosts, verr = e.opts.VolumeResolver(pt.Name, resolved.Volumes)
+		if verr != nil {
+			return TaskOutcome{Status: "infrafailed", Message: verr.Error()}
+		}
+	}
+
 	taskRunName := pipelineRunName + "-" + pt.Name
-	e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskStart, Time: time.Now(), Task: pt.Name})
 	start := time.Now()
 	res, err := e.be.RunTask(ctx, backend.TaskInvocation{
 		RunID:       runID,
@@ -260,20 +300,19 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		Workspaces:  wsMap,
 		ContextVars: taskCtx.ContextVars,
 		ResultsHost: resultsDir,
+		VolumeHosts: volumeHosts,
 		LogSink:     reporter.NewLogSink(e.rep),
 	})
 	dur := time.Since(start)
 	if err != nil {
-		e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: pt.Name, Status: "failed", Duration: dur, Message: err.Error()})
-		return TaskOutcome{Status: "failed", Message: err.Error()}
+		return TaskOutcome{Status: "failed", Message: err.Error(), Duration: dur}
 	}
 	status := string(res.Status)
 	msg := ""
 	if res.Err != nil {
 		msg = res.Err.Error()
 	}
-	e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: pt.Name, Status: status, Duration: dur, Message: msg})
-	return TaskOutcome{Status: status, Message: msg, Results: res.Results}
+	return TaskOutcome{Status: status, Message: msg, Results: res.Results, Duration: dur}
 }
 
 // upstream returns nodes that have a path to target.
@@ -313,18 +352,18 @@ func substituteSpec(spec tektontypes.TaskSpec, ctx resolver.Context) tektontypes
 	out.Steps = make([]tektontypes.Step, len(spec.Steps))
 	for i, st := range spec.Steps {
 		ns := st
-		ns.Image, _ = resolver.Substitute(st.Image, ctx)
+		ns.Image, _ = resolver.SubstituteAllowStepRefs(st.Image, ctx)
 		if len(st.Command) > 0 {
-			ns.Command, _ = resolver.SubstituteArgs(st.Command, ctx)
+			ns.Command, _ = resolver.SubstituteArgsAllowStepRefs(st.Command, ctx)
 		}
 		if len(st.Args) > 0 {
-			ns.Args, _ = resolver.SubstituteArgs(st.Args, ctx)
+			ns.Args, _ = resolver.SubstituteArgsAllowStepRefs(st.Args, ctx)
 		}
-		ns.Script, _ = resolver.Substitute(st.Script, ctx)
-		ns.WorkingDir, _ = resolver.Substitute(st.WorkingDir, ctx)
+		ns.Script, _ = resolver.SubstituteAllowStepRefs(st.Script, ctx)
+		ns.WorkingDir, _ = resolver.SubstituteAllowStepRefs(st.WorkingDir, ctx)
 		ns.Env = make([]tektontypes.EnvVar, len(st.Env))
 		for j, e := range st.Env {
-			v, _ := resolver.Substitute(e.Value, ctx)
+			v, _ := resolver.SubstituteAllowStepRefs(e.Value, ctx)
 			ns.Env[j] = tektontypes.EnvVar{Name: e.Name, Value: v}
 		}
 		out.Steps[i] = ns

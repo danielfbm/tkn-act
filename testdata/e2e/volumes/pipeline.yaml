@@ -1,0 +1,31 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: configmap-eater
+spec:
+  volumes:
+    - name: app-config
+      configMap:
+        name: app-config
+    - name: scratch
+      emptyDir: {}
+  steps:
+    - name: read
+      image: alpine:3
+      volumeMounts:
+        - { name: app-config, mountPath: /etc/app-config }
+        - { name: scratch, mountPath: /scratch }
+      script: |
+        cat /etc/app-config/greeting
+        test "$(cat /etc/app-config/greeting)" = "hello-from-cm"
+        echo "scratch" > /scratch/note
+        test -f /scratch/note
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: configmap-eater
+spec:
+  tasks:
+    - name: configmap-eater
+      taskRef: { name: configmap-eater }

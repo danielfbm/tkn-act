@@ -14,10 +14,25 @@ import (
 	"github.com/danielfbm/tkn-act/internal/loader"
 	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
+	"github.com/danielfbm/tkn-act/internal/volumes"
 	"github.com/danielfbm/tkn-act/internal/workspace"
 )
 
-func runFixture(t *testing.T, fixture, pipelineName string, params map[string]string, wantStatus string) {
+type fixtureOpt func(*fixtureCfg)
+type fixtureCfg struct {
+	configMaps map[string]map[string]string // name -> key -> value
+}
+
+func withConfigMap(name string, kv map[string]string) fixtureOpt {
+	return func(c *fixtureCfg) {
+		if c.configMaps == nil {
+			c.configMaps = map[string]map[string]string{}
+		}
+		c.configMaps[name] = kv
+	}
+}
+
+func runFixture(t *testing.T, fixture, pipelineName string, params map[string]string, wantStatus string, opts ...fixtureOpt) {
 	t.Helper()
 	ctx := context.Background()
 	files, err := filepath.Glob(filepath.Join("..", "..", "testdata", "e2e", fixture, "*.yaml"))
@@ -56,7 +71,27 @@ func runFixture(t *testing.T, fixture, pipelineName string, params map[string]st
 	for k, v := range params {
 		pmap[k] = tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: v}
 	}
-	res, err := engine.New(be, rep, engine.Options{MaxParallel: 4}).RunPipeline(ctx, engine.PipelineInput{
+
+	cfg := fixtureCfg{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	cmStore := volumes.NewStore("")
+	for name, kv := range cfg.configMaps {
+		for k, v := range kv {
+			cmStore.Add(name, k, v)
+		}
+	}
+	secStore := volumes.NewStore("")
+	volResolver := func(taskName string, vs []tektontypes.Volume) (map[string]string, error) {
+		volBase, perr := mgr.ProvisionVolumesDir(taskName)
+		if perr != nil {
+			return nil, perr
+		}
+		return volumes.MaterializeForTask(taskName, vs, volBase, cmStore, secStore)
+	}
+
+	res, err := engine.New(be, rep, engine.Options{MaxParallel: 4, VolumeResolver: volResolver}).RunPipeline(ctx, engine.PipelineInput{
 		Bundle: b, Name: pipelineName, Params: pmap, Workspaces: wsHost,
 	})
 	if err != nil {
@@ -74,3 +109,12 @@ func TestE2EWorkspaces(t *testing.T)         { runFixture(t, "workspaces", "ws-c
 func TestE2EWhenSkipsDev(t *testing.T)       { runFixture(t, "when-and-finally", "whens", map[string]string{"env": "dev"}, "succeeded") }
 func TestE2EWhenRunsProd(t *testing.T)       { runFixture(t, "when-and-finally", "whens", map[string]string{"env": "prod"}, "succeeded") }
 func TestE2EFailurePropagation(t *testing.T) { runFixture(t, "failure-propagation", "failprop", nil, "failed") }
+func TestE2EOnErrorContinue(t *testing.T)    { runFixture(t, "onerror", "best-effort", nil, "succeeded") }
+func TestE2ERetries(t *testing.T)            { runFixture(t, "retries", "retries", nil, "succeeded") }
+func TestE2ETimeout(t *testing.T)            { runFixture(t, "timeout", "hangs", nil, "timeout") }
+func TestE2EStepResults(t *testing.T)        { runFixture(t, "step-results", "stepres", nil, "succeeded") }
+func TestE2EVolumes(t *testing.T) {
+	runFixture(t, "volumes", "configmap-eater", nil, "succeeded",
+		withConfigMap("app-config", map[string]string{"greeting": "hello-from-cm"}),
+	)
+}

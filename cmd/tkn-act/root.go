@@ -3,15 +3,19 @@ package main
 import "github.com/spf13/cobra"
 
 type globalFlags struct {
-	output      string
-	debug       bool
-	cleanup     bool
-	maxParallel int
-	cluster     bool
-	noColor     bool
-	color       string // auto|always|never
-	quiet       bool
-	verbose     bool
+	output       string
+	debug        bool
+	cleanup      bool
+	maxParallel  int
+	cluster      bool
+	noColor      bool
+	color        string // auto|always|never
+	quiet        bool
+	verbose      bool
+	configMapDir string
+	secretDir    string
+	configMaps   []string // <name>=<k>=<v>[,<k>=<v>...]
+	secrets      []string
 }
 
 var gf globalFlags
@@ -55,6 +59,10 @@ Designed for both humans and AI agents:
 	cmd.PersistentFlags().StringVar(&gf.color, "color", "auto", "color mode: auto | always | never")
 	cmd.PersistentFlags().BoolVarP(&gf.quiet, "quiet", "q", false, "suppress step logs and pipeline header (pretty output)")
 	cmd.PersistentFlags().BoolVarP(&gf.verbose, "verbose", "v", false, "show step boundaries in addition to step logs (pretty output)")
+	cmd.PersistentFlags().StringVar(&gf.configMapDir, "configmap-dir", "", "directory to resolve configMap volumes from (default $XDG_CACHE_HOME/tkn-act/configmaps)")
+	cmd.PersistentFlags().StringVar(&gf.secretDir, "secret-dir", "", "directory to resolve secret volumes from (default $XDG_CACHE_HOME/tkn-act/secrets)")
+	cmd.PersistentFlags().StringArrayVar(&gf.configMaps, "configmap", nil, "inline configMap as <name>=<k>=<v>[,<k>=<v>...] (repeatable)")
+	cmd.PersistentFlags().StringArrayVar(&gf.secrets, "secret", nil, "inline secret as <name>=<k>=<v>[,<k>=<v>...] (repeatable)")
 
 	cmd.AddCommand(newRunCmd())
 	cmd.AddCommand(newListCmd())

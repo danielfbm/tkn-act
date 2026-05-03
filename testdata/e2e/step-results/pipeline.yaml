@@ -1,0 +1,26 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: stepres
+spec:
+  steps:
+    - name: compute
+      image: alpine:3
+      results:
+        - name: value
+      script: |
+        printf 42 > $(step.results.value.path)
+    - name: consume
+      image: alpine:3
+      script: |
+        echo "value=$(steps.compute.results.value)"
+        test "$(steps.compute.results.value)" = "42"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: stepres
+spec:
+  tasks:
+    - name: stepres
+      taskRef: { name: stepres }

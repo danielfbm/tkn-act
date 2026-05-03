@@ -102,9 +102,12 @@ Use this to construct correct invocations without scraping `--help` text.
 
 ### `tkn-act run -o json`
 
-Streams one JSON object per line on stdout, one event per line. Event types
-include `pipeline_started`, `task_started`, `step_log`, `task_finished`,
-`pipeline_finished`. The exit code follows the table below.
+Streams one JSON object per line on stdout, one event per line. Event kinds:
+`run-start`, `run-end`, `task-start`, `task-end`, `task-skip`, `task-retry`,
+`step-start`, `step-end`, `step-log`, `error`. `task-retry` fires between
+attempts of a retried task; the terminal `task-end` carries `attempt: N`.
+Task statuses: `succeeded`, `failed`, `infrafailed`, `skipped`, `not-run`,
+`timeout`. The exit code follows the table below.
 
 ### Other JSON outputs
 
@@ -129,6 +132,7 @@ include `pipeline_started`, `task_started`, `step_log`, `task_finished`,
 | 3    | environment | Docker not running, k3d/kubectl missing, cache dir not writable   |
 | 4    | validate    | Tekton YAML rejected (parse, schema, DAG, when, results)          |
 | 5    | pipeline    | run completed but a Task or finally task failed                   |
+| 6    | timeout     | a Task or finally task ended due to its declared timeout          |
 | 130  | cancelled   | SIGINT or SIGTERM during a run                                    |
 
 These codes are part of `tkn-act`'s public contract and are safe to branch on.
@@ -157,6 +161,11 @@ esac
   https://no-color.org). Equivalent to `--color=never`.
 - `FORCE_COLOR` / `CLICOLOR_FORCE` — any non-empty value forces color in
   pretty output even when stdout is not a TTY. `--color=always` does the same.
+- `--configmap-dir <path>` / `--secret-dir <path>` — directory layout
+  `<path>/<name>/<key>` per source for configMap and secret volumes.
+  Defaults: `$XDG_CACHE_HOME/tkn-act/{configmaps,secrets}/`. Inline form:
+  `--configmap <name>=<k1>=<v1>[,<k2>=<v2>...]` (repeatable; same shape
+  for `--secret`). Inline overrides win over the on-disk dir per key.
 
 `tkn-act` never reads or modifies your shell's `~/.kube/config`.
 
@@ -233,6 +242,52 @@ tkn-act list -o json
 | `validation error(s)`                                | 4           | read stderr or use `validate -o json`     |
 | pipeline finishes with `status: "failed"`            | 5           | inspect last `task_finished` event        |
 | `not found on PATH: k3d`                             | 3           | install k3d or stop using `--cluster`     |
+
+---
+
+## Project default: merge with squash + delete-branch
+
+**When merging any PR in this repo, use squash merge and delete the source
+branch.** Concretely:
+
+```sh
+gh pr merge <num> --squash --delete-branch
+```
+
+This is the project-wide default. Reasons:
+
+- `main` history reads as one commit per landed PR — the PR title becomes
+  the squash subject and the body becomes the squash body, which keeps the
+  log skimmable and bisectable.
+- Stale feature branches don't accumulate locally or on the remote.
+- Force-push or merge-commit alternatives are not used; if a PR needs to
+  preserve internal commit history (rare), call it out explicitly in the
+  PR description and discuss before merging.
+
+AI agents working on this repo should treat squash + delete-branch as the
+default merge style without prompting; only deviate when the user
+explicitly asks for a merge or rebase merge.
+
+---
+
+## Contribution rule: tests required
+
+**Every PR that changes Go production code must include a test change.**
+Concretely: if a PR's diff modifies any `*.go` file outside `_test.go` and
+outside `vendor/`, it must also modify or add at least one `*_test.go` file.
+
+This rule is enforced in CI by `.github/scripts/tests-required.sh` (run as
+the `tests-required` job in `.github/workflows/ci.yml`). The script fails
+the PR if the diff has Go code changes without an accompanying test change.
+
+For genuinely test-immune changes (dependency bumps, doc typos in Go
+comments, regenerated boilerplate, generated stubs), include the literal
+token `[skip-test-check]` in any commit message in the PR. The script
+greps `git log --format=%B base..head` for it.
+
+The rationale is the usual one: every behavior we ship is one we must be
+able to detect breaks in later. AI agents working on this repo should treat
+this as a hard precondition for opening a PR.
 
 ---
 

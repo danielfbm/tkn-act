@@ -1,0 +1,54 @@
+name: docker-integration
+
+# Runs the docker-backend end-to-end suite (build tag: integration). Docker is
+# preinstalled on ubuntu-latest runners. This workflow is gated by paths on
+# PRs to keep feedback fast; on main and release/* branches it always runs.
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+  pull_request:
+    paths:
+      # Anything that changes how a Task runs via the docker backend.
+      - 'cmd/tkn-act/**'
+      - 'internal/backend/backend.go'
+      - 'internal/backend/docker/**'
+      - 'internal/engine/**'
+      - 'internal/exitcode/**'
+      - 'internal/loader/**'
+      - 'internal/reporter/**'
+      - 'internal/resolver/**'
+      - 'internal/tektontypes/**'
+      - 'internal/validator/**'
+      - 'internal/volumes/**'
+      - 'internal/workspace/**'
+      - 'internal/e2e/**'
+      - 'testdata/e2e/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/docker-integration.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: docker e2e (-tags integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: docker info (sanity)
+        run: docker info >/dev/null && echo "docker ok"
+      - name: warm image cache
+        # Pre-pull the only image the fixtures use, so test wall time is
+        # dominated by Tekton work rather than registry latency.
+        run: docker pull alpine:3
+      - name: go test -tags integration ./internal/e2e/...
+        run: go test -tags integration -count=1 -timeout 15m ./internal/e2e/...

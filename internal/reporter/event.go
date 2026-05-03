@@ -14,10 +14,22 @@ const (
 	EvtTaskStart EventKind = "task-start"
 	EvtTaskEnd   EventKind = "task-end"
 	EvtTaskSkip  EventKind = "task-skip"
+	EvtTaskRetry EventKind = "task-retry"
 	EvtStepStart EventKind = "step-start"
 	EvtStepEnd   EventKind = "step-end"
 	EvtStepLog   EventKind = "step-log"
 	EvtError     EventKind = "error"
+)
+
+// Status values that can appear on task-end. Existing values are unchanged;
+// "timeout" is new in v1.2.
+const (
+	StatusSucceeded   = "succeeded"
+	StatusFailed      = "failed"
+	StatusInfraFailed = "infrafailed"
+	StatusSkipped     = "skipped"
+	StatusNotRun      = "not-run"
+	StatusTimeout     = "timeout"
 )
 
 type Event struct {
@@ -33,6 +45,9 @@ type Event struct {
 	ExitCode int           `json:"exitCode,omitempty"`
 	Duration time.Duration `json:"durationMs,omitempty"`
 	Message  string        `json:"message,omitempty"`
+	// Attempt is 1-based and present on task-retry (the attempt that just
+	// failed) and on task-end (the attempt that produced the final outcome).
+	Attempt int `json:"attempt,omitempty"`
 }
 
 // Reporter consumes events.

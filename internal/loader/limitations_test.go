@@ -18,13 +18,8 @@ func TestLimitationsFixturesParse(t *testing.T) {
 		name     string
 		pipeline string
 	}{
-		{"onerror-continue", "best-effort"},
 		{"step-state", "leaky"},
-		{"step-results", "stepres"},
 		{"sidecars", "with-redis"},
-		{"retries", "flaky"},
-		{"timeout", "hangs"},
-		{"step-volumes", "configmap-eater"},
 	}
 	for _, d := range dirs {
 		t.Run(d.name, func(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"time"
 
 	"github.com/danielfbm/tkn-act/internal/loader"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
@@ -25,9 +26,11 @@ type RunResult struct {
 }
 
 type TaskOutcome struct {
-	Status  string
-	Message string
-	Results map[string]string
+	Status   string
+	Message  string
+	Results  map[string]string
+	Attempt  int           // final attempt number (1-based); 0 = did not run
+	Duration time.Duration // duration of the final attempt
 }
 
 func newRunID() string {

@@ -134,6 +134,7 @@ func exitCodeTable() []exitCodeInfo {
 		{3, "environment", "Docker not running, k3d/kubectl missing, cache dir not writable"},
 		{4, "validate", "Tekton YAML rejected before run"},
 		{5, "pipeline", "run completed but a Task or finally task failed"},
+		{6, "timeout", "a Task or finally task ended due to its declared timeout"},
 		{130, "cancelled", "SIGINT or SIGTERM during a run"},
 	}
 }
