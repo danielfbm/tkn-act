@@ -56,6 +56,14 @@ func (b *Backend) ensureNamespace(ctx context.Context, name string) error {
 // pipelineSpec inlined and workspaces backed by volumeClaimTemplate.
 func buildPipelineRun(in backend.PipelineRunInvocation, namespace string) *unstructured.Unstructured {
 	pipelineSpec := pipelineSpecToMap(in.Pipeline)
+	// Tekton's v1 PipelineSpec does not carry a `timeouts` field —
+	// timeouts live on PipelineRun.spec.timeouts. tkn-act's tektontypes
+	// puts the field on PipelineSpec (so authors can write it once on
+	// the Pipeline), but when serialized into pipelineSpec for the
+	// cluster backend it would be rejected by Tekton's webhook
+	// ("unknown field"). Drop it here; we re-attach it onto the
+	// PipelineRun's spec below.
+	delete(pipelineSpec, "timeouts")
 
 	// Inline embedded Tasks under each PipelineTask.taskSpec.
 	if tasks, ok := pipelineSpec["tasks"].([]any); ok {
@@ -97,6 +105,21 @@ func buildPipelineRun(in backend.PipelineRunInvocation, namespace string) *unstr
 
 	spec := map[string]any{
 		"pipelineSpec": pipelineSpec,
+	}
+	if t := in.Pipeline.Spec.Timeouts; t != nil {
+		out := map[string]any{}
+		if t.Pipeline != "" {
+			out["pipeline"] = t.Pipeline
+		}
+		if t.Tasks != "" {
+			out["tasks"] = t.Tasks
+		}
+		if t.Finally != "" {
+			out["finally"] = t.Finally
+		}
+		if len(out) > 0 {
+			spec["timeouts"] = out
+		}
 	}
 	if len(in.Params) > 0 {
 		var ps []any
@@ -237,6 +260,22 @@ func (b *Backend) watchPipelineRun(ctx context.Context, in backend.PipelineRunIn
 			res.Status = mapPipelineRunStatus(status, reason)
 			res.Ended = time.Now()
 			res.Tasks = b.collectTaskOutcomes(ctx, in, ns)
+			// `spec.timeouts.{tasks,finally}` exhaustion does NOT set the
+			// PipelineRun condition reason to a timeout — Tekton only
+			// cancels the affected TaskRuns with the
+			// `TaskRunCancelledByPipelineTimeoutMsg` spec.statusMessage,
+			// then the PipelineRun ends Failed because a TaskRun failed.
+			// Re-classify the run-level status to `timeout` when any
+			// per-task outcome already mapped to `timeout` (taskRunToOutcome
+			// reads spec.statusMessage to surface that).
+			if res.Status == "failed" {
+				for _, oc := range res.Tasks {
+					if oc.Status == "timeout" {
+						res.Status = "timeout"
+						break
+					}
+				}
+			}
 			return res, nil
 		}
 	}
@@ -266,6 +305,14 @@ func (b *Backend) collectTaskOutcomes(ctx context.Context, in backend.PipelineRu
 	return out
 }
 
+// taskRunCancelledByPipelineTimeoutMsg matches Tekton's
+// v1.TaskRunCancelledByPipelineTimeoutMsg constant. Tekton cancels
+// TaskRuns affected by `spec.timeouts.{tasks,finally}` exhaustion by
+// patching their `spec.statusMessage` to this exact string; the
+// resulting condition reason is just `TaskRunCancelled`, so we have
+// to read the message to disambiguate cancel-vs-timeout.
+const taskRunCancelledByPipelineTimeoutMsg = "TaskRun cancelled as the PipelineRun it belongs to has timed out."
+
 // taskRunToOutcome reads the parts of a Tekton TaskRun status the engine
 // needs to reconstruct task-end / task-retry events: terminal status,
 // retriesStatus list, and (when present) per-result values.
@@ -282,6 +329,14 @@ func taskRunToOutcome(tr *unstructured.Unstructured) backend.TaskOutcomeOnCluste
 		oc.Status = mapTaskRunStatus(st, reason)
 		oc.Message, _ = cm["message"].(string)
 		break
+	}
+	// Detect cancel-by-pipeline-timeout: spec.statusMessage carries the
+	// signal even when the condition reason is just TaskRunCancelled.
+	if msg, _, _ := unstructured.NestedString(tr.Object, "spec", "statusMessage"); msg == taskRunCancelledByPipelineTimeoutMsg {
+		oc.Status = "timeout"
+		if oc.Message == "" {
+			oc.Message = msg
+		}
 	}
 	if oc.Status == "" {
 		oc.Status = "infrafailed"

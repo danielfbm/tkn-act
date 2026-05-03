@@ -159,6 +159,19 @@ type PipelineSpec struct {
 	Tasks       []PipelineTask          `json:"tasks"`
 	Finally     []PipelineTask          `json:"finally,omitempty"`
 	Results     []PipelineResultSpec    `json:"results,omitempty"`
+	Timeouts    *Timeouts               `json:"timeouts,omitempty"`
+}
+
+// Timeouts mirrors Tekton's PipelineSpec.Timeouts (tekton.dev/v1).
+//
+// Each field is a Go-style time.Duration string (e.g. "30s", "5m", "2h").
+// Unset fields mean "no budget at this level". Validator enforces:
+// durations parseable, none equals zero, and tasks+finally ≤ pipeline
+// when all three are set.
+type Timeouts struct {
+	Pipeline string `json:"pipeline,omitempty"`
+	Tasks    string `json:"tasks,omitempty"`
+	Finally  string `json:"finally,omitempty"`
 }
 
 type PipelineWorkspaceDecl struct {

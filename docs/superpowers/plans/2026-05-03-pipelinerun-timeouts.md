@@ -54,6 +54,7 @@ Constraints:
 | `AGENTS.md` | Same change (kept in sync — already drifts and we want this PR to converge them on the new section) |
 | `docs/test-coverage.md` | List the three new fixtures |
 | `docs/short-term-goals.md` | Mark Track 1 #2 done (status column) |
+| `docs/feature-parity.md` | Flip the `Pipeline.spec.timeouts...` row from `in-progress` to `shipped`, populate `e2e fixture` for each of the three new fixtures, link the PR. CI's `parity-check` job will block the PR if this is missing. |
 
 ## Out of scope (don't do here)
 
@@ -1271,11 +1272,43 @@ to:
 
 (Replace the PR number once the PR is open.)
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Update `docs/feature-parity.md`**
+
+The `parity-check` CI job will fail the PR if this step is skipped — the
+table is the canonical scoreboard and CI enforces five invariants on it
+(see the doc's preamble).
+
+In `docs/feature-parity.md`, find the row in the **Pipeline policy**
+section that reads:
+
+```
+| `Pipeline.spec.timeouts.{pipeline,tasks,finally}` | `PipelineSpec.timeouts` | in-progress | both | none | none | docs/superpowers/plans/2026-05-03-pipelinerun-timeouts.md (Track 1 #2) |
+```
+
+Replace it with three rows — one per sub-feature — each marked
+`shipped` and pointing at its e2e fixture:
+
+```
+| `Pipeline.spec.timeouts.pipeline` (whole-run wall clock) | `PipelineSpec.timeouts.pipeline` | shipped | both | pipeline-timeout | none | PR #<NUM> |
+| `Pipeline.spec.timeouts.tasks` (tasks-DAG-only wall clock) | `PipelineSpec.timeouts.tasks` | shipped | both | tasks-timeout | none | PR #<NUM> |
+| `Pipeline.spec.timeouts.finally` (finally-only wall clock) | `PipelineSpec.timeouts.finally` | shipped | both | finally-timeout | none | PR #<NUM> |
+```
+
+Replace `<NUM>` with this PR's number once it's open (Task 9 step 3).
+
+Verify the table is consistent before committing:
 
 ```bash
-git add cmd/tkn-act/agentguide_data.md AGENTS.md docs/test-coverage.md docs/short-term-goals.md
-git commit -m "docs: document spec.timeouts and converge AGENTS.md with embedded guide"
+bash .github/scripts/parity-check.sh
+```
+
+Expected: `parity-check: docs/feature-parity.md, testdata/e2e/, and testdata/limitations/ are consistent.`
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add cmd/tkn-act/agentguide_data.md AGENTS.md docs/test-coverage.md docs/short-term-goals.md docs/feature-parity.md
+git commit -m "docs: document spec.timeouts, converge AGENTS.md with embedded guide, flip parity scoreboard"
 ```
 
 ---
@@ -1288,10 +1321,12 @@ git commit -m "docs: document spec.timeouts and converge AGENTS.md with embedded
 go vet ./... && go vet -tags integration ./... && go vet -tags cluster ./...
 go build ./...
 go test -race -count=1 ./...
+bash .github/scripts/parity-check.sh
 .github/scripts/tests-required.sh main HEAD
 ```
 
-Expected: all exit 0, every test package OK or no-test-files.
+Expected: all exit 0; `parity-check` reports the docs and tree are
+consistent; every test package OK or no-test-files.
 
 - [ ] **Step 2: Push branch and open PR**
 
@@ -1345,7 +1380,7 @@ gh pr merge <num> --squash --delete-branch
 
 ## Self-review notes
 
-- **Spec coverage:** Three Tekton fields (`pipeline`, `tasks`, `finally`) → Tasks 3 (parser), 4 (engine wiring), 5 (cluster pass-through). Validator rules → Task 2. Type model → Task 1. Cross-backend invariant → Tasks 6+7 (fixtures hit `fixtures.All()`, both harnesses iterate). Docs → Task 8.
-- **No placeholders:** every step has the actual code or command. The "amend the docs commit" step in Task 9 is the only mild deferral; it's an after-PR-open polish, fine to skip.
+- **Spec coverage:** Three Tekton fields (`pipeline`, `tasks`, `finally`) → Tasks 3 (parser), 4 (engine wiring), 5 (cluster pass-through). Validator rules → Task 2. Type model → Task 1. Cross-backend invariant → Tasks 6+7 (fixtures hit `fixtures.All()`, both harnesses iterate). Docs → Task 8 (now 7 steps: agent-guide × 2, embedded-test, test-coverage, short-term-goals, **feature-parity scoreboard**, commit). The `parity-check` CI gate (added in PR #8 / commit 716b719) will block this PR if the scoreboard step is skipped.
+- **No placeholders:** every step has the actual code or command. The "amend the docs commit" step in Task 9 is the only mild deferral; it's an after-PR-open polish, fine to skip. The PR-number placeholders in Task 8 step 5 and step 6 are deliberate (the number isn't known until Task 9 step 2 runs).
 - **Type consistency:** `parsePipelineTimeouts` returns `pipelineTimeouts` (lowercase, package-internal); `tasksBudget`/`finallyBudget` are methods on it; `withMaybeBudget` is the wrapper. These names are stable across Tasks 3 and 4. The validator helper `parseTimeout` is unrelated and lives in `internal/validator`.
 - **One-task non-regression:** Task 4 explicitly runs `TestEngine` to make sure the existing per-task timeout test (`TestEngineTaskTimeout`) still passes — important because the engine loop is rearranged.

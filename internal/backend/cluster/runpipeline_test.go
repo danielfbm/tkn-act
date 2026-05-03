@@ -155,6 +155,66 @@ func flipStatusUntilStop(t *testing.T, dyn *dynamicfake.FakeDynamicClient, ns, p
 	return stop
 }
 
+// TestTaskRunToOutcomeReadsTimeoutCancelMessage: when Tekton's
+// tasks/finally budget cancels a TaskRun, the condition reason is just
+// `TaskRunCancelled`; the timeout signal lives in
+// `spec.statusMessage`. taskRunToOutcome must read the message and
+// surface the per-task status as `timeout` so the engine emits the
+// correct task-end event.
+func TestTaskRunToOutcomeReadsTimeoutCancelMessage(t *testing.T) {
+	ns := "tkn-act-12345678"
+	prName := "p-12345678"
+	tr := taskRunObj("p-12345678-t-pod", ns, prName, "t", "False", "TaskRunCancelled", 0)
+	_ = unstructured.SetNestedField(tr.Object, "TaskRun cancelled as the PipelineRun it belongs to has timed out.", "spec", "statusMessage")
+	be, _, _, _, _ := fakeBackend(t, tr)
+
+	got := be.CollectTaskOutcomesForTest(context.Background(), backend.PipelineRunInvocation{
+		PipelineRunName: prName,
+	}, ns)
+
+	if got["t"].Status != "timeout" {
+		t.Errorf("status = %q, want timeout", got["t"].Status)
+	}
+}
+
+// TestRunPipelineMapsTasksTimeoutViaTaskRunMessage: when the
+// PipelineRun condition is Failed (no `PipelineRunTimeout` reason)
+// but at least one TaskRun was cancelled by the pipeline timeout,
+// the run-level status must be re-classified to `timeout`.
+func TestRunPipelineMapsTasksTimeoutViaTaskRunMessage(t *testing.T) {
+	prName := "p-aabbccdd"
+	ns := "tkn-act-aabbccdd"
+
+	// Pre-seed a TaskRun cancelled by pipeline timeout. The watcher
+	// will Get this object after the PR transitions to Failed.
+	tr := taskRunObj(prName+"-t-pod", ns, prName, "t", "False", "TaskRunCancelled", 0)
+	_ = unstructured.SetNestedField(tr.Object, "TaskRun cancelled as the PipelineRun it belongs to has timed out.", "spec", "statusMessage")
+
+	be, dyn, _, _, _ := fakeBackend(t, tr)
+
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Timeouts: &tektontypes.Timeouts{Tasks: "2s"},
+		Tasks:    []tektontypes.PipelineTask{{Name: "t", TaskRef: &tektontypes.TaskRef{Name: "x"}}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{Steps: []tektontypes.Step{{Name: "s", Image: "alpine:3", Script: "sleep 30"}}}}
+	tk.Metadata.Name = "x"
+
+	stopUpdater := flipStatusUntilStop(t, dyn, ns, prName, "False", "Failed")
+	defer close(stopUpdater)
+
+	res, err := be.RunPipeline(context.Background(), backend.PipelineRunInvocation{
+		RunID: "aabbccdd", PipelineRunName: prName,
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"x": tk},
+	})
+	if err != nil {
+		t.Fatalf("RunPipeline: %v", err)
+	}
+	if res.Status != "timeout" {
+		t.Errorf("status = %q, want timeout (cancelled-by-pipeline-timeout TaskRun must be surfaced)", res.Status)
+	}
+}
+
 // TestRunPipelineNotPrepared: missing dynamic/kube clients must yield a
 // clear error, not a panic.
 func TestRunPipelineNotPrepared(t *testing.T) {
@@ -258,6 +318,43 @@ func taskRunObj(name, ns, prName, ptName, condStatus, reason string, retries int
 		_ = unstructured.SetNestedSlice(tr.Object, rs, "status", "retriesStatus")
 	}
 	return tr
+}
+
+// TestBuildPipelineRunInlinesTimeouts: when the Pipeline declares
+// spec.timeouts, the cluster backend must copy that block onto the
+// submitted PipelineRun's spec so the controller enforces it.
+func TestBuildPipelineRunInlinesTimeouts(t *testing.T) {
+	be, _, _, _, _ := fakeBackend(t)
+
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Timeouts: &tektontypes.Timeouts{Pipeline: "10m", Tasks: "8m", Finally: "2m"},
+		Tasks:    []tektontypes.PipelineTask{{Name: "a", TaskRef: &tektontypes.TaskRef{Name: "t"}}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{Steps: []tektontypes.Step{{Name: "s", Image: "alpine:3", Script: "true"}}}}
+	tk.Metadata.Name = "t"
+
+	prObj, err := be.BuildPipelineRunObject(backend.PipelineRunInvocation{
+		RunID: "12345678", PipelineRunName: "p-12345678",
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"t": tk},
+	}, "tkn-act-12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	un := prObj.(*unstructured.Unstructured)
+	got, found, err := unstructured.NestedMap(un.Object, "spec", "timeouts")
+	if err != nil || !found {
+		t.Fatalf("spec.timeouts missing on submitted PipelineRun")
+	}
+	if got["pipeline"] != "10m" || got["tasks"] != "8m" || got["finally"] != "2m" {
+		t.Errorf("spec.timeouts = %v, want pipeline=10m tasks=8m finally=2m", got)
+	}
+	// Tekton v1 PipelineSpec does NOT have a timeouts field. Leaving it
+	// under pipelineSpec.timeouts gets rejected by the admission webhook
+	// ("unknown field"). Verify it's stripped.
+	if _, found, _ := unstructured.NestedMap(un.Object, "spec", "pipelineSpec", "timeouts"); found {
+		t.Errorf("pipelineSpec.timeouts must NOT be set on the submitted PipelineRun (Tekton rejects it)")
+	}
 }
 
 // TestEnsureNamespaceIdempotent: a second RunPipeline call against the

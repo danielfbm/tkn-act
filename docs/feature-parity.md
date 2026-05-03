@@ -131,7 +131,7 @@ The columns:
 
 | Feature | Spec field | Status | Backends | e2e fixture | Limitations fixture | Plan / Spec / PR |
 |---|---|---|---|---|---|---|
-| `Pipeline.spec.timeouts.{pipeline,tasks,finally}` | `PipelineSpec.timeouts` | in-progress | both | none | none | docs/superpowers/plans/2026-05-03-pipelinerun-timeouts.md (Track 1 #2) |
+| `Pipeline.spec.timeouts.{pipeline,tasks,finally}` | `PipelineSpec.timeouts` | shipped | both | pipeline-timeout | none | docs/superpowers/plans/2026-05-03-pipelinerun-timeouts.md (Track 1 #2); also covered by `tasks-timeout`, `finally-timeout` |
 | `PipelineTask.matrix` (parameter-matrix fan-out) | `PipelineTask.matrix` | gap | both | none | none | docs/short-term-goals.md (Track 1 #3) |
 
 ### Task structure

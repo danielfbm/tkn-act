@@ -95,11 +95,32 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 	overallStart := time.Now()
 	overall := "succeeded"
 
-	// Execute levels.
+	timeouts, err := parsePipelineTimeouts(pl.Spec.Timeouts)
+	if err != nil {
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Message: err.Error()})
+		return RunResult{Status: "failed"}, err
+	}
+	pipeCtx, pipeCancel := withMaybeBudget(ctx, timeouts.Pipeline)
+	defer pipeCancel()
+
+	// Execute levels under the tasks budget.
+	tasksCtx, tasksCancel := withMaybeBudget(pipeCtx, timeouts.tasksBudget())
 	var mu sync.Mutex
+levelLoop:
 	for _, level := range levels {
-		// Skip tasks whose ancestors failed.
-		eg, gctx := errgroup.WithContext(ctx)
+		// If the tasks budget already fired, mark anything not yet
+		// started as not-run and stop scheduling.
+		if tasksCtx.Err() != nil {
+			for _, taskName := range level {
+				if _, alreadyDone := outcomes[taskName]; alreadyDone {
+					continue
+				}
+				outcomes[taskName] = TaskOutcome{Status: "not-run"}
+				e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: taskName, Message: "tasks timeout fired"})
+			}
+			continue
+		}
+		eg, gctx := errgroup.WithContext(tasksCtx)
 		eg.SetLimit(e.opts.MaxParallel)
 		for _, taskName := range level {
 			tname := taskName
@@ -149,12 +170,36 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 			})
 		}
 		_ = eg.Wait()
+		if tasksCtx.Err() != nil {
+			overall = "timeout"
+			tasksCancel()
+			break levelLoop
+		}
 	}
+	tasksCancel()
 
-	// Finally tasks always run.
+	// Finally tasks always run, under the finally budget (rooted at pipeCtx,
+	// not tasksCtx — exhausting tasks must not shorten finally).
+	finallyCtx, finallyCancel := withMaybeBudget(pipeCtx, timeouts.finallyBudget())
+	defer finallyCancel()
 	for _, pt := range pl.Spec.Finally {
+		if finallyCtx.Err() != nil {
+			outcomes[pt.Name] = TaskOutcome{Status: "not-run"}
+			e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: pt.Name, Message: "finally timeout fired"})
+			continue
+		}
 		e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskStart, Time: time.Now(), Task: pt.Name})
-		oc := e.runOneWithPolicy(ctx, in, pl, pt, params, results, runID, pipelineRunName)
+		oc := e.runOneWithPolicy(finallyCtx, in, pl, pt, params, results, runID, pipelineRunName)
+		// If the finally (or pipeline) budget fired during this task, the
+		// backend returned a cancellation-class outcome ("infrafailed" /
+		// "failed"). Re-classify it as "timeout" so the per-task event and
+		// the overall run agree on what killed the task.
+		if finallyCtx.Err() != nil && (oc.Status == "infrafailed" || oc.Status == "failed") {
+			oc.Status = "timeout"
+			if oc.Message == "" {
+				oc.Message = "finally timeout exceeded"
+			}
+		}
 		e.rep.Emit(reporter.Event{
 			Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: pt.Name,
 			Status: oc.Status, Duration: oc.Duration, Message: oc.Message, Attempt: oc.Attempt,
@@ -168,6 +213,13 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 		case "timeout":
 			overall = "timeout"
 		}
+	}
+
+	// Either budget firing means the run timed out, regardless of how
+	// individual task outcomes shook out (a budget kill is a "timeout"
+	// even if backends reported infrafailed mid-flight).
+	if pipeCtx.Err() != nil || finallyCtx.Err() != nil {
+		overall = "timeout"
 	}
 
 	e.rep.Emit(reporter.Event{

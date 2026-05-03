@@ -1,0 +1,21 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: hangs
+spec:
+  steps:
+    - name: sleep
+      image: alpine:3
+      script: |
+        sleep 30
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: pipeline-timeout
+spec:
+  timeouts:
+    pipeline: "2s"
+  tasks:
+    - name: t
+      taskRef: { name: hangs }

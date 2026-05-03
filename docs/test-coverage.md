@@ -82,6 +82,9 @@ fixtures under `testdata/e2e/`:
 | `timeout/` | task ends `timeout` after 1s sleep-30 |
 | `step-results/` | per-step results substitution |
 | `volumes/` | inline configMap + emptyDir mounted into a step |
+| `pipeline-timeout/` | `Pipeline.spec.timeouts.pipeline: 2s` triggers run-level timeout |
+| `tasks-timeout/`    | `tasks` budget fires; `finally` block still runs to completion |
+| `finally-timeout/`  | `finally` budget fires; `tasks` block already succeeded |
 
 Plus `internal/backend/docker/docker_integration_test.go`.
 
