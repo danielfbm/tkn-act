@@ -41,8 +41,24 @@ type TaskSpec struct {
 	Description string          `json:"description,omitempty"`
 	// Timeout is a Go duration string (e.g. "30s", "5m"). Empty means no
 	// task-level timeout.
-	Timeout string   `json:"timeout,omitempty"`
-	Volumes []Volume `json:"volumes,omitempty"`
+	Timeout      string        `json:"timeout,omitempty"`
+	Volumes      []Volume      `json:"volumes,omitempty"`
+	StepTemplate *StepTemplate `json:"stepTemplate,omitempty"`
+}
+
+// StepTemplate is the partial-Step template merged into every Step in
+// TaskSpec.Steps. Fields are inherited only when the Step doesn't set
+// its own. Mirrors Tekton's StepTemplate (v1) for the subset of Step
+// fields tkn-act reads. `name`, `script`, `volumeMounts`, `results`,
+// and `onError` are NOT inheritable — they're intrinsically per-Step.
+type StepTemplate struct {
+	Image           string         `json:"image,omitempty"`
+	Command         []string       `json:"command,omitempty"`
+	Args            []string       `json:"args,omitempty"`
+	Env             []EnvVar       `json:"env,omitempty"`
+	WorkingDir      string         `json:"workingDir,omitempty"`
+	Resources       *StepResources `json:"resources,omitempty"`
+	ImagePullPolicy string         `json:"imagePullPolicy,omitempty"`
 }
 
 type Step struct {
