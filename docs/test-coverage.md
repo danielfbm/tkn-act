@@ -85,6 +85,7 @@ fixtures under `testdata/e2e/`:
 | `pipeline-timeout/` | `Pipeline.spec.timeouts.pipeline: 2s` triggers run-level timeout |
 | `tasks-timeout/`    | `tasks` budget fires; `finally` block still runs to completion |
 | `finally-timeout/`  | `finally` budget fires; `tasks` block already succeeded |
+| `step-template/`    | `Task.spec.stepTemplate` inheritance: image + env, with one Step overriding env |
 
 Plus `internal/backend/docker/docker_integration_test.go`.
 

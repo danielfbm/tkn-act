@@ -32,6 +32,9 @@ Or via `tkn`'s plugin discovery — drop the binary on your PATH and run `tkn ac
 - DAG ordering via `runAfter` and result-data deps
 - `when` expressions (operator: `in`, `notin`)
 - `finally` tasks
+- `Task.spec.stepTemplate` — Steps inherit `image`, `command`, `args`,
+  `env`, `workingDir`, `imagePullPolicy`, `resources` from a per-Task
+  base template (`env` merged by name; Step values always win)
 
 ## What's not supported in v1
 
