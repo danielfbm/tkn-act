@@ -160,6 +160,12 @@ In rough order of "you should be aware":
   This file's hyperlinks are not verified.
 - **`tkn-act run` against a private registry.** Image pull tests use
   `alpine:3` (public). Auth paths are untested.
+- **Repo-root `Makefile` targets** (`make quickstart`, `make doctor`,
+  `make cluster-up`, `make hello-cluster`, …). They wrap commands CI
+  already exercises (`go test`, `go vet`, `tkn-act cluster up`,
+  `tkn-act run --cluster`), so there is no separate CI job that runs
+  `make` itself. Contributors are expected to use them locally; the
+  underlying behavior they call into is what's gated.
 
 ### Smoke vs. real e2e gaps
 
