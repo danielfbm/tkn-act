@@ -22,17 +22,30 @@ import (
 
 // Store is a configMap-or-secret bytes-source.
 //
-// Lookup precedence: inline override (set via Add) wins over the on-disk
-// directory layout (Dir/<name>/<key>).
+// Lookup precedence (highest first):
+//
+//  1. Inline overrides (Add) — typically from `--configmap` / `--secret`.
+//  2. On-disk Dir layout — typically from `--configmap-dir` / `--secret-dir`.
+//  3. Bundle-loaded bytes (LoadBytes) — typically from `kind: ConfigMap`
+//     / `kind: Secret` resources found in the `-f` YAML stream.
+//
+// Each layer is checked per (name, key); a key present at a higher
+// layer hides the same key at lower layers.
 type Store struct {
 	Dir    string                       // <root>/<name>/<key> per source
 	Inline map[string]map[string]string // name -> key -> value
+	Bundle map[string]map[string][]byte // name -> key -> bytes
 }
 
 // NewStore returns an empty Store rooted at dir. Inline overrides may be
-// added via Add. dir may be empty (no on-disk layout).
+// added via Add and bundle-loaded data via LoadBytes. dir may be empty
+// (no on-disk layout).
 func NewStore(dir string) *Store {
-	return &Store{Dir: dir, Inline: map[string]map[string]string{}}
+	return &Store{
+		Dir:    dir,
+		Inline: map[string]map[string]string{},
+		Bundle: map[string]map[string][]byte{},
+	}
 }
 
 // Add records an inline override; later Lookup calls for (name, key) return
@@ -44,10 +57,44 @@ func (s *Store) Add(name, key, value string) {
 	s.Inline[name][key] = value
 }
 
-// Resolve returns the bytes for every key declared by source `name`. Keys
-// from the inline map (if present) win over keys read from disk.
+// LoadBytes records bundle-loaded bytes for every key under `name`.
+// These sit at the lowest precedence layer: a key present here is
+// shadowed by the same key in either the on-disk Dir layout or the
+// inline overrides.
+//
+// Calling LoadBytes twice for the same name is a merge (later keys
+// overwrite earlier ones); duplicate-name detection happens at the
+// loader layer, not here.
+func (s *Store) LoadBytes(name string, bytesByKey map[string][]byte) {
+	if s.Bundle[name] == nil {
+		s.Bundle[name] = map[string][]byte{}
+	}
+	for k, v := range bytesByKey {
+		// Copy the slice so later mutations of the caller's map don't
+		// leak into the Store.
+		cp := make([]byte, len(v))
+		copy(cp, v)
+		s.Bundle[name][k] = cp
+	}
+}
+
+// Resolve returns the bytes for every key declared by source `name`.
+// Layers are merged with this precedence (higher beats lower):
+//
+//  1. Inline (Add)
+//  2. On-disk Dir
+//  3. Bundle (LoadBytes)
+//
+// An error is returned only when no layer produced any keys.
 func (s *Store) Resolve(name string) (map[string][]byte, error) {
 	out := map[string][]byte{}
+	// 3. Bundle (lowest).
+	for k, v := range s.Bundle[name] {
+		cp := make([]byte, len(v))
+		copy(cp, v)
+		out[k] = cp
+	}
+	// 2. On-disk dir.
 	if s.Dir != "" {
 		base := filepath.Join(s.Dir, name)
 		entries, err := os.ReadDir(base)
@@ -66,11 +113,12 @@ func (s *Store) Resolve(name string) (map[string][]byte, error) {
 			return nil, fmt.Errorf("read source %s: %w", name, err)
 		}
 	}
+	// 1. Inline (highest).
 	for k, v := range s.Inline[name] {
 		out[k] = []byte(v)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("source %q has no keys (looked in %s and inline overrides; pass --configmap/--secret or populate the dir)", name, s.Dir)
+		return nil, fmt.Errorf("source %q has no keys (looked in %s, inline overrides, and -f-loaded resources; pass --configmap/--secret, populate the dir, or include kind: ConfigMap/Secret in -f)", name, s.Dir)
 	}
 	return out, nil
 }

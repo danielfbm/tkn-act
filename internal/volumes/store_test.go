@@ -133,6 +133,53 @@ func TestMaterializeConfigMapWithItems(t *testing.T) {
 	}
 }
 
+func TestStoreBundleIsLowestPrecedence(t *testing.T) {
+	dir := t.TempDir()
+	// On-disk dir: cfg/k = from-disk
+	if err := os.MkdirAll(filepath.Join(dir, "cfg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cfg", "k"), []byte("from-disk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := volumes.NewStore(dir)
+	// Bundle (lowest) loads cfg/k = from-bundle
+	s.LoadBytes("cfg", map[string][]byte{"k": []byte("from-bundle")})
+
+	got, err := s.Resolve("cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got["k"]) != "from-disk" {
+		t.Errorf("k = %q, want from-disk (dir beats bundle)", got["k"])
+	}
+
+	// Inline (highest) overrides both
+	s.Add("cfg", "k", "from-inline")
+	got, err = s.Resolve("cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got["k"]) != "from-inline" {
+		t.Errorf("k = %q, want from-inline (inline beats dir beats bundle)", got["k"])
+	}
+}
+
+func TestStoreBundleOnlyResolves(t *testing.T) {
+	s := volumes.NewStore("")
+	s.LoadBytes("cfg", map[string][]byte{
+		"a": []byte("alpha"),
+		"b": []byte("beta"),
+	})
+	got, err := s.Resolve("cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got["a"]) != "alpha" || string(got["b"]) != "beta" {
+		t.Errorf("got %+v, want a=alpha b=beta", got)
+	}
+}
+
 func TestMaterializeRejectsPathTraversal(t *testing.T) {
 	cm := volumes.NewStore("")
 	cm.Add("g", "k", "v")
