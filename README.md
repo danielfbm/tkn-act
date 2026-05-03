@@ -121,16 +121,6 @@ prioritized track of what's next.
 | [`docs/superpowers/specs/2026-05-02-agent-first-class-cli-design.md`](docs/superpowers/specs/2026-05-02-agent-first-class-cli-design.md) | First-class AI-agent CLI: `doctor`, `help-json`, JSON-everywhere |
 | [`docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md`](docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md) | Docker-backend Tekton-fidelity v1.2 (onError, retries, timeout, per-step results, volumes) |
 
-### Plans (in-flight / completed implementation plans)
-
-| Plan | Status |
-|---|---|
-| [`2026-05-01-tkn-act-v1.md`](docs/superpowers/plans/2026-05-01-tkn-act-v1.md) | v1 implementation (shipped) |
-| [`2026-05-01-tkn-act-cluster-backend.md`](docs/superpowers/plans/2026-05-01-tkn-act-cluster-backend.md) | Cluster backend implementation (shipped) |
-| [`2026-05-03-cross-backend-fidelity-plan.md`](docs/superpowers/plans/2026-05-03-cross-backend-fidelity-plan.md) | Shared `fixtures.All()` + cluster parity for v1.2 features (shipped) |
-| [`2026-05-03-pipelinerun-timeouts.md`](docs/superpowers/plans/2026-05-03-pipelinerun-timeouts.md) | `Pipeline.spec.timeouts.{pipeline,tasks,finally}` (shipped, v1.3) |
-| [`2026-05-03-step-template.md`](docs/superpowers/plans/2026-05-03-step-template.md) | `Task.spec.stepTemplate` (shipped, v1.4) |
-
 ## License
 
 Apache 2.0
