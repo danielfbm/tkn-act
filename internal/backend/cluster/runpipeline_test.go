@@ -2,6 +2,7 @@ package cluster_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -213,6 +214,252 @@ func TestRunPipelineMapsTasksTimeoutViaTaskRunMessage(t *testing.T) {
 	if res.Status != "timeout" {
 		t.Errorf("status = %q, want timeout (cancelled-by-pipeline-timeout TaskRun must be surfaced)", res.Status)
 	}
+}
+
+// TestRunPipelineMapsTimeoutViaSkippedTasks reproduces the cluster-CI flake
+// where pipeline-timeout returns status=failed within 0.11s. When Tekton's
+// reconciler observes that a task was skipped because the budget elapsed
+// before it could launch, it records the skip in `status.skippedTasks` with
+// SkippingReason `PipelineRun timeout has been reached` (or the tasks/
+// finally analogues). Because at least one task was "skipped due to
+// timeout", `getPipelineTasksCount` increments `SkippedDueToTimeout`,
+// which makes `GetPipelineConditionStatus` return reason `Failed` (not
+// `PipelineRunTimeout`) — and no TaskRun exists for the skipped task to
+// fall back on via the per-TaskRun statusMessage check.
+//
+// The fix: when the PR ends `Failed` and `status.skippedTasks` contains
+// any task with a timeout-related SkippingReason, classify the run as
+// `timeout`.
+func TestRunPipelineMapsTimeoutViaSkippedTasks(t *testing.T) {
+	be, dyn, _, _, _ := fakeBackend(t)
+
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Timeouts: &tektontypes.Timeouts{Pipeline: "2s"},
+		Tasks:    []tektontypes.PipelineTask{{Name: "t", TaskRef: &tektontypes.TaskRef{Name: "x"}}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{Steps: []tektontypes.Step{{Name: "s", Image: "alpine:3", Script: "sleep 30"}}}}
+	tk.Metadata.Name = "x"
+
+	prName := "p-deadbe01"
+	ns := "tkn-act-deadbe01"
+
+	// Drive the PR to status=False/Failed *with* a skippedTasks entry whose
+	// reason indicates the PipelineRun timeout. No TaskRun exists for the
+	// skipped task — that's the whole point: tasks skipped due to budget
+	// exhaustion never get a TaskRun.
+	stopUpdater := flipStatusWithSkippedTasksUntilStop(t, dyn, ns, prName, "False", "Failed",
+		[]any{
+			map[string]any{
+				"name":   "t",
+				"reason": "PipelineRun timeout has been reached",
+			},
+		})
+	defer close(stopUpdater)
+
+	res, err := be.RunPipeline(context.Background(), backend.PipelineRunInvocation{
+		RunID: "deadbe01", PipelineRunName: prName,
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"x": tk},
+	})
+	if err != nil {
+		t.Fatalf("RunPipeline: %v", err)
+	}
+	if res.Status != "timeout" {
+		t.Errorf("status = %q, want timeout (skippedTasks with PipelineTimedOutSkip must be surfaced)", res.Status)
+	}
+}
+
+// TestRunPipelineMapsTasksAndFinallyTimeoutViaSkippedTasks: same as above
+// but for `tasks` and `finally` budget skip reasons. Both should map to
+// run-level status `timeout`.
+func TestRunPipelineMapsTasksAndFinallyTimeoutViaSkippedTasks(t *testing.T) {
+	cases := []struct {
+		name          string
+		runID         string
+		skippedReason string
+	}{
+		{"tasks-budget", "deadbe02", "PipelineRun Tasks timeout has been reached"},
+		{"finally-budget", "deadbe03", "PipelineRun Finally timeout has been reached"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			be, dyn, _, _, _ := fakeBackend(t)
+			pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+				Timeouts: &tektontypes.Timeouts{Tasks: "2s"},
+				Tasks:    []tektontypes.PipelineTask{{Name: "t", TaskRef: &tektontypes.TaskRef{Name: "x"}}},
+			}}
+			pl.Metadata.Name = "p"
+			tk := tektontypes.Task{Spec: tektontypes.TaskSpec{Steps: []tektontypes.Step{{Name: "s", Image: "alpine:3", Script: "sleep 30"}}}}
+			tk.Metadata.Name = "x"
+
+			prName := "p-" + c.runID
+			ns := "tkn-act-" + c.runID
+
+			stopUpdater := flipStatusWithSkippedTasksUntilStop(t, dyn, ns, prName, "False", "Failed",
+				[]any{
+					map[string]any{
+						"name":   "t",
+						"reason": c.skippedReason,
+					},
+				})
+			defer close(stopUpdater)
+
+			res, err := be.RunPipeline(context.Background(), backend.PipelineRunInvocation{
+				RunID: c.runID, PipelineRunName: prName,
+				Pipeline: pl, Tasks: map[string]tektontypes.Task{"x": tk},
+			})
+			if err != nil {
+				t.Fatalf("RunPipeline: %v", err)
+			}
+			if res.Status != "timeout" {
+				t.Errorf("status = %q, want timeout (skippedTasks reason %q must be surfaced)", res.Status, c.skippedReason)
+			}
+		})
+	}
+}
+
+// TestRunPipelineFailedWithNonTimeoutSkippedTasksStaysFailed: a PR that
+// ends Failed where the only skipped tasks were skipped for non-timeout
+// reasons (When expressions, parent skip, …) must stay `failed`, not get
+// re-classified to `timeout`. Guards against over-eager fallback.
+func TestRunPipelineFailedWithNonTimeoutSkippedTasksStaysFailed(t *testing.T) {
+	be, dyn, _, _, _ := fakeBackend(t)
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{Name: "t", TaskRef: &tektontypes.TaskRef{Name: "x"}}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{Steps: []tektontypes.Step{{Name: "s", Image: "alpine:3", Script: "false"}}}}
+	tk.Metadata.Name = "x"
+
+	prName := "p-deadbe04"
+	ns := "tkn-act-deadbe04"
+
+	stopUpdater := flipStatusWithSkippedTasksUntilStop(t, dyn, ns, prName, "False", "Failed",
+		[]any{
+			map[string]any{
+				"name":   "t",
+				"reason": "When Expressions evaluated to false",
+			},
+		})
+	defer close(stopUpdater)
+
+	res, err := be.RunPipeline(context.Background(), backend.PipelineRunInvocation{
+		RunID: "deadbe04", PipelineRunName: prName,
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"x": tk},
+	})
+	if err != nil {
+		t.Fatalf("RunPipeline: %v", err)
+	}
+	if res.Status != "failed" {
+		t.Errorf("status = %q, want failed (non-timeout skipped reasons must NOT trigger timeout fallback)", res.Status)
+	}
+}
+
+// TestRunPipelineSurfacesPRReasonAndMessage: when the PR ends terminal,
+// the cluster backend must surface the Tekton condition `reason` and
+// `message` on PipelineRunResult so the engine (and failing CI logs)
+// can attribute the outcome to a specific Tekton path. Without this,
+// every classification flake shows up as `status = failed, want X ()`
+// with no diagnostic context.
+func TestRunPipelineSurfacesPRReasonAndMessage(t *testing.T) {
+	be, dyn, _, _, _ := fakeBackend(t)
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{Name: "t", TaskRef: &tektontypes.TaskRef{Name: "x"}}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{Steps: []tektontypes.Step{{Name: "s", Image: "alpine:3", Script: "true"}}}}
+	tk.Metadata.Name = "x"
+
+	prName := "p-deadbe05"
+	ns := "tkn-act-deadbe05"
+
+	stopUpdater := flipStatusWithMessageUntilStop(t, dyn, ns, prName, "False", "PipelineValidationFailed",
+		"Pipeline p/p can't be Run; it has an invalid spec: bogus")
+	defer close(stopUpdater)
+
+	res, err := be.RunPipeline(context.Background(), backend.PipelineRunInvocation{
+		RunID: "deadbe05", PipelineRunName: prName,
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"x": tk},
+	})
+	if err != nil {
+		t.Fatalf("RunPipeline: %v", err)
+	}
+	if res.Reason != "PipelineValidationFailed" {
+		t.Errorf("reason = %q, want PipelineValidationFailed", res.Reason)
+	}
+	if res.Message == "" || !strings.Contains(res.Message, "invalid spec") {
+		t.Errorf("message = %q, want substring 'invalid spec'", res.Message)
+	}
+}
+
+// flipStatusWithSkippedTasksUntilStop is flipStatusUntilStop plus a
+// `status.skippedTasks` slice. Used to drive the
+// timeout-via-skipped-tasks fallback under test.
+func flipStatusWithSkippedTasksUntilStop(t *testing.T, dyn *dynamicfake.FakeDynamicClient, ns, prName, status, reason string, skipped []any) chan struct{} {
+	t.Helper()
+	stop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		deadline := time.NewTimer(5 * time.Second)
+		defer deadline.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-deadline.C:
+				return
+			case <-ticker.C:
+				obj, err := dyn.Resource(gvrPipelineRunTest).Namespace(ns).Get(context.Background(), prName, metav1.GetOptions{})
+				if err != nil {
+					continue
+				}
+				_ = unstructured.SetNestedSlice(obj.Object, []any{
+					map[string]any{"type": "Succeeded", "status": status, "reason": reason},
+				}, "status", "conditions")
+				_ = unstructured.SetNestedSlice(obj.Object, skipped, "status", "skippedTasks")
+				_, _ = dyn.Resource(gvrPipelineRunTest).Namespace(ns).Update(context.Background(), obj, metav1.UpdateOptions{})
+			}
+		}
+	}()
+	return stop
+}
+
+// flipStatusWithMessageUntilStop is flipStatusUntilStop plus a `message`
+// field on the Succeeded condition. Used to verify the PR's terminal
+// message is surfaced on PipelineRunResult.
+func flipStatusWithMessageUntilStop(t *testing.T, dyn *dynamicfake.FakeDynamicClient, ns, prName, status, reason, message string) chan struct{} {
+	t.Helper()
+	stop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		deadline := time.NewTimer(5 * time.Second)
+		defer deadline.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-deadline.C:
+				return
+			case <-ticker.C:
+				obj, err := dyn.Resource(gvrPipelineRunTest).Namespace(ns).Get(context.Background(), prName, metav1.GetOptions{})
+				if err != nil {
+					continue
+				}
+				_ = unstructured.SetNestedSlice(obj.Object, []any{
+					map[string]any{
+						"type":    "Succeeded",
+						"status":  status,
+						"reason":  reason,
+						"message": message,
+					},
+				}, "status", "conditions")
+				_, _ = dyn.Resource(gvrPipelineRunTest).Namespace(ns).Update(context.Background(), obj, metav1.UpdateOptions{})
+			}
+		}
+	}()
+	return stop
 }
 
 // TestRunPipelineNotPrepared: missing dynamic/kube clients must yield a

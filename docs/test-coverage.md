@@ -98,6 +98,14 @@ Both backends consume `fixtures.All()`, so any new fixture under
 explicit `DockerOnly` / `ClusterOnly` flags on the descriptor rather
 than silent omissions.
 
+The cluster backend also surfaces the Tekton condition reason +
+message verbatim on `engine.RunResult` (and on the run-end JSON
+event's message field). When a fixture's `WantStatus` doesn't match,
+the e2e harness prints both alongside the per-task outcome map,
+turning previously opaque CI failures (`status = X, want Y ()`) into
+attributable ones (`status = X, want Y reason="…" message="…"
+tasks=[…]`).
+
 ---
 
 ## 3. What is NOT covered

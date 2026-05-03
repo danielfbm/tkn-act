@@ -23,6 +23,16 @@ type PipelineInput struct {
 type RunResult struct {
 	Status string // succeeded | failed
 	Tasks  map[string]TaskOutcome
+	// Reason is the backend-supplied terminal reason. On the cluster
+	// backend this is the Tekton condition reason verbatim
+	// (PipelineRunTimeout, PipelineValidationFailed, Failed, …); on
+	// the docker backend it's empty. Surfaced for diagnostic logging
+	// only — the user-visible status enum lives in Status.
+	Reason string
+	// Message is the backend-supplied terminal message. Same purpose
+	// as Reason — surfaced so failure logs can attribute a misclassified
+	// run to a specific backend code path.
+	Message string
 }
 
 type TaskOutcome struct {

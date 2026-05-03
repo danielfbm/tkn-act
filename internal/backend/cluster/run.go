@@ -276,23 +276,37 @@ func (b *Backend) watchPipelineRun(ctx context.Context, in backend.PipelineRunIn
 				continue
 			}
 			reason, _ := cm["reason"].(string)
+			message, _ := cm["message"].(string)
 			res.Status = mapPipelineRunStatus(status, reason)
+			res.Reason = reason
+			res.Message = message
 			res.Ended = time.Now()
 			res.Tasks = b.collectTaskOutcomes(ctx, in, ns)
-			// `spec.timeouts.{tasks,finally}` exhaustion does NOT set the
-			// PipelineRun condition reason to a timeout — Tekton only
-			// cancels the affected TaskRuns with the
-			// `TaskRunCancelledByPipelineTimeoutMsg` spec.statusMessage,
-			// then the PipelineRun ends Failed because a TaskRun failed.
-			// Re-classify the run-level status to `timeout` when any
-			// per-task outcome already mapped to `timeout` (taskRunToOutcome
-			// reads spec.statusMessage to surface that).
+			// `spec.timeouts.{pipeline,tasks,finally}` exhaustion does
+			// NOT always set the PipelineRun condition reason to a
+			// timeout — depending on which budget fired and how Tekton
+			// observed it, the PR can end with reason `Failed` while
+			// the underlying cause was a timeout. Two distinct fallback
+			// signals exist on the PR object:
+			//
+			//   1. TaskRuns that were running when the budget fired are
+			//      cancelled with `TaskRunCancelledByPipelineTimeoutMsg`
+			//      on `spec.statusMessage`. taskRunToOutcome surfaces
+			//      that as per-task `timeout`.
+			//   2. Tasks that hadn't launched yet are recorded in
+			//      `status.skippedTasks` with a SkippingReason of
+			//      `PipelineRun timeout has been reached` /
+			//      `PipelineRun Tasks timeout has been reached` /
+			//      `PipelineRun Finally timeout has been reached`
+			//      (no TaskRun is ever created for them, so #1 misses).
+			//
+			// Re-classify to `timeout` if either signal fires. Without
+			// #2, the cluster-CI `pipeline-timeout` fixture intermittently
+			// reports `failed` in well under the budget when the
+			// reconciler skips the only task before launching it.
 			if res.Status == "failed" {
-				for _, oc := range res.Tasks {
-					if oc.Status == "timeout" {
-						res.Status = "timeout"
-						break
-					}
+				if anyTaskTimedOut(res.Tasks) || anySkippedDueToTimeout(un) {
+					res.Status = "timeout"
 				}
 			}
 			return res, nil
@@ -331,6 +345,52 @@ func (b *Backend) collectTaskOutcomes(ctx context.Context, in backend.PipelineRu
 // resulting condition reason is just `TaskRunCancelled`, so we have
 // to read the message to disambiguate cancel-vs-timeout.
 const taskRunCancelledByPipelineTimeoutMsg = "TaskRun cancelled as the PipelineRun it belongs to has timed out."
+
+// pipelineRunSkippedDueToTimeoutReasons mirrors Tekton's
+// v1.PipelineTimedOutSkip / v1.TasksTimedOutSkip / v1.FinallyTimedOutSkip
+// constants. A skipped task with any of these reasons is the unmistakable
+// signal that the PipelineRun ran out of budget — even when the run-
+// level condition reason ends up as the generic `Failed`. (Tekton's
+// `getPipelineTasksCount` increments SkippedDueToTimeout for these,
+// and the condition reason then collapses to `Failed` because at
+// least one task "failed or was skipped due to timeout".)
+var pipelineRunSkippedDueToTimeoutReasons = map[string]struct{}{
+	"PipelineRun timeout has been reached":         {},
+	"PipelineRun Tasks timeout has been reached":   {},
+	"PipelineRun Finally timeout has been reached": {},
+}
+
+// anyTaskTimedOut returns true if any per-task outcome is already
+// classified as `timeout` (via the per-TaskRun `spec.statusMessage`
+// check in taskRunToOutcome).
+func anyTaskTimedOut(tasks map[string]backend.TaskOutcomeOnCluster) bool {
+	for _, oc := range tasks {
+		if oc.Status == "timeout" {
+			return true
+		}
+	}
+	return false
+}
+
+// anySkippedDueToTimeout returns true if any entry in
+// `status.skippedTasks` carries a timeout-related SkippingReason. This
+// is the only signal we get for tasks that the budget killed before
+// they could launch — those tasks have no TaskRun, so the per-TaskRun
+// statusMessage check (anyTaskTimedOut) misses them.
+func anySkippedDueToTimeout(pr *unstructured.Unstructured) bool {
+	skipped, _, _ := unstructured.NestedSlice(pr.Object, "status", "skippedTasks")
+	for _, s := range skipped {
+		sm, ok := s.(map[string]any)
+		if !ok {
+			continue
+		}
+		reason, _ := sm["reason"].(string)
+		if _, hit := pipelineRunSkippedDueToTimeoutReasons[reason]; hit {
+			return true
+		}
+	}
+	return false
+}
 
 // taskRunToOutcome reads the parts of a Tekton TaskRun status the engine
 // needs to reconstruct task-end / task-retry events: terminal status,
