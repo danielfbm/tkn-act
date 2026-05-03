@@ -200,3 +200,104 @@ spec:
 		t.Errorf("unexpected errors: %v", errs)
 	}
 }
+
+func TestValidatePipelineResultsReferencesUnknownTask(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  results: [{name: v}]
+  steps: [{name: s, image: alpine, script: "true"}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  results:
+    - name: r
+      value: $(tasks.notthere.results.v)
+  tasks:
+    - {name: a, taskRef: {name: t}}
+`)
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) == 0 {
+		t.Fatalf("expected error for unknown task ref in spec.results")
+	}
+	var found bool
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "notthere") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("error did not name the unknown task: %v", errs)
+	}
+}
+
+func TestValidatePipelineResultsKnownTaskOK(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  results: [{name: v}]
+  steps: [{name: s, image: alpine, script: "true"}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  results:
+    - name: from-main
+      value: $(tasks.a.results.v)
+    - name: from-finally
+      value: $(tasks.f.results.v)
+  tasks:
+    - {name: a, taskRef: {name: t}}
+  finally:
+    - {name: f, taskRef: {name: t}}
+`)
+	if errs := validator.Validate(b, "p", nil); len(errs) != 0 {
+		t.Errorf("unexpected errors: %v", errs)
+	}
+}
+
+func TestValidatePipelineResultsArrayAndObjectChecked(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  results: [{name: v}]
+  steps: [{name: s, image: alpine, script: "true"}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  results:
+    - name: list
+      value:
+        - $(tasks.a.results.v)
+        - $(tasks.unknown.results.v)
+    - name: obj
+      value:
+        ok:  $(tasks.a.results.v)
+        bad: $(tasks.alsomissing.results.v)
+  tasks:
+    - {name: a, taskRef: {name: t}}
+`)
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) < 2 {
+		t.Fatalf("expected at least 2 errors (unknown + alsomissing), got %v", errs)
+	}
+	joined := ""
+	for _, e := range errs {
+		joined += e.Error() + "\n"
+	}
+	if !strings.Contains(joined, "unknown") || !strings.Contains(joined, "alsomissing") {
+		t.Errorf("errors did not name both unknown tasks: %v", errs)
+	}
+}
