@@ -93,7 +93,7 @@ The columns:
 |---|---|---|---|---|---|---|
 | Type model: Task, Pipeline, PipelineRun (v1) | `tekton.dev/v1` | shipped | both | hello | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
 | Multi-doc YAML loader | `-f` | shipped | both | hello | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
-| Loading `kind: ConfigMap` / `kind: Secret` from `-f` | `-f` | gap | both | none | none | docs/short-term-goals.md (Track 1 #5) |
+| Loading `kind: ConfigMap` / `kind: Secret` from `-f` | `-f` | shipped | both | configmap-from-yaml | none | docs/superpowers/plans/2026-05-03-cm-secret-from-yaml.md (Track 1 #5); also covered by `secret-from-yaml` |
 
 ### DAG, params, results
 

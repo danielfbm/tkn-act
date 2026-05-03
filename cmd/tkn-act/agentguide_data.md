@@ -165,7 +165,19 @@ esac
   `<path>/<name>/<key>` per source for configMap and secret volumes.
   Defaults: `$XDG_CACHE_HOME/tkn-act/{configmaps,secrets}/`. Inline form:
   `--configmap <name>=<k1>=<v1>[,<k2>=<v2>...]` (repeatable; same shape
-  for `--secret`). Inline overrides win over the on-disk dir per key.
+  for `--secret`). Three sources, layered (highest precedence first):
+  1. inline `--configmap` / `--secret` flag,
+  2. on-disk `--configmap-dir` / `--secret-dir`,
+  3. `kind: ConfigMap` / `kind: Secret` (apiVersion `v1`) resources
+     embedded in the same `-f` YAML stream as the Tasks/Pipelines.
+  A higher layer overrides a lower layer per `(name, key)`. Both
+  ConfigMap `data` and Secret `data` (base64) / `stringData` (plain)
+  fields are honored; `stringData` wins over `data` for the same key
+  per Kubernetes semantics. ConfigMap `binaryData` is rejected at load
+  time. `Secret.type` is parsed-and-ignored — bytes are projected
+  opaquely. CM/Secret YAML files must be passed explicitly with `-f`;
+  there is no auto-discovery for them (only `pipeline.yaml` /
+  `.tekton/` are auto-discovered, and only for Tasks/Pipelines).
 
 `tkn-act` never reads or modifies your shell's `~/.kube/config`.
 
