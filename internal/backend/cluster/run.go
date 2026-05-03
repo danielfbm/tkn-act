@@ -72,14 +72,7 @@ func buildPipelineRun(in backend.PipelineRunInvocation, namespace string) *unstr
 			if !ok {
 				continue
 			}
-			ref, hasRef := m["taskRef"].(map[string]any)
-			if hasRef {
-				name, _ := ref["name"].(string)
-				if tk, ok := in.Tasks[name]; ok {
-					m["taskSpec"] = taskSpecToMap(tk.Spec)
-					delete(m, "taskRef")
-				}
-			}
+			inlineTaskSpec(m, in.Tasks)
 			tasks[i] = m
 		}
 		pipelineSpec["tasks"] = tasks
@@ -90,14 +83,7 @@ func buildPipelineRun(in backend.PipelineRunInvocation, namespace string) *unstr
 			if !ok {
 				continue
 			}
-			ref, hasRef := m["taskRef"].(map[string]any)
-			if hasRef {
-				name, _ := ref["name"].(string)
-				if tk, ok := in.Tasks[name]; ok {
-					m["taskSpec"] = taskSpecToMap(tk.Spec)
-					delete(m, "taskRef")
-				}
-			}
+			inlineTaskSpec(m, in.Tasks)
 			fin[i] = m
 		}
 		pipelineSpec["finally"] = fin
@@ -174,6 +160,39 @@ func pipelineSpecToMap(pl tektontypes.Pipeline) map[string]any {
 		m = map[string]any{}
 	}
 	return m
+}
+
+// inlineTaskSpec resolves a PipelineTask map's taskRef into an inlined
+// taskSpec (Tekton's EmbeddedTask). It also moves any per-task
+// `timeout` from TaskSpec onto PipelineTask.timeout, because Tekton's
+// EmbeddedTask schema has no `timeout` field — leaving it on taskSpec
+// gets the PipelineRun rejected by the admission webhook with
+// `unknown field "timeout"`. PipelineTask.timeout is the supported
+// place for per-task wall clocks under inlined taskSpec.
+func inlineTaskSpec(pt map[string]any, tasks map[string]tektontypes.Task) {
+	ref, hasRef := pt["taskRef"].(map[string]any)
+	if !hasRef {
+		return
+	}
+	name, _ := ref["name"].(string)
+	tk, ok := tasks[name]
+	if !ok {
+		return
+	}
+	tsm := taskSpecToMap(tk.Spec)
+	// Hoist taskSpec.timeout → pipelineSpec.tasks[].timeout. The
+	// PipelineTask.Timeout field is what Tekton's reconciler uses to
+	// drive per-TaskRun wall clocks; the inlined taskSpec must not
+	// carry a timeout. Only hoist when PipelineTask doesn't already
+	// have its own (the on-PipelineTask one wins).
+	if to, present := tsm["timeout"]; present {
+		if _, already := pt["timeout"]; !already {
+			pt["timeout"] = to
+		}
+		delete(tsm, "timeout")
+	}
+	pt["taskSpec"] = tsm
+	delete(pt, "taskRef")
 }
 
 func taskSpecToMap(ts tektontypes.TaskSpec) map[string]any {

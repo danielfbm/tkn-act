@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/danielfbm/tkn-act/internal/cmdrunner"
+	corev1 "k8s.io/api/core/v1"
 	apiextclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,7 +45,10 @@ func (i *Installer) Install(ctx context.Context) error {
 	if i.opt.Apiext != nil {
 		_, err := i.opt.Apiext.ApiextensionsV1().CustomResourceDefinitions().Get(ctx, "pipelines.tekton.dev", metav1.GetOptions{})
 		if err == nil {
-			return i.waitReady(ctx)
+			if err := i.waitReady(ctx); err != nil {
+				return err
+			}
+			return i.enableFeatureFlags(ctx)
 		}
 		if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("check tekton CRD: %w", err)
@@ -54,7 +58,55 @@ func (i *Installer) Install(ctx context.Context) error {
 	if _, err := i.opt.Runner.Output(ctx, "kubectl", "--kubeconfig", i.opt.Kubeconfig, "apply", "-f", url); err != nil {
 		return fmt.Errorf("apply tekton release: %w", err)
 	}
-	return i.waitReady(ctx)
+	if err := i.waitReady(ctx); err != nil {
+		return err
+	}
+	return i.enableFeatureFlags(ctx)
+}
+
+// enableFeatureFlags turns on Tekton features that tkn-act fixtures
+// rely on but upstream ships disabled by default. Currently:
+//   - enable-step-actions: required for `Step.results` (per-step
+//     results, used by the v1.2 step-results e2e fixture).
+//
+// The feature-flags ConfigMap is created by the Tekton release.yaml;
+// we Update it in place. If it's missing (e.g. fresh kube without the
+// release reconciled yet), we Create it.
+func (i *Installer) enableFeatureFlags(ctx context.Context) error {
+	if i.opt.Kube == nil {
+		return nil
+	}
+	const (
+		ns      = "tekton-pipelines"
+		cmName  = "feature-flags"
+		flagKey = "enable-step-actions"
+		flagVal = "true"
+	)
+	cm, err := i.opt.Kube.CoreV1().ConfigMaps(ns).Get(ctx, cmName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = i.opt.Kube.CoreV1().ConfigMaps(ns).Create(ctx, &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: cmName, Namespace: ns},
+			Data:       map[string]string{flagKey: flagVal},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("create %s/%s: %w", ns, cmName, err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("get %s/%s: %w", ns, cmName, err)
+	}
+	if cm.Data[flagKey] == flagVal {
+		return nil
+	}
+	if cm.Data == nil {
+		cm.Data = map[string]string{}
+	}
+	cm.Data[flagKey] = flagVal
+	if _, err := i.opt.Kube.CoreV1().ConfigMaps(ns).Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("update %s/%s: %w", ns, cmName, err)
+	}
+	return nil
 }
 
 func (i *Installer) waitReady(ctx context.Context) error {

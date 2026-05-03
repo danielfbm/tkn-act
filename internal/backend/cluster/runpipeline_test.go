@@ -261,6 +261,52 @@ func TestCollectTaskOutcomesMultipleTaskRuns(t *testing.T) {
 	}
 }
 
+// TestBuildPipelineRunPromotesTaskTimeout: when a referenced Task has
+// `spec.timeout`, the cluster backend must (a) strip `timeout` from
+// the inlined `taskSpec` (Tekton's EmbeddedTask has no `timeout`
+// field — webhook rejects it as `unknown field "timeout"`), and
+// (b) hoist it onto `pipelineSpec.tasks[].timeout` (PipelineTask.Timeout)
+// so Tekton still enforces the per-task wall clock.
+func TestBuildPipelineRunPromotesTaskTimeout(t *testing.T) {
+	be, _, _, _, _ := fakeBackend(t)
+
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{Name: "a", TaskRef: &tektontypes.TaskRef{Name: "t"}}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{
+		Timeout: "1s",
+		Steps:   []tektontypes.Step{{Name: "s", Image: "alpine:3", Script: "sleep 30"}},
+	}}
+	tk.Metadata.Name = "t"
+
+	prObj, err := be.BuildPipelineRunObject(backend.PipelineRunInvocation{
+		RunID: "12345678", PipelineRunName: "p-12345678",
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"t": tk},
+	}, "tkn-act-12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	un := prObj.(*unstructured.Unstructured)
+
+	tasks, found, err := unstructured.NestedSlice(un.Object, "spec", "pipelineSpec", "tasks")
+	if err != nil || !found || len(tasks) != 1 {
+		t.Fatalf("pipelineSpec.tasks missing or malformed: found=%v err=%v", found, err)
+	}
+	pt := tasks[0].(map[string]any)
+
+	if got, ok := pt["timeout"].(string); !ok || got != "1s" {
+		t.Errorf("pipelineSpec.tasks[0].timeout = %v, want %q (must be promoted from taskSpec.timeout)", pt["timeout"], "1s")
+	}
+	taskSpec, ok := pt["taskSpec"].(map[string]any)
+	if !ok {
+		t.Fatalf("pipelineSpec.tasks[0].taskSpec missing")
+	}
+	if _, present := taskSpec["timeout"]; present {
+		t.Errorf("taskSpec.timeout MUST be stripped (Tekton EmbeddedTask has no `timeout`); got %v", taskSpec["timeout"])
+	}
+}
+
 // TestCollectTaskOutcomesIgnoresUnlabelled: a TaskRun without the
 // tekton.dev/pipelineTask label must be skipped — we don't know which
 // pipeline task it belongs to, so it can't appear in res.Tasks.
