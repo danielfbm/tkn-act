@@ -19,3 +19,9 @@
 
 # Git worktrees
 .worktrees/
+
+# Graphify intermediate state — keep the report + graph JSON + HTML + manifest
+# in source control, ignore caches, cost telemetry, and pipeline scratch files.
+graphify-out/cache/
+graphify-out/cost.json
+graphify-out/.graphify_*
