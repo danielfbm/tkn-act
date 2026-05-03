@@ -98,6 +98,21 @@ func buildPipelineRun(in backend.PipelineRunInvocation, namespace string) *unstr
 	spec := map[string]any{
 		"pipelineSpec": pipelineSpec,
 	}
+	if t := in.Pipeline.Spec.Timeouts; t != nil {
+		out := map[string]any{}
+		if t.Pipeline != "" {
+			out["pipeline"] = t.Pipeline
+		}
+		if t.Tasks != "" {
+			out["tasks"] = t.Tasks
+		}
+		if t.Finally != "" {
+			out["finally"] = t.Finally
+		}
+		if len(out) > 0 {
+			spec["timeouts"] = out
+		}
+	}
 	if len(in.Params) > 0 {
 		var ps []any
 		for _, p := range in.Params {

@@ -260,6 +260,37 @@ func taskRunObj(name, ns, prName, ptName, condStatus, reason string, retries int
 	return tr
 }
 
+// TestBuildPipelineRunInlinesTimeouts: when the Pipeline declares
+// spec.timeouts, the cluster backend must copy that block onto the
+// submitted PipelineRun's spec so the controller enforces it.
+func TestBuildPipelineRunInlinesTimeouts(t *testing.T) {
+	be, _, _, _, _ := fakeBackend(t)
+
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Timeouts: &tektontypes.Timeouts{Pipeline: "10m", Tasks: "8m", Finally: "2m"},
+		Tasks:    []tektontypes.PipelineTask{{Name: "a", TaskRef: &tektontypes.TaskRef{Name: "t"}}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{Steps: []tektontypes.Step{{Name: "s", Image: "alpine:3", Script: "true"}}}}
+	tk.Metadata.Name = "t"
+
+	prObj, err := be.BuildPipelineRunObject(backend.PipelineRunInvocation{
+		RunID: "12345678", PipelineRunName: "p-12345678",
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"t": tk},
+	}, "tkn-act-12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	un := prObj.(*unstructured.Unstructured)
+	got, found, err := unstructured.NestedMap(un.Object, "spec", "timeouts")
+	if err != nil || !found {
+		t.Fatalf("spec.timeouts missing on submitted PipelineRun")
+	}
+	if got["pipeline"] != "10m" || got["tasks"] != "8m" || got["finally"] != "2m" {
+		t.Errorf("spec.timeouts = %v, want pipeline=10m tasks=8m finally=2m", got)
+	}
+}
+
 // TestEnsureNamespaceIdempotent: a second RunPipeline call against the
 // same RunID prefix (same namespace) must not error on the duplicate
 // Namespace create.
