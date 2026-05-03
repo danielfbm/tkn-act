@@ -245,6 +245,31 @@ tkn-act list -o json
 
 ---
 
+## Project default: merge with squash + delete-branch
+
+**When merging any PR in this repo, use squash merge and delete the source
+branch.** Concretely:
+
+```sh
+gh pr merge <num> --squash --delete-branch
+```
+
+This is the project-wide default. Reasons:
+
+- `main` history reads as one commit per landed PR — the PR title becomes
+  the squash subject and the body becomes the squash body, which keeps the
+  log skimmable and bisectable.
+- Stale feature branches don't accumulate locally or on the remote.
+- Force-push or merge-commit alternatives are not used; if a PR needs to
+  preserve internal commit history (rare), call it out explicitly in the
+  PR description and discuss before merging.
+
+AI agents working on this repo should treat squash + delete-branch as the
+default merge style without prompting; only deviate when the user
+explicitly asks for a merge or rebase merge.
+
+---
+
 ## Contribution rule: tests required
 
 **Every PR that changes Go production code must include a test change.**
