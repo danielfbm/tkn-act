@@ -98,6 +98,19 @@ func runFixtureCluster(t *testing.T, cb *clusterbe.Backend, cmStore, secStore *v
 		return mgr.ProvisionResultsDir(taskName)
 	})
 
+	// Per-fixture isolation: clear any inline / bundle entries left
+	// over from a prior subtest. The Backend holds a fixed pointer to
+	// these stores (one Backend amortizes the k3d bring-up cost across
+	// the table), so the cheapest way to keep fixtures from polluting
+	// each other is to reset the in-memory layers in place. Without
+	// this, the `volumes` fixture's inline `app-config/greeting`
+	// shadows the next fixture's bundle-loaded `app-config/greeting`
+	// (Inline > Bundle in volumes.Store), and cluster CI fails the
+	// `configmap-from-yaml` step's `test "$..." = "hello-from-yaml"`
+	// with the prior fixture's `hello-from-cm` value.
+	cmStore.Reset()
+	secStore.Reset()
+
 	// Bundle-loaded CM/Secret resources (kind: ConfigMap / kind: Secret
 	// embedded in the fixture's -f stream) sit at the lowest precedence
 	// layer; inline f.ConfigMaps / f.Secrets entries below shadow them.
