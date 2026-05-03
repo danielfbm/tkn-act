@@ -1,0 +1,86 @@
+name: cluster-integration
+
+# Runs the k3d cluster-backend end-to-end suite (build tag: cluster). Boots
+# an ephemeral k3d cluster, installs Tekton via the project's installer, and
+# runs the cluster-e2e tests against it.
+#
+# Gated by paths on PRs (cluster code paths only) to avoid the 5-10 minute
+# cluster bring-up cost on unrelated PRs. Unconditional on main / release/*.
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+  pull_request:
+    paths:
+      # Cluster-specific code.
+      - 'cmd/tkn-act/cluster*.go'
+      - 'cmd/tkn-act/doctor*.go'
+      - 'internal/backend/backend.go'
+      - 'internal/backend/cluster/**'
+      - 'internal/cluster/**'
+      - 'internal/clustere2e/**'
+      - 'internal/cmdrunner/**'
+      # Engine + types may change pipeline-run semantics that the cluster
+      # path delegates to the real Tekton controller.
+      - 'internal/engine/**'
+      - 'internal/loader/**'
+      - 'internal/tektontypes/**'
+      - 'internal/validator/**'
+      - 'testdata/e2e/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/cluster-integration.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: k3d e2e (-tags cluster)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      K3D_VERSION: v5.7.4
+      KUBECTL_VERSION: v1.31.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: install kubectl ${{ env.KUBECTL_VERSION }}
+        run: |
+          curl -fsSL -o kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          kubectl version --client=true
+
+      - name: install k3d ${{ env.K3D_VERSION }}
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh \
+            | TAG=${K3D_VERSION} bash
+          k3d version
+
+      - name: doctor (sanity)
+        run: |
+          go build -o tkn-act ./cmd/tkn-act
+          ./tkn-act doctor -o json
+
+      - name: go test -tags cluster ./internal/clustere2e/...
+        run: go test -tags cluster -count=1 -timeout 25m ./internal/clustere2e/...
+
+      - name: dump cluster state on failure
+        if: failure()
+        run: |
+          set +e
+          k3d cluster list || true
+          kubectl --context k3d-tkn-act get pods -A -o wide || true
+          kubectl --context k3d-tkn-act describe pods -A || true
+          kubectl --context k3d-tkn-act logs -A -l app.kubernetes.io/name=controller --tail=200 || true
+
+      - name: tear down cluster
+        if: always()
+        run: ./tkn-act cluster down -y || true
