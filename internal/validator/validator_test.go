@@ -177,3 +177,26 @@ spec:
 		t.Errorf("unexpected errors: %v", errs)
 	}
 }
+
+func TestValidateStepTemplateSuppliesImage(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  stepTemplate:
+    image: alpine:3
+  steps:
+    - {name: s, script: "true"}
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - {name: a, taskRef: {name: t}}
+`)
+	if errs := validator.Validate(b, "p", nil); len(errs) != 0 {
+		t.Errorf("unexpected errors: %v", errs)
+	}
+}
