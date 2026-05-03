@@ -12,9 +12,12 @@ spec:
         printf 42 > $(step.results.value.path)
     - name: consume
       image: alpine:3
+      env:
+        - name: VALUE
+          value: $(steps.compute.results.value)
       script: |
-        echo "value=$(steps.compute.results.value)"
-        test "$(steps.compute.results.value)" = "42"
+        echo "value=$VALUE"
+        test "$VALUE" = "42"
 ---
 apiVersion: tekton.dev/v1
 kind: Pipeline

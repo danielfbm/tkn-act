@@ -8,6 +8,7 @@ import (
 	"github.com/danielfbm/tkn-act/internal/cluster/tekton"
 	"github.com/danielfbm/tkn-act/internal/cmdrunner"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apiext "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextfake "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/fake"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -69,6 +70,68 @@ func TestApplyFailureBubbles(t *testing.T) {
 	})
 	if err := inst.Install(context.Background()); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// TestEnablesStepActionsFlag: after Install completes, the
+// feature-flags ConfigMap in tekton-pipelines must have
+// `enable-step-actions: "true"`. Step results (the e2e step-results
+// fixture and the v1.2 step-results feature) require this flag, but
+// upstream Tekton ships it disabled by default.
+func TestEnablesStepActionsFlag(t *testing.T) {
+	apiextCli := apiextfake.NewSimpleClientset()
+	kube := fake.NewSimpleClientset(
+		readyControllerDeployment(), readyWebhookDeployment(),
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "feature-flags", Namespace: "tekton-pipelines"},
+			Data:       map[string]string{},
+		},
+	)
+	runner := cmdrunner.NewFake()
+	runner.Set("kubectl --kubeconfig /tmp/kc apply -f https://storage.googleapis.com/tekton-releases/pipeline/previous/v0.65.0/release.yaml", []byte("ok"), nil)
+	inst := tekton.New(tekton.Options{
+		Kubeconfig: "/tmp/kc",
+		Runner:     runner.Runner(),
+		Apiext:     apiextCli,
+		Kube:       kube,
+		Version:    "v0.65.0",
+	})
+	if err := inst.Install(context.Background()); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	cm, err := kube.CoreV1().ConfigMaps("tekton-pipelines").Get(context.Background(), "feature-flags", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get feature-flags: %v", err)
+	}
+	if got := cm.Data["enable-step-actions"]; got != "true" {
+		t.Errorf("enable-step-actions = %q, want \"true\"", got)
+	}
+}
+
+// TestEnablesStepActionsFlagCreatesIfMissing: a fresh cluster where
+// the controller is up but the feature-flags ConfigMap hasn't been
+// reconciled yet must still get the flag set (Install creates it).
+func TestEnablesStepActionsFlagCreatesIfMissing(t *testing.T) {
+	apiextCli := apiextfake.NewSimpleClientset()
+	kube := fake.NewSimpleClientset(readyControllerDeployment(), readyWebhookDeployment())
+	runner := cmdrunner.NewFake()
+	runner.Set("kubectl --kubeconfig /tmp/kc apply -f https://storage.googleapis.com/tekton-releases/pipeline/previous/v0.65.0/release.yaml", []byte("ok"), nil)
+	inst := tekton.New(tekton.Options{
+		Kubeconfig: "/tmp/kc",
+		Runner:     runner.Runner(),
+		Apiext:     apiextCli,
+		Kube:       kube,
+		Version:    "v0.65.0",
+	})
+	if err := inst.Install(context.Background()); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	cm, err := kube.CoreV1().ConfigMaps("tekton-pipelines").Get(context.Background(), "feature-flags", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get feature-flags: %v", err)
+	}
+	if got := cm.Data["enable-step-actions"]; got != "true" {
+		t.Errorf("enable-step-actions = %q, want \"true\"", got)
 	}
 }
 
