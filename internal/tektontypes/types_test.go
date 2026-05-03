@@ -96,6 +96,55 @@ spec:
 	}
 }
 
+func TestUnmarshalPipelineWithTimeouts(t *testing.T) {
+	in := []byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  timeouts:
+    pipeline: "1h"
+    tasks: "55m"
+    finally: "5m"
+  tasks:
+    - {name: a, taskRef: {name: t}}
+`)
+	var p Pipeline
+	if err := yaml.Unmarshal(in, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Spec.Timeouts == nil {
+		t.Fatalf("Timeouts is nil")
+	}
+	if got, want := p.Spec.Timeouts.Pipeline, "1h"; got != want {
+		t.Errorf("Pipeline = %q, want %q", got, want)
+	}
+	if got, want := p.Spec.Timeouts.Tasks, "55m"; got != want {
+		t.Errorf("Tasks = %q, want %q", got, want)
+	}
+	if got, want := p.Spec.Timeouts.Finally, "5m"; got != want {
+		t.Errorf("Finally = %q, want %q", got, want)
+	}
+}
+
+func TestUnmarshalPipelineWithoutTimeouts(t *testing.T) {
+	in := []byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - {name: a, taskRef: {name: t}}
+`)
+	var p Pipeline
+	if err := yaml.Unmarshal(in, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Spec.Timeouts != nil {
+		t.Errorf("Timeouts = %+v, want nil", p.Spec.Timeouts)
+	}
+}
+
 func TestParamValueScalarAndArray(t *testing.T) {
 	in := []byte(`
 - name: scalar
