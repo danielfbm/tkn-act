@@ -88,6 +88,7 @@ func All() []Fixture {
 		{Dir: "pipeline-timeout", Pipeline: "pipeline-timeout", WantStatus: "timeout"},
 		{Dir: "tasks-timeout", Pipeline: "tasks-timeout", WantStatus: "timeout"},
 		{Dir: "finally-timeout", Pipeline: "finally-timeout", WantStatus: "timeout"},
+		{Dir: "step-template", Pipeline: "step-template", WantStatus: "succeeded"},
 		{Dir: "step-results", Pipeline: "stepres", WantStatus: "succeeded"},
 		{
 			Dir: "volumes", Pipeline: "configmap-eater", WantStatus: "succeeded",

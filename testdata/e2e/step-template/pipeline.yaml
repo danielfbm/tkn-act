@@ -1,0 +1,31 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: tmpl
+spec:
+  stepTemplate:
+    image: alpine:3
+    env:
+      - name: SHARED
+        value: from-template
+  steps:
+    - name: inherits-image-and-env
+      script: |
+        echo "SHARED=$SHARED"
+        test "$SHARED" = "from-template"
+    - name: overrides-env
+      env:
+        - name: SHARED
+          value: from-step
+      script: |
+        echo "SHARED=$SHARED"
+        test "$SHARED" = "from-step"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: step-template
+spec:
+  tasks:
+    - name: t
+      taskRef: { name: tmpl }
