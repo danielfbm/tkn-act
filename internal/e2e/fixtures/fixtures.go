@@ -198,5 +198,6 @@ func All() []Fixture {
 				"app-config": {"greeting": "hello-from-cm"},
 			},
 		},
+		{Dir: "configmap-from-yaml", Pipeline: "configmap-from-yaml", WantStatus: "succeeded"},
 	}
 }
