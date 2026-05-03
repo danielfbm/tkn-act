@@ -291,6 +291,49 @@ this as a hard precondition for opening a PR.
 
 ---
 
+## `stepTemplate` (DRY for Steps)
+
+`Task.spec.stepTemplate` lets a Task declare base values that every
+Step in `spec.steps` inherits. Inheritance rules tkn-act follows:
+
+| Field | Behavior |
+|---|---|
+| `image`, `workingDir`, `imagePullPolicy` | Step value wins if non-empty; otherwise inherit. |
+| `command`, `args` | Step value wins as a whole if non-empty (no element-wise merge). |
+| `env` | Union by `name`; Step entry overrides template entry with the same name. |
+| `resources` | Step value wins (replace); no deep merge of `limits` / `requests`. |
+| `name`, `script`, `volumeMounts`, `results`, `onError` | Per-Step only; never inherited. |
+
+This matches Tekton v1 semantics for the subset of Step fields
+tkn-act reads. `volumes` / `volumeMounts` inheritance from
+`stepTemplate` is **not** supported (gap, see `docs/feature-parity.md`).
+
+---
+
+## Documentation rule: keep related docs in sync with every change
+
+**Every change that touches user-visible behavior, supported features,
+exit codes, JSON shapes, fixtures, or Tekton coverage must update the
+related docs in the same PR.** "Related docs" includes, at minimum:
+
+| If you change... | Also update |
+|---|---|
+| Tekton field/feature support (types, engine, validator, cluster) | `docs/feature-parity.md` row + `AGENTS.md` (and re-run `go generate ./cmd/tkn-act/` so `cmd/tkn-act/agentguide_data.md` mirrors it) |
+| User-facing CLI behavior (flags, output, exit codes) | `AGENTS.md`, `cmd/tkn-act/agentguide_data.md`, and `README.md` |
+| `testdata/e2e/<name>/` or limitations fixtures | `docs/test-coverage.md` and `docs/feature-parity.md` |
+| Track 1/2/3 plan items in `docs/short-term-goals.md` | flip the row's Status when the work lands |
+| New plan under `docs/superpowers/plans/` | reference it from the matching `feature-parity` / `short-term-goals` row |
+
+CI's `parity-check` job (`.github/scripts/parity-check.sh`) is the
+machine-checked enforcement of the parity ↔ fixtures invariant; the
+broader rule above is enforced by reviewers and by AI agents working on
+this repo. **AI agents must not open a PR that lands a feature, fixture,
+or behavior change without updating every doc the change touches.** When
+in doubt, grep for the symbol/feature in the docs tree and update every
+hit.
+
+---
+
 ## Timeout disambiguation
 
 Two distinct timeout primitives can both end a task with `status: "timeout"`

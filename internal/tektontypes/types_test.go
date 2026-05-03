@@ -145,6 +145,56 @@ spec:
 	}
 }
 
+func TestUnmarshalTaskWithStepTemplate(t *testing.T) {
+	in := []byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  stepTemplate:
+    image: alpine:3
+    env:
+      - name: SHARED
+        value: hello
+  steps:
+    - name: a
+      script: 'echo $SHARED'
+`)
+	var got Task
+	if err := yaml.Unmarshal(in, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.StepTemplate == nil {
+		t.Fatalf("StepTemplate is nil")
+	}
+	if got.Spec.StepTemplate.Image != "alpine:3" {
+		t.Errorf("StepTemplate.Image = %q, want alpine:3", got.Spec.StepTemplate.Image)
+	}
+	if len(got.Spec.StepTemplate.Env) != 1 || got.Spec.StepTemplate.Env[0].Name != "SHARED" {
+		t.Errorf("StepTemplate.Env = %+v", got.Spec.StepTemplate.Env)
+	}
+}
+
+func TestUnmarshalTaskWithoutStepTemplate(t *testing.T) {
+	in := []byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps:
+    - name: a
+      image: alpine:3
+      script: 'true'
+`)
+	var got Task
+	if err := yaml.Unmarshal(in, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.StepTemplate != nil {
+		t.Errorf("StepTemplate = %+v, want nil", got.Spec.StepTemplate)
+	}
+}
+
 func TestParamValueScalarAndArray(t *testing.T) {
 	in := []byte(`
 - name: scalar

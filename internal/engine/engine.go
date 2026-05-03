@@ -254,11 +254,13 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		return TaskOutcome{Status: "skipped", Message: reason}
 	}
 
-	// Resolve task spec.
+	// Resolve task spec, then merge StepTemplate into each Step
+	// before any further substitution / validation runs.
 	spec, err := lookupTaskSpec(in.Bundle, pt)
 	if err != nil {
 		return TaskOutcome{Status: "failed", Message: err.Error()}
 	}
+	spec = applyStepTemplate(spec)
 
 	// Resolve task-level params (PipelineTask params override Task defaults).
 	taskParams := map[string]tektontypes.ParamValue{}
@@ -434,6 +436,9 @@ func uniqueImages(b *loader.Bundle, pl tektontypes.Pipeline) []string {
 		} else if pt.TaskSpec != nil {
 			spec = *pt.TaskSpec
 		}
+		// Merge so that steps inheriting an image from stepTemplate
+		// are pre-pulled too.
+		spec = applyStepTemplate(spec)
 		for _, s := range spec.Steps {
 			seen[s.Image] = struct{}{}
 		}
