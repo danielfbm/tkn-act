@@ -76,10 +76,33 @@ jobs:
         if: failure()
         run: |
           set +e
+          # The cluster-e2e harness names the k3d cluster `tkn-act-e2e`;
+          # k3d derives kube context as `k3d-<cluster>`. (Earlier this
+          # step used `k3d-tkn-act` and silently emitted "context was not
+          # found" — debug output was empty for every prior cluster-CI
+          # failure.)
+          CTX=k3d-tkn-act-e2e
           k3d cluster list || true
-          kubectl --context k3d-tkn-act get pods -A -o wide || true
-          kubectl --context k3d-tkn-act describe pods -A || true
-          kubectl --context k3d-tkn-act logs -A -l app.kubernetes.io/name=controller --tail=200 || true
+          kubectl --context "$CTX" get nodes -o wide || true
+          kubectl --context "$CTX" get ns || true
+          kubectl --context "$CTX" get pods --all-namespaces -o wide || true
+          kubectl --context "$CTX" describe pods --all-namespaces || true
+          # `kubectl logs` doesn't accept --all-namespaces; iterate the
+          # tekton-pipelines namespace explicitly.
+          kubectl --context "$CTX" -n tekton-pipelines logs -l app.kubernetes.io/name=controller --tail=400 --all-containers || true
+          # Dump every PipelineRun/TaskRun the harness left behind so a
+          # classification mismatch (status = X, want Y) can be attributed
+          # to a specific Tekton condition reason.
+          for ns in $(kubectl --context "$CTX" get ns -o jsonpath='{.items[?(@.metadata.name)].metadata.name}' 2>/dev/null); do
+            case "$ns" in
+              tkn-act-*)
+                echo "===== $ns ====="
+                kubectl --context "$CTX" -n "$ns" get pipelinerun,taskrun -o wide || true
+                kubectl --context "$CTX" -n "$ns" get pipelinerun -o yaml || true
+                kubectl --context "$CTX" -n "$ns" get taskrun -o yaml || true
+                ;;
+            esac
+          done
 
       - name: tear down cluster
         if: always()
