@@ -281,6 +281,31 @@ func TestResolveColor(t *testing.T) {
 	}
 }
 
+func TestJSONRunEndIncludesResults(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewJSON(&buf)
+	r.Emit(reporter.Event{
+		Kind:   reporter.EvtRunEnd,
+		Status: "succeeded",
+		Results: map[string]any{
+			"revision": "abc123",
+			"files":    []string{"a.txt", "b.txt"},
+			"meta":     map[string]string{"owner": "team-a"},
+		},
+	})
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	res, ok := got["results"].(map[string]any)
+	if !ok {
+		t.Fatalf("results field missing or wrong type: %T %v", got["results"], got["results"])
+	}
+	if res["revision"] != "abc123" {
+		t.Errorf("results.revision = %v, want abc123", res["revision"])
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

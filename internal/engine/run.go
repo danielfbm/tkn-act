@@ -33,6 +33,12 @@ type RunResult struct {
 	// as Reason — surfaced so failure logs can attribute a misclassified
 	// run to a specific backend code path.
 	Message string
+	// Results holds resolved Pipeline.spec.results once the run is
+	// terminal. Each value is one of: string, []string, map[string]string.
+	// Empty when the Pipeline didn't declare spec.results, or when every
+	// declared entry was dropped (referenced task didn't succeed). A
+	// dropped entry surfaces as an EvtError on the event stream.
+	Results map[string]any
 }
 
 type TaskOutcome struct {
