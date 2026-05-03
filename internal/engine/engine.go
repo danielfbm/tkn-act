@@ -529,11 +529,12 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 			endMsg = res.Reason
 		}
 	}
-	e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: res.Status, Duration: dur, Message: endMsg})
+	e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: res.Status, Duration: dur, Message: endMsg, Results: res.Results})
 	out := RunResult{
 		Status:  res.Status,
 		Reason:  res.Reason,
 		Message: res.Message,
+		Results: res.Results,
 		Tasks:   map[string]TaskOutcome{},
 	}
 	for n, oc := range res.Tasks {

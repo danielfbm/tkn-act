@@ -720,3 +720,78 @@ func TestBuildPipelineRunInlinesStepTemplate(t *testing.T) {
 		t.Errorf("stepTemplate.image = %v, want alpine:3", got)
 	}
 }
+
+// TestRunPipelineSurfacesResults: when the Tekton controller writes
+// `status.results` on the PipelineRun, the cluster backend must
+// forward those into PipelineRunResult.Results so the engine can
+// emit them on the run-end event.
+func TestRunPipelineSurfacesResults(t *testing.T) {
+	be, dyn, _, _, _ := fakeBackend(t)
+
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Results: []tektontypes.PipelineResultSpec{
+			{Name: "revision", Value: tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: "$(tasks.t.results.commit)"}},
+		},
+		Tasks: []tektontypes.PipelineTask{{Name: "t", TaskRef: &tektontypes.TaskRef{Name: "x"}}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{
+		Results: []tektontypes.ResultSpec{{Name: "commit"}},
+		Steps:   []tektontypes.Step{{Name: "s", Image: "alpine:3", Script: "true"}},
+	}}
+	tk.Metadata.Name = "x"
+
+	prName := "p-resabcde"
+	ns := "tkn-act-resabcde"
+
+	// Driver writes Succeeded=True AND status.results = [{name:revision,value:abc}].
+	stop := flipStatusWithResultsUntilStop(t, dyn, ns, prName, "True", "Succeeded",
+		[]any{map[string]any{"name": "revision", "value": "abc"}})
+	defer close(stop)
+
+	res, err := be.RunPipeline(context.Background(), backend.PipelineRunInvocation{
+		RunID: "resabcde", PipelineRunName: prName,
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"x": tk},
+	})
+	if err != nil {
+		t.Fatalf("RunPipeline: %v", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("status = %q, want succeeded", res.Status)
+	}
+	if got := res.Results["revision"]; got != "abc" {
+		t.Errorf("Results[revision] = %v, want abc", got)
+	}
+}
+
+// flipStatusWithResultsUntilStop is flipStatusUntilStop but also writes
+// `status.results` to the PR.
+func flipStatusWithResultsUntilStop(t *testing.T, dyn *dynamicfake.FakeDynamicClient, ns, prName, status, reason string, results []any) chan struct{} {
+	t.Helper()
+	stop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		deadline := time.NewTimer(5 * time.Second)
+		defer deadline.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-deadline.C:
+				return
+			case <-ticker.C:
+				obj, err := dyn.Resource(gvrPipelineRunTest).Namespace(ns).Get(context.Background(), prName, metav1.GetOptions{})
+				if err != nil {
+					continue
+				}
+				_ = unstructured.SetNestedSlice(obj.Object, []any{
+					map[string]any{"type": "Succeeded", "status": status, "reason": reason},
+				}, "status", "conditions")
+				_ = unstructured.SetNestedSlice(obj.Object, results, "status", "results")
+				_, _ = dyn.Resource(gvrPipelineRunTest).Namespace(ns).Update(context.Background(), obj, metav1.UpdateOptions{})
+			}
+		}
+	}()
+	return stop
+}
