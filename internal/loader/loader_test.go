@@ -110,3 +110,117 @@ data: {k: v}
 		t.Fatalf("err = %v, want metadata.name error", err)
 	}
 }
+
+func TestLoadSecretData(t *testing.T) {
+	yaml := []byte(`
+apiVersion: v1
+kind: Secret
+metadata: {name: s}
+type: Opaque
+data:
+  token: aGVsbG8=
+`)
+	b, err := loader.LoadBytes(yaml)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	sec, ok := b.Secrets["s"]
+	if !ok {
+		t.Fatalf("missing secret; got %v", b.Secrets)
+	}
+	if got := sec["token"]; string(got) != "hello" {
+		t.Errorf("token = %q, want hello (base64-decoded)", string(got))
+	}
+}
+
+func TestLoadSecretStringData(t *testing.T) {
+	yaml := []byte(`
+apiVersion: v1
+kind: Secret
+metadata: {name: s}
+stringData:
+  raw: hello-plain
+`)
+	b, err := loader.LoadBytes(yaml)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	sec, ok := b.Secrets["s"]
+	if !ok {
+		t.Fatalf("missing secret; got %v", b.Secrets)
+	}
+	if got := sec["raw"]; string(got) != "hello-plain" {
+		t.Errorf("raw = %q, want hello-plain", string(got))
+	}
+}
+
+func TestLoadSecretStringDataWinsOverData(t *testing.T) {
+	yaml := []byte(`
+apiVersion: v1
+kind: Secret
+metadata: {name: s}
+data:
+  k: dmFsLWZyb20tZGF0YQ==
+stringData:
+  k: val-from-stringData
+`)
+	b, err := loader.LoadBytes(yaml)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := b.Secrets["s"]["k"]; string(got) != "val-from-stringData" {
+		t.Errorf("k = %q, want val-from-stringData (stringData wins)", string(got))
+	}
+}
+
+func TestRejectsSecretMalformedBase64(t *testing.T) {
+	yaml := []byte(`
+apiVersion: v1
+kind: Secret
+metadata: {name: s}
+data:
+  k: "!!!not-base64!!!"
+`)
+	_, err := loader.LoadBytes(yaml)
+	if err == nil || !strings.Contains(err.Error(), "base64") {
+		t.Fatalf("err = %v, want base64 decode error", err)
+	}
+}
+
+func TestRejectsDuplicateSecret(t *testing.T) {
+	yaml := []byte(`
+apiVersion: v1
+kind: Secret
+metadata: {name: s}
+stringData: {k: a}
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: s}
+stringData: {k: b}
+`)
+	_, err := loader.LoadBytes(yaml)
+	if err == nil || !strings.Contains(err.Error(), "duplicate Secret") {
+		t.Fatalf("err = %v, want duplicate-Secret error", err)
+	}
+}
+
+func TestLoadConfigMapAndSecretFromFile(t *testing.T) {
+	bundle, err := loader.LoadFiles([]string{filepath.Join("testdata", "cm-and-secret.yaml")})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, ok := bundle.ConfigMaps["app-config"]; !ok {
+		t.Errorf("missing app-config CM; got %v", bundle.ConfigMaps)
+	}
+	sec, ok := bundle.Secrets["app-secret"]
+	if !ok {
+		t.Fatalf("missing app-secret; got %v", bundle.Secrets)
+	}
+	if string(sec["token"]) != "hello" {
+		t.Errorf("token = %q, want hello (base64-decoded)", sec["token"])
+	}
+	if string(sec["raw-token"]) != "hello-plain" {
+		t.Errorf("raw-token = %q, want hello-plain", sec["raw-token"])
+	}
+}

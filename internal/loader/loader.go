@@ -4,6 +4,7 @@ package loader
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"regexp"
@@ -168,8 +169,43 @@ func loadConfigMap(out *Bundle, data []byte) error {
 	return nil
 }
 
+// secretDoc is the shape we pull out of a `kind: Secret` doc.
+// `type` is parsed-and-ignored (tkn-act always projects bytes opaquely).
+// `immutable` is parsed-and-ignored so the same YAML can apply against
+// a real cluster.
+type secretDoc struct {
+	Metadata   tektontypes.Metadata `json:"metadata"`
+	Type       string               `json:"type,omitempty"`
+	Data       map[string]string    `json:"data,omitempty"`
+	StringData map[string]string    `json:"stringData,omitempty"`
+	Immutable  *bool                `json:"immutable,omitempty"`
+}
+
 func loadSecret(out *Bundle, data []byte) error {
-	return fmt.Errorf("Secret loading not yet implemented (Task 2)")
+	var s secretDoc
+	if err := yaml.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("Secret: %w", err)
+	}
+	if s.Metadata.Name == "" {
+		return fmt.Errorf("Secret: metadata.name is required")
+	}
+	if _, dup := out.Secrets[s.Metadata.Name]; dup {
+		return fmt.Errorf("duplicate Secret %q", s.Metadata.Name)
+	}
+	bytesByKey := make(map[string][]byte, len(s.Data)+len(s.StringData))
+	for k, v := range s.Data {
+		dec, err := base64.StdEncoding.DecodeString(v)
+		if err != nil {
+			return fmt.Errorf("Secret %q: data[%q] is not valid base64: %w", s.Metadata.Name, k, err)
+		}
+		bytesByKey[k] = dec
+	}
+	// stringData wins over data on the same key (kube projection rule).
+	for k, v := range s.StringData {
+		bytesByKey[k] = []byte(v)
+	}
+	out.Secrets[s.Metadata.Name] = bytesByKey
+	return nil
 }
 
 func merge(into, from *Bundle) error {
