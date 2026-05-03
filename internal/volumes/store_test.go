@@ -165,6 +165,37 @@ func TestStoreBundleIsLowestPrecedence(t *testing.T) {
 	}
 }
 
+// TestStoreResetClearsInlineAndBundle covers the test-harness affordance
+// added so the cluster-e2e harness can keep one *Store across the
+// fixture table without inline / bundle entries from one fixture
+// shadowing the next. Dir is deliberately preserved (it's on-disk
+// state, not in-memory mutable surface).
+func TestStoreResetClearsInlineAndBundle(t *testing.T) {
+	dir := t.TempDir()
+	s := volumes.NewStore(dir)
+	s.Add("cfg", "k", "from-inline")
+	s.LoadBytes("cfg", map[string][]byte{"k": []byte("from-bundle")})
+
+	s.Reset()
+
+	if got, err := s.Resolve("cfg"); err == nil {
+		t.Errorf("after Reset, Resolve returned %v; want error (no keys)", got)
+	}
+	if s.Dir != dir {
+		t.Errorf("Reset wiped Dir = %q; want %q (Reset must not touch on-disk root)", s.Dir, dir)
+	}
+	// Adding a fresh entry after Reset must work — Reset must
+	// re-initialize the maps, not nil them out.
+	s.Add("cfg", "k", "after-reset")
+	got, err := s.Resolve("cfg")
+	if err != nil {
+		t.Fatalf("after Reset+Add, Resolve: %v", err)
+	}
+	if string(got["k"]) != "after-reset" {
+		t.Errorf("after Reset+Add, k = %q, want after-reset", got["k"])
+	}
+}
+
 func TestStoreBundleOnlyResolves(t *testing.T) {
 	s := volumes.NewStore("")
 	s.LoadBytes("cfg", map[string][]byte{

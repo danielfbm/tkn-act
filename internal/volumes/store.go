@@ -57,6 +57,19 @@ func (s *Store) Add(name, key, value string) {
 	s.Inline[name][key] = value
 }
 
+// Reset clears every Inline and Bundle entry, leaving the Dir layout
+// (which is on-disk state, not part of the in-memory mutable surface)
+// untouched. Intended for test harnesses that share one Store across a
+// table of subtests and need per-subtest isolation without rebuilding
+// the Backend that holds a pointer to this Store.
+//
+// Resetting is a destructive operation; callers that want to keep the
+// existing entries must build a fresh Store with NewStore instead.
+func (s *Store) Reset() {
+	s.Inline = map[string]map[string]string{}
+	s.Bundle = map[string]map[string][]byte{}
+}
+
 // LoadBytes records bundle-loaded bytes for every key under `name`.
 // These sit at the lowest precedence layer: a key present here is
 // shadowed by the same key in either the on-disk Dir layout or the
