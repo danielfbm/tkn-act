@@ -155,6 +155,66 @@ func flipStatusUntilStop(t *testing.T, dyn *dynamicfake.FakeDynamicClient, ns, p
 	return stop
 }
 
+// TestTaskRunToOutcomeReadsTimeoutCancelMessage: when Tekton's
+// tasks/finally budget cancels a TaskRun, the condition reason is just
+// `TaskRunCancelled`; the timeout signal lives in
+// `spec.statusMessage`. taskRunToOutcome must read the message and
+// surface the per-task status as `timeout` so the engine emits the
+// correct task-end event.
+func TestTaskRunToOutcomeReadsTimeoutCancelMessage(t *testing.T) {
+	ns := "tkn-act-12345678"
+	prName := "p-12345678"
+	tr := taskRunObj("p-12345678-t-pod", ns, prName, "t", "False", "TaskRunCancelled", 0)
+	_ = unstructured.SetNestedField(tr.Object, "TaskRun cancelled as the PipelineRun it belongs to has timed out.", "spec", "statusMessage")
+	be, _, _, _, _ := fakeBackend(t, tr)
+
+	got := be.CollectTaskOutcomesForTest(context.Background(), backend.PipelineRunInvocation{
+		PipelineRunName: prName,
+	}, ns)
+
+	if got["t"].Status != "timeout" {
+		t.Errorf("status = %q, want timeout", got["t"].Status)
+	}
+}
+
+// TestRunPipelineMapsTasksTimeoutViaTaskRunMessage: when the
+// PipelineRun condition is Failed (no `PipelineRunTimeout` reason)
+// but at least one TaskRun was cancelled by the pipeline timeout,
+// the run-level status must be re-classified to `timeout`.
+func TestRunPipelineMapsTasksTimeoutViaTaskRunMessage(t *testing.T) {
+	prName := "p-aabbccdd"
+	ns := "tkn-act-aabbccdd"
+
+	// Pre-seed a TaskRun cancelled by pipeline timeout. The watcher
+	// will Get this object after the PR transitions to Failed.
+	tr := taskRunObj(prName+"-t-pod", ns, prName, "t", "False", "TaskRunCancelled", 0)
+	_ = unstructured.SetNestedField(tr.Object, "TaskRun cancelled as the PipelineRun it belongs to has timed out.", "spec", "statusMessage")
+
+	be, dyn, _, _, _ := fakeBackend(t, tr)
+
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Timeouts: &tektontypes.Timeouts{Tasks: "2s"},
+		Tasks:    []tektontypes.PipelineTask{{Name: "t", TaskRef: &tektontypes.TaskRef{Name: "x"}}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{Steps: []tektontypes.Step{{Name: "s", Image: "alpine:3", Script: "sleep 30"}}}}
+	tk.Metadata.Name = "x"
+
+	stopUpdater := flipStatusUntilStop(t, dyn, ns, prName, "False", "Failed")
+	defer close(stopUpdater)
+
+	res, err := be.RunPipeline(context.Background(), backend.PipelineRunInvocation{
+		RunID: "aabbccdd", PipelineRunName: prName,
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"x": tk},
+	})
+	if err != nil {
+		t.Fatalf("RunPipeline: %v", err)
+	}
+	if res.Status != "timeout" {
+		t.Errorf("status = %q, want timeout (cancelled-by-pipeline-timeout TaskRun must be surfaced)", res.Status)
+	}
+}
+
 // TestRunPipelineNotPrepared: missing dynamic/kube clients must yield a
 // clear error, not a panic.
 func TestRunPipelineNotPrepared(t *testing.T) {
