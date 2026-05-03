@@ -112,15 +112,6 @@ prioritized track of what's next.
 | [`docs/short-term-goals.md`](docs/short-term-goals.md) | Prioritized tracks for upcoming work (Track 1 = Tekton features, Track 2 = backend parity, Track 3 = ergonomics). Status updated as items land. |
 | [`docs/test-coverage.md`](docs/test-coverage.md) | What runs in each CI workflow, which paths trigger which workflow, and which fixtures are in `-tags integration` vs `-tags cluster`. |
 
-### Specs (frozen design docs)
-
-| Spec | Topic |
-|---|---|
-| [`docs/superpowers/specs/2026-05-01-tkn-act-design.md`](docs/superpowers/specs/2026-05-01-tkn-act-design.md) | v1 design: scope, data model, Docker backend, exit-code contract |
-| [`docs/superpowers/specs/2026-05-01-tkn-act-cluster-backend.md`](docs/superpowers/specs/2026-05-01-tkn-act-cluster-backend.md) | Cluster backend: ephemeral k3d + Tekton controller |
-| [`docs/superpowers/specs/2026-05-02-agent-first-class-cli-design.md`](docs/superpowers/specs/2026-05-02-agent-first-class-cli-design.md) | First-class AI-agent CLI: `doctor`, `help-json`, JSON-everywhere |
-| [`docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md`](docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md) | Docker-backend Tekton-fidelity v1.2 (onError, retries, timeout, per-step results, volumes) |
-
 ## License
 
 Apache 2.0
