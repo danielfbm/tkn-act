@@ -222,12 +222,21 @@ levelLoop:
 		overall = "timeout"
 	}
 
+	// Resolve Pipeline.spec.results once every task (incl. finally) is
+	// terminal. Drops are non-fatal: each surfaces as an EvtError but
+	// does not change overall status or the exit code.
+	pipelineResults, resultErrs := resolvePipelineResults(pl, results)
+	for _, err := range resultErrs {
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtError, Time: time.Now(), Message: err.Error()})
+	}
+
 	e.rep.Emit(reporter.Event{
 		Kind: reporter.EvtRunEnd, Time: time.Now(),
 		Status: overall, Duration: time.Since(overallStart),
+		Results: pipelineResults,
 	})
 
-	return RunResult{Status: overall, Tasks: outcomes}, nil
+	return RunResult{Status: overall, Tasks: outcomes, Results: pipelineResults}, nil
 }
 
 func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pipeline, pt tektontypes.PipelineTask, params map[string]tektontypes.ParamValue, results map[string]map[string]string, runID, pipelineRunName string) TaskOutcome {
