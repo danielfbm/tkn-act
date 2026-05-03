@@ -100,6 +100,49 @@ func TestTaskRunToOutcomeNoRetries(t *testing.T) {
 	}
 }
 
+// TestTaskRunToOutcomeWithResults exercises the status.results extraction
+// branch — a TaskRun reporting per-task results must surface them on
+// TaskOutcomeOnCluster so the engine can pass them downstream.
+func TestTaskRunToOutcomeWithResults(t *testing.T) {
+	tr := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"labels": map[string]any{"tekton.dev/pipelineTask": "t"}},
+		"status": map[string]any{
+			"conditions": []any{
+				map[string]any{"type": "Succeeded", "status": "True", "reason": "Succeeded"},
+			},
+			"results": []any{
+				map[string]any{"name": "first", "value": "alpha"},
+				map[string]any{"name": "second", "value": "beta"},
+				map[string]any{"name": "", "value": "ignored"},
+			},
+		},
+	}}
+	oc := taskRunToOutcome(tr)
+	if oc.Results["first"] != "alpha" {
+		t.Errorf("results[first] = %q, want alpha", oc.Results["first"])
+	}
+	if oc.Results["second"] != "beta" {
+		t.Errorf("results[second] = %q, want beta", oc.Results["second"])
+	}
+	if _, has := oc.Results[""]; has {
+		t.Errorf("empty-name result should be skipped, got %v", oc.Results)
+	}
+}
+
+// TestTaskRunToOutcomeFailedNoCondition is the defensive branch: a
+// TaskRun with no Succeeded condition is treated as infrafailed, never
+// silently as "" or "succeeded".
+func TestTaskRunToOutcomeFailedNoCondition(t *testing.T) {
+	tr := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"labels": map[string]any{"tekton.dev/pipelineTask": "t"}},
+		"status":   map[string]any{},
+	}}
+	oc := taskRunToOutcome(tr)
+	if oc.Status != "infrafailed" {
+		t.Errorf("status = %q, want infrafailed", oc.Status)
+	}
+}
+
 // TestTaskRunToOutcomeTimeout: a TaskRun ending with Reason: TaskRunTimeout
 // must map to status "timeout" so the cluster engine emits the same
 // task-end status the docker engine would for the timeout fixture.

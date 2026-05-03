@@ -76,6 +76,13 @@ func (b *Backend) ApplyVolumeSourcesForTest(ctx context.Context, in backend.Pipe
 	return b.applyVolumeSources(ctx, in, ns)
 }
 
+// CollectTaskOutcomesForTest re-exposes collectTaskOutcomes so the
+// retries_test can drive the per-TaskRun walk against pre-seeded fake
+// objects without going through Create+Watch.
+func (b *Backend) CollectTaskOutcomesForTest(ctx context.Context, in backend.PipelineRunInvocation, ns string) map[string]backend.TaskOutcomeOnCluster {
+	return b.collectTaskOutcomes(ctx, in, ns)
+}
+
 // Prepare lazily provisions the cluster + Tekton on first use.
 func (b *Backend) Prepare(ctx context.Context, _ backend.RunSpec) error {
 	if b.client.Dynamic != nil {
