@@ -7,9 +7,11 @@ weeks of feature work. It has two ranked tracks; both run in parallel
 but track-2 items unblock track-1 items by giving us confidence that
 each new feature behaves identically across backends.
 
-For "what is and isn't tested today" see `docs/test-coverage.md`. For
-the long-form designs that have already shipped see
-`docs/superpowers/specs/`.
+For the canonical, machine-checked record of what's shipped vs. gapped
+(and which fixture proves it), see `docs/feature-parity.md` — that's the
+scoreboard, this file is the priority list. For "what is and isn't
+tested today" see `docs/test-coverage.md`. For the long-form designs
+that have already shipped see `docs/superpowers/specs/`.
 
 ---
 

@@ -305,6 +305,10 @@ this as a hard precondition for opening a PR.
 
 ## Where to look next
 
+- **Feature parity scoreboard:** `docs/feature-parity.md` — single source
+  of truth for what's `shipped` / `in-progress` / `gap`, with the e2e
+  fixture and limitations fixture for each row. CI's `parity-check` job
+  enforces that this table doesn't drift from the tree.
 - Spec: `docs/superpowers/specs/2026-05-01-tkn-act-design.md`
 - Cluster spec: `docs/superpowers/specs/2026-05-01-tkn-act-cluster-backend-design.md`
 - This file in the binary: `tkn-act agent-guide`
