@@ -670,3 +670,53 @@ func TestEnsureNamespaceIdempotent(t *testing.T) {
 		t.Errorf("apply on existing ns: %v", err)
 	}
 }
+
+// TestBuildPipelineRunInlinesStepTemplate: when a referenced Task has
+// stepTemplate, the cluster backend must inline it under
+// pipelineSpec.tasks[].taskSpec.stepTemplate intact (Tekton's
+// EmbeddedTask schema accepts stepTemplate natively).
+func TestBuildPipelineRunInlinesStepTemplate(t *testing.T) {
+	be, _, _, _, _ := fakeBackend(t)
+
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{Name: "a", TaskRef: &tektontypes.TaskRef{Name: "t"}}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{
+		StepTemplate: &tektontypes.StepTemplate{
+			Image: "alpine:3",
+			Env:   []tektontypes.EnvVar{{Name: "SHARED", Value: "hello"}},
+		},
+		Steps: []tektontypes.Step{{Name: "s", Script: "true"}},
+	}}
+	tk.Metadata.Name = "t"
+
+	prObj, err := be.BuildPipelineRunObject(backend.PipelineRunInvocation{
+		RunID: "12345678", PipelineRunName: "p-12345678",
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"t": tk},
+	}, "tkn-act-12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	un := prObj.(*unstructured.Unstructured)
+
+	tasks, _, _ := unstructured.NestedSlice(un.Object, "spec", "pipelineSpec", "tasks")
+	if len(tasks) != 1 {
+		t.Fatalf("tasks slice = %d, want 1", len(tasks))
+	}
+	taskMap, ok := tasks[0].(map[string]any)
+	if !ok {
+		t.Fatalf("tasks[0] not a map: %T", tasks[0])
+	}
+	taskSpec, ok := taskMap["taskSpec"].(map[string]any)
+	if !ok {
+		t.Fatalf("taskSpec missing under inlined task")
+	}
+	st, ok := taskSpec["stepTemplate"].(map[string]any)
+	if !ok {
+		t.Fatalf("stepTemplate missing on inlined taskSpec; got: %v", taskSpec)
+	}
+	if got := st["image"]; got != "alpine:3" {
+		t.Errorf("stepTemplate.image = %v, want alpine:3", got)
+	}
+}
