@@ -56,6 +56,14 @@ func (b *Backend) ensureNamespace(ctx context.Context, name string) error {
 // pipelineSpec inlined and workspaces backed by volumeClaimTemplate.
 func buildPipelineRun(in backend.PipelineRunInvocation, namespace string) *unstructured.Unstructured {
 	pipelineSpec := pipelineSpecToMap(in.Pipeline)
+	// Tekton's v1 PipelineSpec does not carry a `timeouts` field —
+	// timeouts live on PipelineRun.spec.timeouts. tkn-act's tektontypes
+	// puts the field on PipelineSpec (so authors can write it once on
+	// the Pipeline), but when serialized into pipelineSpec for the
+	// cluster backend it would be rejected by Tekton's webhook
+	// ("unknown field"). Drop it here; we re-attach it onto the
+	// PipelineRun's spec below.
+	delete(pipelineSpec, "timeouts")
 
 	// Inline embedded Tasks under each PipelineTask.taskSpec.
 	if tasks, ok := pipelineSpec["tasks"].([]any); ok {

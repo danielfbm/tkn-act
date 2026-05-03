@@ -99,6 +99,44 @@ spec:
 	}
 }
 
+func TestFinallyTimeoutTriggers(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: trivial}
+spec:
+  steps: [{name: s, image: alpine, script: 'true'}]
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: hangs}
+spec:
+  steps: [{name: s, image: alpine, script: 'sleep 60'}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  timeouts: {finally: "100ms"}
+  tasks:
+    - {name: t, taskRef: {name: trivial}}
+  finally:
+    - {name: c, taskRef: {name: hangs}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	be := &recBackend{hangFor: map[string]time.Duration{"c": 60 * time.Second}}
+	sink := &sliceSink{}
+	res, err := engine.New(be, sink, engine.Options{}).RunPipeline(context.Background(), engine.PipelineInput{Bundle: b, Name: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "timeout" {
+		t.Errorf("status = %q, want timeout", res.Status)
+	}
+}
+
 func TestNoTimeoutsBackwardCompatible(t *testing.T) {
 	b, err := loader.LoadBytes([]byte(`
 apiVersion: tekton.dev/v1

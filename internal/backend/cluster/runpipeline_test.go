@@ -289,6 +289,12 @@ func TestBuildPipelineRunInlinesTimeouts(t *testing.T) {
 	if got["pipeline"] != "10m" || got["tasks"] != "8m" || got["finally"] != "2m" {
 		t.Errorf("spec.timeouts = %v, want pipeline=10m tasks=8m finally=2m", got)
 	}
+	// Tekton v1 PipelineSpec does NOT have a timeouts field. Leaving it
+	// under pipelineSpec.timeouts gets rejected by the admission webhook
+	// ("unknown field"). Verify it's stripped.
+	if _, found, _ := unstructured.NestedMap(un.Object, "spec", "pipelineSpec", "timeouts"); found {
+		t.Errorf("pipelineSpec.timeouts must NOT be set on the submitted PipelineRun (Tekton rejects it)")
+	}
 }
 
 // TestEnsureNamespaceIdempotent: a second RunPipeline call against the

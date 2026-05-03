@@ -190,6 +190,16 @@ levelLoop:
 		}
 		e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskStart, Time: time.Now(), Task: pt.Name})
 		oc := e.runOneWithPolicy(finallyCtx, in, pl, pt, params, results, runID, pipelineRunName)
+		// If the finally (or pipeline) budget fired during this task, the
+		// backend returned a cancellation-class outcome ("infrafailed" /
+		// "failed"). Re-classify it as "timeout" so the per-task event and
+		// the overall run agree on what killed the task.
+		if finallyCtx.Err() != nil && (oc.Status == "infrafailed" || oc.Status == "failed") {
+			oc.Status = "timeout"
+			if oc.Message == "" {
+				oc.Message = "finally timeout exceeded"
+			}
+		}
 		e.rep.Emit(reporter.Event{
 			Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: pt.Name,
 			Status: oc.Status, Duration: oc.Duration, Message: oc.Message, Attempt: oc.Attempt,
@@ -205,7 +215,10 @@ levelLoop:
 		}
 	}
 
-	if pipeCtx.Err() != nil && overall != "failed" {
+	// Either budget firing means the run timed out, regardless of how
+	// individual task outcomes shook out (a budget kill is a "timeout"
+	// even if backends reported infrafailed mid-flight).
+	if pipeCtx.Err() != nil || finallyCtx.Err() != nil {
 		overall = "timeout"
 	}
 
