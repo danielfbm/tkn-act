@@ -199,5 +199,6 @@ func All() []Fixture {
 			},
 		},
 		{Dir: "configmap-from-yaml", Pipeline: "configmap-from-yaml", WantStatus: "succeeded"},
+		{Dir: "secret-from-yaml", Pipeline: "secret-from-yaml", WantStatus: "succeeded"},
 	}
 }
