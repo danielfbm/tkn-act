@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/danielfbm/tkn-act/internal/backend/docker"
+	"github.com/danielfbm/tkn-act/internal/e2e/fixtures"
 	"github.com/danielfbm/tkn-act/internal/engine"
 	"github.com/danielfbm/tkn-act/internal/loader"
 	"github.com/danielfbm/tkn-act/internal/reporter"
@@ -18,29 +19,27 @@ import (
 	"github.com/danielfbm/tkn-act/internal/workspace"
 )
 
-type fixtureOpt func(*fixtureCfg)
-type fixtureCfg struct {
-	configMaps map[string]map[string]string // name -> key -> value
-}
-
-func withConfigMap(name string, kv map[string]string) fixtureOpt {
-	return func(c *fixtureCfg) {
-		if c.configMaps == nil {
-			c.configMaps = map[string]map[string]string{}
+func TestE2E(t *testing.T) {
+	for _, f := range fixtures.All() {
+		f := f
+		if f.ClusterOnly {
+			continue
 		}
-		c.configMaps[name] = kv
+		t.Run(f.TestName(), func(t *testing.T) {
+			runFixtureDocker(t, f)
+		})
 	}
 }
 
-func runFixture(t *testing.T, fixture, pipelineName string, params map[string]string, wantStatus string, opts ...fixtureOpt) {
+func runFixtureDocker(t *testing.T, f fixtures.Fixture) {
 	t.Helper()
 	ctx := context.Background()
-	files, err := filepath.Glob(filepath.Join("..", "..", "testdata", "e2e", fixture, "*.yaml"))
+	files, err := filepath.Glob(filepath.Join("..", "..", "testdata", "e2e", f.Dir, "*.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(files) == 0 {
-		t.Fatalf("no fixture files in %s", fixture)
+		t.Fatalf("no fixture files in %s", f.Dir)
 	}
 	b, err := loader.LoadFiles(files)
 	if err != nil {
@@ -49,7 +48,7 @@ func runFixture(t *testing.T, fixture, pipelineName string, params map[string]st
 
 	mgr := workspace.NewManager(t.TempDir(), "e2e")
 	wsHost := map[string]string{}
-	for _, w := range b.Pipelines[pipelineName].Spec.Workspaces {
+	for _, w := range b.Pipelines[f.Pipeline].Spec.Workspaces {
 		p, err := mgr.Provision(w.Name, "")
 		if err != nil {
 			t.Fatal(err)
@@ -68,21 +67,22 @@ func runFixture(t *testing.T, fixture, pipelineName string, params map[string]st
 
 	rep := reporter.NewJSON(io.Discard)
 	pmap := map[string]tektontypes.ParamValue{}
-	for k, v := range params {
+	for k, v := range f.Params {
 		pmap[k] = tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: v}
 	}
 
-	cfg := fixtureCfg{}
-	for _, o := range opts {
-		o(&cfg)
-	}
 	cmStore := volumes.NewStore("")
-	for name, kv := range cfg.configMaps {
+	for name, kv := range f.ConfigMaps {
 		for k, v := range kv {
 			cmStore.Add(name, k, v)
 		}
 	}
 	secStore := volumes.NewStore("")
+	for name, kv := range f.Secrets {
+		for k, v := range kv {
+			secStore.Add(name, k, v)
+		}
+	}
 	volResolver := func(taskName string, vs []tektontypes.Volume) (map[string]string, error) {
 		volBase, perr := mgr.ProvisionVolumesDir(taskName)
 		if perr != nil {
@@ -92,29 +92,12 @@ func runFixture(t *testing.T, fixture, pipelineName string, params map[string]st
 	}
 
 	res, err := engine.New(be, rep, engine.Options{MaxParallel: 4, VolumeResolver: volResolver}).RunPipeline(ctx, engine.PipelineInput{
-		Bundle: b, Name: pipelineName, Params: pmap, Workspaces: wsHost,
+		Bundle: b, Name: f.Pipeline, Params: pmap, Workspaces: wsHost,
 	})
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if !strings.EqualFold(res.Status, wantStatus) {
-		t.Errorf("status = %s, want %s", res.Status, wantStatus)
+	if !strings.EqualFold(res.Status, f.WantStatus) {
+		t.Errorf("status = %s, want %s (%s)", res.Status, f.WantStatus, f.Description)
 	}
-}
-
-func TestE2EHello(t *testing.T)              { runFixture(t, "hello", "hello", nil, "succeeded") }
-func TestE2EMultilog(t *testing.T)            { runFixture(t, "multilog", "multilog", nil, "succeeded") }
-func TestE2EParamsAndResults(t *testing.T)   { runFixture(t, "params-and-results", "chain", nil, "succeeded") }
-func TestE2EWorkspaces(t *testing.T)         { runFixture(t, "workspaces", "ws-chain", nil, "succeeded") }
-func TestE2EWhenSkipsDev(t *testing.T)       { runFixture(t, "when-and-finally", "whens", map[string]string{"env": "dev"}, "succeeded") }
-func TestE2EWhenRunsProd(t *testing.T)       { runFixture(t, "when-and-finally", "whens", map[string]string{"env": "prod"}, "succeeded") }
-func TestE2EFailurePropagation(t *testing.T) { runFixture(t, "failure-propagation", "failprop", nil, "failed") }
-func TestE2EOnErrorContinue(t *testing.T)    { runFixture(t, "onerror", "best-effort", nil, "succeeded") }
-func TestE2ERetries(t *testing.T)            { runFixture(t, "retries", "retries", nil, "succeeded") }
-func TestE2ETimeout(t *testing.T)            { runFixture(t, "timeout", "hangs", nil, "timeout") }
-func TestE2EStepResults(t *testing.T)        { runFixture(t, "step-results", "stepres", nil, "succeeded") }
-func TestE2EVolumes(t *testing.T) {
-	runFixture(t, "volumes", "configmap-eater", nil, "succeeded",
-		withConfigMap("app-config", map[string]string{"greeting": "hello-from-cm"}),
-	)
 }

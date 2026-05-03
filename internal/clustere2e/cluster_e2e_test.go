@@ -6,23 +6,86 @@ import (
 	"context"
 	"io"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/danielfbm/tkn-act/internal/backend"
 	clusterbe "github.com/danielfbm/tkn-act/internal/backend/cluster"
 	"github.com/danielfbm/tkn-act/internal/cluster/k3d"
+	"github.com/danielfbm/tkn-act/internal/e2e/fixtures"
 	"github.com/danielfbm/tkn-act/internal/engine"
 	"github.com/danielfbm/tkn-act/internal/loader"
 	"github.com/danielfbm/tkn-act/internal/reporter"
+	"github.com/danielfbm/tkn-act/internal/tektontypes"
+	"github.com/danielfbm/tkn-act/internal/volumes"
 	"github.com/danielfbm/tkn-act/internal/workspace"
 )
 
-func TestClusterE2EHello(t *testing.T) {
+// captureSink is a reporter.Reporter that records every emitted event so
+// the cluster-e2e tests can assert on the JSON event shape (task-retry
+// events, Attempt counts, ...) coming from real Tekton.
+type captureSink struct {
+	mu     sync.Mutex
+	events []reporter.Event
+}
+
+func (s *captureSink) Emit(e reporter.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, e)
+}
+func (s *captureSink) Close() error { return nil }
+func (s *captureSink) snapshot() []reporter.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]reporter.Event, len(s.events))
+	copy(out, s.events)
+	return out
+}
+
+// One k3d cluster + Tekton install is shared across the whole fixture
+// table — the per-fixture cost should be one PipelineRun, not a fresh
+// cluster bring-up. Each subtest creates an ephemeral namespace inside
+// that shared cluster.
+func TestClusterE2E(t *testing.T) {
+	dir := t.TempDir()
+	kubecfg := filepath.Join(dir, "kubeconfig")
+	cmStore := volumes.NewStore("")
+	secStore := volumes.NewStore("")
+	cb := clusterbe.New(clusterbe.Options{
+		CacheDir:   dir,
+		Driver:     k3d.New(k3d.Options{ClusterName: "tkn-act-e2e", KubeconfigPath: kubecfg}),
+		ConfigMaps: cmStore,
+		Secrets:    secStore,
+	})
+	t.Cleanup(func() { _ = cb.Cleanup(context.Background()) })
+
+	for _, f := range fixtures.All() {
+		f := f
+		if f.DockerOnly {
+			continue
+		}
+		t.Run(f.TestName(), func(t *testing.T) {
+			runFixtureCluster(t, cb, cmStore, secStore, f)
+		})
+	}
+
+	_ = backend.Backend(cb) // compile-time check
+}
+
+func runFixtureCluster(t *testing.T, cb *clusterbe.Backend, cmStore, secStore *volumes.Store, f fixtures.Fixture) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	files, _ := filepath.Glob("../../testdata/e2e/hello/*.yaml")
+	files, err := filepath.Glob(filepath.Join("..", "..", "testdata", "e2e", f.Dir, "*.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatalf("no fixture files in %s", f.Dir)
+	}
 	b, err := loader.LoadFiles(files)
 	if err != nil {
 		t.Fatal(err)
@@ -33,22 +96,80 @@ func TestClusterE2EHello(t *testing.T) {
 		return mgr.ProvisionResultsDir(taskName)
 	})
 
-	kubecfg := filepath.Join(t.TempDir(), "kubeconfig")
-	cb := clusterbe.New(clusterbe.Options{
-		CacheDir: t.TempDir(),
-		Driver:   k3d.New(k3d.Options{ClusterName: "tkn-act-e2e", KubeconfigPath: kubecfg}),
-	})
-	t.Cleanup(func() { _ = cb.Cleanup(context.Background()) })
+	for name, kv := range f.ConfigMaps {
+		for k, v := range kv {
+			cmStore.Add(name, k, v)
+		}
+	}
+	for name, kv := range f.Secrets {
+		for k, v := range kv {
+			secStore.Add(name, k, v)
+		}
+	}
 
-	rep := reporter.NewJSON(io.Discard)
+	pmap := map[string]tektontypes.ParamValue{}
+	for k, v := range f.Params {
+		pmap[k] = tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: v}
+	}
+
+	jsonRep := reporter.NewJSON(io.Discard)
+	cap := &captureSink{}
+	rep := reporter.NewTee(jsonRep, cap)
 	res, err := engine.New(cb, rep, engine.Options{}).RunPipeline(ctx, engine.PipelineInput{
-		Bundle: b, Name: "hello",
+		Bundle: b, Name: f.Pipeline, Params: pmap,
 	})
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if res.Status != "succeeded" {
-		t.Errorf("status = %s", res.Status)
+	if res.Status != f.WantStatus {
+		t.Errorf("status = %s, want %s (%s)", res.Status, f.WantStatus, f.Description)
 	}
-	_ = backend.Backend(cb) // compile-time check
+	assertEventShape(t, f, cap.snapshot())
+}
+
+// assertEventShape checks the per-fixture invariants that fall out of
+// the Track 2 #4 work — the JSON event stream from the cluster backend
+// must match the docker stream's *shape* for these specific fixtures.
+// Cross-backend fidelity is a checkable invariant, not just an
+// aspiration.
+func assertEventShape(t *testing.T, f fixtures.Fixture, events []reporter.Event) {
+	t.Helper()
+	switch f.Dir {
+	case "retries":
+		// retries/ has retries: 3 and the task succeeds on the third
+		// attempt → cluster backend must report 2 task-retry events
+		// and a task-end with Attempt: 3, matching docker.
+		retries, end := 0, reporter.Event{}
+		for _, e := range events {
+			switch e.Kind {
+			case reporter.EvtTaskRetry:
+				retries++
+			case reporter.EvtTaskEnd:
+				if e.Task != "" {
+					end = e
+				}
+			}
+		}
+		if retries != 2 {
+			t.Errorf("retries fixture: task-retry events = %d, want 2", retries)
+		}
+		if end.Attempt != 3 {
+			t.Errorf("retries fixture: task-end attempt = %d, want 3", end.Attempt)
+		}
+		if end.Status != "succeeded" {
+			t.Errorf("retries fixture: task-end status = %q, want succeeded", end.Status)
+		}
+	case "timeout":
+		// timeout/ must end with task-end status=timeout (Track 2 #2
+		// invariant).
+		var saw bool
+		for _, e := range events {
+			if e.Kind == reporter.EvtTaskEnd && e.Status == "timeout" {
+				saw = true
+			}
+		}
+		if !saw {
+			t.Errorf("timeout fixture: no task-end with status=timeout in event stream")
+		}
+	}
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/danielfbm/tkn-act/internal/cluster"
 	"github.com/danielfbm/tkn-act/internal/cluster/tekton"
 	"github.com/danielfbm/tkn-act/internal/cmdrunner"
+	"github.com/danielfbm/tkn-act/internal/volumes"
 	apiextclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -23,6 +24,14 @@ type Options struct {
 	Driver        cluster.Driver
 	Runner        cmdrunner.Runner
 	TektonVersion string
+	// ConfigMaps and Secrets back the per-Task volumes the docker side
+	// resolves locally. The cluster backend reads bytes from these stores
+	// and projects them into ephemeral kube ConfigMap/Secret resources in
+	// the run namespace before submitting the PipelineRun. Nil stores mean
+	// "no volume sources configured" and a fixture that references one
+	// will fail at submit time, mirroring docker behavior.
+	ConfigMaps *volumes.Store
+	Secrets    *volumes.Store
 }
 
 type ClientBundle struct {
@@ -53,6 +62,26 @@ func New(opt Options) *Backend {
 
 // NewWithClients is a test constructor that injects a pre-built ClientBundle.
 func NewWithClients(cb ClientBundle) *Backend { return &Backend{client: cb} }
+
+// NewWithClientsAndStores is the same, plus the configMap/secret stores
+// the volumes-apply path needs. Production code uses New + Options.
+func NewWithClientsAndStores(cb ClientBundle, cm, sec *volumes.Store) *Backend {
+	return &Backend{client: cb, opt: Options{ConfigMaps: cm, Secrets: sec}}
+}
+
+// ApplyVolumeSourcesForTest re-exposes the package-private apply path so
+// the volumes_test can inspect the resulting kube ConfigMap/Secret without
+// driving the full RunPipeline watch loop.
+func (b *Backend) ApplyVolumeSourcesForTest(ctx context.Context, in backend.PipelineRunInvocation, ns string) error {
+	return b.applyVolumeSources(ctx, in, ns)
+}
+
+// CollectTaskOutcomesForTest re-exposes collectTaskOutcomes so the
+// retries_test can drive the per-TaskRun walk against pre-seeded fake
+// objects without going through Create+Watch.
+func (b *Backend) CollectTaskOutcomesForTest(ctx context.Context, in backend.PipelineRunInvocation, ns string) map[string]backend.TaskOutcomeOnCluster {
+	return b.collectTaskOutcomes(ctx, in, ns)
+}
 
 // Prepare lazily provisions the cluster + Tekton on first use.
 func (b *Backend) Prepare(ctx context.Context, _ backend.RunSpec) error {

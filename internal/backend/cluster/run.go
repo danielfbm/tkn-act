@@ -31,6 +31,9 @@ func (b *Backend) RunPipeline(ctx context.Context, in backend.PipelineRunInvocat
 	if err := b.ensureNamespace(ctx, ns); err != nil {
 		return backend.PipelineRunResult{}, err
 	}
+	if err := b.applyVolumeSources(ctx, in, ns); err != nil {
+		return backend.PipelineRunResult{}, err
+	}
 	pr := buildPipelineRun(in, ns)
 	created, err := b.client.Dynamic.Resource(gvrPipelineRun).Namespace(ns).Create(ctx, pr, metav1.CreateOptions{})
 	if err != nil {
@@ -223,21 +226,132 @@ func (b *Backend) watchPipelineRun(ctx context.Context, in backend.PipelineRunIn
 			if !ok {
 				continue
 			}
-			if cm["type"] == "Succeeded" {
-				switch cm["status"] {
-				case "True":
-					res.Status = "succeeded"
-					res.Ended = time.Now()
-					return res, nil
-				case "False":
-					res.Status = "failed"
-					res.Ended = time.Now()
-					return res, nil
-				}
+			if cm["type"] != "Succeeded" {
+				continue
 			}
+			status, _ := cm["status"].(string)
+			if status != "True" && status != "False" {
+				continue
+			}
+			reason, _ := cm["reason"].(string)
+			res.Status = mapPipelineRunStatus(status, reason)
+			res.Ended = time.Now()
+			res.Tasks = b.collectTaskOutcomes(ctx, in, ns)
+			return res, nil
 		}
 	}
 	return res, fmt.Errorf("PipelineRun watch closed before terminal status")
+}
+
+// collectTaskOutcomes walks every TaskRun owned by this PipelineRun and
+// produces a per-pipeline-task summary the engine turns into task-end /
+// task-retry events. Best-effort: a list error returns an empty map (the
+// PipelineRun status alone still drives the run-level outcome).
+func (b *Backend) collectTaskOutcomes(ctx context.Context, in backend.PipelineRunInvocation, ns string) map[string]backend.TaskOutcomeOnCluster {
+	out := map[string]backend.TaskOutcomeOnCluster{}
+	list, err := b.client.Dynamic.Resource(gvrTaskRun).Namespace(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: "tekton.dev/pipelineRun=" + in.PipelineRunName,
+	})
+	if err != nil {
+		return out
+	}
+	for i := range list.Items {
+		tr := &list.Items[i]
+		ptName, _, _ := unstructured.NestedString(tr.Object, "metadata", "labels", "tekton.dev/pipelineTask")
+		if ptName == "" {
+			continue
+		}
+		out[ptName] = taskRunToOutcome(tr)
+	}
+	return out
+}
+
+// taskRunToOutcome reads the parts of a Tekton TaskRun status the engine
+// needs to reconstruct task-end / task-retry events: terminal status,
+// retriesStatus list, and (when present) per-result values.
+func taskRunToOutcome(tr *unstructured.Unstructured) backend.TaskOutcomeOnCluster {
+	oc := backend.TaskOutcomeOnCluster{Attempts: 1}
+	conds, _, _ := unstructured.NestedSlice(tr.Object, "status", "conditions")
+	for _, c := range conds {
+		cm, ok := c.(map[string]any)
+		if !ok || cm["type"] != "Succeeded" {
+			continue
+		}
+		st, _ := cm["status"].(string)
+		reason, _ := cm["reason"].(string)
+		oc.Status = mapTaskRunStatus(st, reason)
+		oc.Message, _ = cm["message"].(string)
+		break
+	}
+	if oc.Status == "" {
+		oc.Status = "infrafailed"
+	}
+	// retriesStatus: one entry per *failed* attempt that preceded the
+	// terminal one. Total attempts = len(retriesStatus) + 1.
+	retries, _, _ := unstructured.NestedSlice(tr.Object, "status", "retriesStatus")
+	if n := len(retries); n > 0 {
+		oc.Attempts = n + 1
+		oc.RetryAttempts = make([]backend.RetryAttempt, 0, n)
+		for i, r := range retries {
+			rm, _ := r.(map[string]any)
+			cs, _, _ := unstructured.NestedSlice(rm, "conditions")
+			ra := backend.RetryAttempt{Attempt: i + 1, Status: "failed"}
+			for _, c := range cs {
+				cmap, ok := c.(map[string]any)
+				if !ok || cmap["type"] != "Succeeded" {
+					continue
+				}
+				st, _ := cmap["status"].(string)
+				reason, _ := cmap["reason"].(string)
+				ra.Status = mapTaskRunStatus(st, reason)
+				ra.Message, _ = cmap["message"].(string)
+				break
+			}
+			oc.RetryAttempts = append(oc.RetryAttempts, ra)
+		}
+	}
+	// Surface task results (best-effort).
+	if results, found, _ := unstructured.NestedSlice(tr.Object, "status", "results"); found {
+		oc.Results = map[string]string{}
+		for _, r := range results {
+			rm, _ := r.(map[string]any)
+			name, _ := rm["name"].(string)
+			value, _ := rm["value"].(string)
+			if name != "" {
+				oc.Results[name] = value
+			}
+		}
+	}
+	return oc
+}
+
+// mapTaskRunStatus is the per-TaskRun analogue of mapPipelineRunStatus.
+func mapTaskRunStatus(condStatus, reason string) string {
+	if condStatus == "True" {
+		return "succeeded"
+	}
+	switch reason {
+	case "TaskRunTimeout", "PipelineRunTimeout":
+		return "timeout"
+	}
+	return "failed"
+}
+
+// mapPipelineRunStatus translates the (Succeeded condition status, reason)
+// pair on a Tekton PipelineRun into one of our user-visible statuses. Today
+// only timeout needs disambiguation; everything else collapses to
+// succeeded/failed. Keep the table here next to the cluster watch so docker
+// engine.RunResult.Status and cluster engine.RunResult.Status emit the
+// same value for the same outcome.
+func mapPipelineRunStatus(condStatus, reason string) string {
+	if condStatus == "True" {
+		return "succeeded"
+	}
+	switch reason {
+	case "PipelineRunTimeout", "TaskRunTimeout":
+		return "timeout"
+	}
+	return "failed"
 }
 
 func (b *Backend) streamAllTaskRunLogs(ctx context.Context, in backend.PipelineRunInvocation, ns string, streamed map[string]bool) {

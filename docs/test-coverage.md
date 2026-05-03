@@ -1,6 +1,6 @@
 # Test coverage — what CI runs and what it doesn't
 
-Last updated: 2026-05-03 (matches the v1.2 docker-fidelity work).
+Last updated: 2026-05-03 (cross-backend fidelity work; covers v1.2).
 
 This document inventories what the GitHub Actions pipelines and the
 test suite cover today, and — equally important — what they do not. It
@@ -88,9 +88,12 @@ Plus `internal/backend/docker/docker_integration_test.go`.
 ### `-tags cluster` — runs in `cluster-integration.yml`
 
 Needs `kubectl` + `k3d` on the host. Boots the project's ephemeral
-cluster, installs Tekton, and runs the `hello` fixture against the real
-controller. Smoke-level today; deeper cluster fidelity testing is on
-the roadmap.
+cluster, installs Tekton, and runs the **same `internal/e2e/fixtures`
+table the docker-integration job uses**, against the real controller.
+Both backends consume `fixtures.All()`, so any new fixture under
+`testdata/e2e/` automatically runs on both backends — divergences are
+explicit `DockerOnly` / `ClusterOnly` flags on the descriptor rather
+than silent omissions.
 
 ---
 
@@ -148,12 +151,12 @@ In rough order of "you should be aware":
 
 ### Smoke vs. real e2e gaps
 
-- The cluster-integration job only runs the `hello` fixture today.
-  Graduated docker fixtures (`onerror`, `retries`, `timeout`,
-  `step-results`, `volumes`) are not yet exercised under `--cluster`,
-  so we don't actually verify that "the same pipeline behaves the same
-  way on both backends" — only that each fixture works on its own
-  backend.
+- The cluster-integration job runs the full shared fixture table from
+  `internal/e2e/fixtures` (same descriptors as docker-integration), so
+  parity is now a checkable invariant for every v1.2 feature.
+  Backend-specific divergences (none today) would surface as
+  `DockerOnly` / `ClusterOnly` flags on the descriptor, not silent
+  omissions.
 - `tkn-act doctor -o json` is asserted in unit tests but the full
   agent flow ("doctor → list → validate → run -o json → exit code")
   isn't asserted as a single integration sequence.

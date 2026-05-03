@@ -1,0 +1,402 @@
+{
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/agentguide.go": {
+    "mtime": 1777776367.6107857,
+    "hash": "24356c31c72ca8a9629f440cac938d16"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/agentguide_test.go": {
+    "mtime": 1777776367.6107857,
+    "hash": "8a8e74ecf7ceda99f3902f2ac5855d2c"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/cluster.go": {
+    "mtime": 1777776367.6107857,
+    "hash": "1e5f0f45f1b7f3f4fa4127f8fd260129"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/doctor.go": {
+    "mtime": 1777776367.6117857,
+    "hash": "e54e226f2f1a02828bee4f93f753f93a"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/doctor_test.go": {
+    "mtime": 1777776367.6117857,
+    "hash": "9365f4179e5038fe1f18000dcbf982d6"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/generate.go": {
+    "mtime": 1777776367.6117857,
+    "hash": "ded656b51473ef0655caff18438159fd"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/helpjson.go": {
+    "mtime": 1777776367.6117857,
+    "hash": "f3677b78eb93aa2475efeb919bcfcc3f"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/helpjson_test.go": {
+    "mtime": 1777776367.6117857,
+    "hash": "d4f29462f0e4eb79780d0d9251eb038b"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/jsonout_test.go": {
+    "mtime": 1777776367.6127856,
+    "hash": "314ace7889d1225d8fb332f4e98eac69"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/list.go": {
+    "mtime": 1777776367.6127856,
+    "hash": "973763f9c5fb1aab46ae5d7a988d96d0"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/main.go": {
+    "mtime": 1777776367.6127856,
+    "hash": "69e7bc98f41643f9378ac296526699fc"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/reporter_flags_test.go": {
+    "mtime": 1777776367.6127856,
+    "hash": "37d9c9981191e55152c19cf59a50fab3"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/root.go": {
+    "mtime": 1777776367.6127856,
+    "hash": "6c3b4db34a095de8b8b1e1bf93f27fe3"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/run.go": {
+    "mtime": 1777777395.2884243,
+    "hash": "b7daad08aaab97cae30b5a675947117a"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/validate.go": {
+    "mtime": 1777776367.6137857,
+    "hash": "a408726dd25bd41f70754e9dd885c2b0"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/version.go": {
+    "mtime": 1777776367.6137857,
+    "hash": "3a0e72dcfc736955d1fbaf667c0e7490"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/backend/backend.go": {
+    "mtime": 1777777722.7098846,
+    "hash": "774780e26634d45eddb1e1d0a5380388"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/backend/backend_test.go": {
+    "mtime": 1777776367.6187856,
+    "hash": "c30701f3a5d7a06ec1424937b5512522"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/backend/cluster/cluster.go": {
+    "mtime": 1777779217.2428126,
+    "hash": "01fcb0f4fb0b782047b0335127834282"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/backend/cluster/cluster_test.go": {
+    "mtime": 1777776367.6197855,
+    "hash": "1241be7427a13e7b30e0dc15e9f765f1"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/backend/cluster/run.go": {
+    "mtime": 1777777748.6216009,
+    "hash": "ec6748de23b7cbf3426eb55177389c37"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/backend/cluster/volumes.go": {
+    "mtime": 1777777322.441223,
+    "hash": "cbc2347631f6ee467d7f05fd08163589"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/backend/cluster/run_test.go": {
+    "mtime": 1777777455.4677672,
+    "hash": "3c086f9415045bcc01048f07dd821b89"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/backend/cluster/volumes_test.go": {
+    "mtime": 1777778689.5087888,
+    "hash": "9dede873a3e1a200307d3e90f69dd2eb"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/backend/cluster/retries_test.go": {
+    "mtime": 1777778704.831615,
+    "hash": "88add299581f739d515dc677e7bd1db2"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/backend/cluster/runpipeline_test.go": {
+    "mtime": 1777779265.8562644,
+    "hash": "e1dbe22d002a9a9e8159534560eaabd7"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/backend/docker/docker.go": {
+    "mtime": 1777776367.6197855,
+    "hash": "ed7feddae222880bb4dbb99cef47dd81"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/backend/docker/docker_integration_test.go": {
+    "mtime": 1777776367.6207855,
+    "hash": "35af5de363c63f72ca62491a264dc8b0"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/cluster/driver.go": {
+    "mtime": 1777776367.6207855,
+    "hash": "603f95348af40e6442d13c5e3af4ad3f"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/cluster/k3d/k3d.go": {
+    "mtime": 1777776367.6207855,
+    "hash": "d9e3c37848af24027fb3275f3f156311"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/cluster/k3d/k3d_test.go": {
+    "mtime": 1777776367.6207855,
+    "hash": "1ef5b252f116c33a408ce5df7050dd08"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/cluster/tekton/install.go": {
+    "mtime": 1777776367.6207855,
+    "hash": "acacb099ebdde31229483b6789c34aef"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/cluster/tekton/install_test.go": {
+    "mtime": 1777776367.6207855,
+    "hash": "60604b1551d339f2017e81819ab247b5"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/clustere2e/cluster_e2e_test.go": {
+    "mtime": 1777779298.3708973,
+    "hash": "fd5821343471f122860b8c06450fd778"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/cmdrunner/runner.go": {
+    "mtime": 1777776367.6217856,
+    "hash": "e57a3ea638bfa7295751ffa83f29c6a1"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/cmdrunner/runner_test.go": {
+    "mtime": 1777776367.6217856,
+    "hash": "561c50af80c79834cd0e37b3c2f6824e"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/discovery/discovery.go": {
+    "mtime": 1777776367.6217856,
+    "hash": "5ca2d18ba62cb50be3b2c56f9fad6895"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/discovery/discovery_test.go": {
+    "mtime": 1777776367.6217856,
+    "hash": "4714afaa08b96bfe43e2782de1e81e1d"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/e2e/e2e_test.go": {
+    "mtime": 1777776940.9004388,
+    "hash": "c0b93ee11711e5c9d1a18f207521617d"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/e2e/fixtures/fixtures.go": {
+    "mtime": 1777777407.948286,
+    "hash": "b2c9fc35f5f9d347172af1c02a2b6999"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/engine/engine.go": {
+    "mtime": 1777777786.634177,
+    "hash": "f0cad509835497bec565dd76af8bda16"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/engine/engine_test.go": {
+    "mtime": 1777776367.6227856,
+    "hash": "8c13a330cdc1ad6483262dda94f663c2"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/engine/policy.go": {
+    "mtime": 1777776367.6227856,
+    "hash": "b680d292ab9ed9a4668a859692ebb4bf"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/engine/policy_test.go": {
+    "mtime": 1777776367.6237855,
+    "hash": "0d4af1e046bfd97bf79efb1390507a03"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/engine/run.go": {
+    "mtime": 1777776367.6237855,
+    "hash": "88c0fc64eb28a920028c2e5ed82903b2"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/engine/when.go": {
+    "mtime": 1777776367.6237855,
+    "hash": "964665dd06fddef6d8c1fe10219b87be"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/engine/cluster_events_test.go": {
+    "mtime": 1777777870.9092367,
+    "hash": "383f30f50cfae049c2406714d63aa96e"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/engine/dag/dag.go": {
+    "mtime": 1777776367.6227856,
+    "hash": "628b1bd3e574c356c1ba32b51868cb5c"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/engine/dag/dag_test.go": {
+    "mtime": 1777776367.6227856,
+    "hash": "b4b7ce475fea786dd960c8555eb89c2a"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/exitcode/codes_test.go": {
+    "mtime": 1777776367.6237855,
+    "hash": "82033a7132dfef460490c1b261d7e805"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/exitcode/exitcode.go": {
+    "mtime": 1777776367.6237855,
+    "hash": "78376b82c84ca269cdd0dcbb021bc08c"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/exitcode/exitcode_test.go": {
+    "mtime": 1777776367.6247854,
+    "hash": "a10723f73ae2fb1bfa8fbe33e03d6872"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/loader/limitations_test.go": {
+    "mtime": 1777776367.6247854,
+    "hash": "805b9b565958ad4a0cd7b6cd3940f0a7"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/loader/loader.go": {
+    "mtime": 1777776367.6247854,
+    "hash": "df99f10783bb2407a5d1b29efb5bf3c4"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/loader/loader_test.go": {
+    "mtime": 1777776367.6247854,
+    "hash": "8ac12539000b162b5e68573739ac60aa"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/reporter/color.go": {
+    "mtime": 1777776367.6257856,
+    "hash": "ba94297c11f86d148c3be7ddd49eee30"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/reporter/event.go": {
+    "mtime": 1777776367.6257856,
+    "hash": "ec99d424e267a62e68fead637777a704"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/reporter/json.go": {
+    "mtime": 1777776367.6257856,
+    "hash": "a7a17c437778f81d2b5bc297486508f8"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/reporter/pretty.go": {
+    "mtime": 1777776367.6257856,
+    "hash": "0489a77fa3631b4e27c16c17a3cccd93"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/reporter/reporter_test.go": {
+    "mtime": 1777776367.6257856,
+    "hash": "33ea36c03c854b10adac5cc7b392a64b"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/resolver/resolver.go": {
+    "mtime": 1777776367.6257856,
+    "hash": "b72e3c58016ae7d09cfbaff9df93ab9c"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/resolver/resolver_test.go": {
+    "mtime": 1777776367.6267855,
+    "hash": "7a141716f86fd8d90f7b4e5a942a37e3"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/resolver/step_test.go": {
+    "mtime": 1777776367.6267855,
+    "hash": "0e3fd68ecac1c12c0caf3649c8680401"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/tektontypes/types.go": {
+    "mtime": 1777776367.6267855,
+    "hash": "3f0356ff2b08b7f6e109f7e06693809e"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/tektontypes/types_test.go": {
+    "mtime": 1777776367.6267855,
+    "hash": "1d448dabc7b7d51aa70bf145a9eacf8d"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/validator/policy_test.go": {
+    "mtime": 1777776367.6267855,
+    "hash": "da4b6d1fb21c3e98617ce6a8df88dbca"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/validator/validator.go": {
+    "mtime": 1777776367.6267855,
+    "hash": "2c64e93aa787b8388eb1fd1d37b480c8"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/validator/validator_test.go": {
+    "mtime": 1777776367.6277854,
+    "hash": "f8a668d1a40bf88e3d92008438bb3cf7"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/volumes/store.go": {
+    "mtime": 1777776367.6277854,
+    "hash": "74b6f4f617571128a308c90c20969370"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/volumes/store_test.go": {
+    "mtime": 1777776367.6277854,
+    "hash": "16d71af9d0b788d65c0113c30c59390c"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/workspace/workspace.go": {
+    "mtime": 1777776367.6277854,
+    "hash": "2a7eae917c9a2c8b9075bb0b9eaf2656"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/workspace/workspace_test.go": {
+    "mtime": 1777776367.6277854,
+    "hash": "52c73c5dda079a57c02367c5e1f8828d"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/AGENTS.md": {
+    "mtime": 1777776367.6097858,
+    "hash": "416a6ade0434c2893d4db187384e9c7d"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/CLAUDE.md": {
+    "mtime": 1777776367.6097858,
+    "hash": "416a6ade0434c2893d4db187384e9c7d"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/README.md": {
+    "mtime": 1777776367.6107857,
+    "hash": "1a2ab26edaf8793704b0aa55e1f6f3b0"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/cmd/tkn-act/agentguide_data.md": {
+    "mtime": 1777776367.6107857,
+    "hash": "4447bcbaac57841c28bb9027f64812b4"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/docs/short-term-goals.md": {
+    "mtime": 1777776367.6147857,
+    "hash": "0680ba07240d476a127f668b1379e4b1"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/docs/test-coverage.md": {
+    "mtime": 1777777957.4582152,
+    "hash": "9f84dbabbc29a2dbeafe6aa21e2cbc50"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/docs/superpowers/plans/2026-05-01-tkn-act-cluster-backend.md": {
+    "mtime": 1777776367.6157856,
+    "hash": "5052cb8c8c5d5e70989dfd781e7671dd"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/docs/superpowers/plans/2026-05-01-tkn-act-v1.md": {
+    "mtime": 1777776367.6167855,
+    "hash": "13e47ee92e076541e1974af46f42aa57"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/docs/superpowers/plans/2026-05-03-cross-backend-fidelity-plan.md": {
+    "mtime": 1777776367.6167855,
+    "hash": "c41f858d31a3816b2a9a0c4dc1b85605"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/docs/superpowers/specs/2026-05-01-tkn-act-cluster-backend.md": {
+    "mtime": 1777776367.6167855,
+    "hash": "d0169131c03b83de7d28d9ce55d579fe"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/docs/superpowers/specs/2026-05-01-tkn-act-design.md": {
+    "mtime": 1777776367.6177857,
+    "hash": "b630c4dda009ed44b3cdd0ff71813d81"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/docs/superpowers/specs/2026-05-02-agent-first-class-cli-design.md": {
+    "mtime": 1777776367.6177857,
+    "hash": "98ff895921edbe1aba24426e6c508f1b"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md": {
+    "mtime": 1777776367.6177857,
+    "hash": "f8e1f03458345a8df1c0105516a04318"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/internal/loader/testdata/multi.yaml": {
+    "mtime": 1777776367.6247854,
+    "hash": "59064693eb7a88bb74ab4faf539f34ad"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/testdata/e2e/failure-propagation/pipeline.yaml": {
+    "mtime": 1777776367.6277854,
+    "hash": "0615bbeca6762eadc27a3fb73268fd3c"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/testdata/e2e/hello/pipeline.yaml": {
+    "mtime": 1777776367.6277854,
+    "hash": "9f2d74cd1ab4ccae364eb1da0d0ef594"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/testdata/e2e/multilog/pipeline.yaml": {
+    "mtime": 1777776367.6287856,
+    "hash": "f380bdaf416a141b6704281d659e09d2"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/testdata/e2e/onerror/pipeline.yaml": {
+    "mtime": 1777776367.6287856,
+    "hash": "aa793ad5fac2320d2918b6e6def78d0a"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/testdata/e2e/params-and-results/pipeline.yaml": {
+    "mtime": 1777776367.6287856,
+    "hash": "3c881cf83c93c6e6ffcf96476ec4ead9"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/testdata/e2e/retries/pipeline.yaml": {
+    "mtime": 1777776367.6287856,
+    "hash": "156a1f9ca10d82a8662f6eab86ace058"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/testdata/e2e/step-results/pipeline.yaml": {
+    "mtime": 1777776367.6287856,
+    "hash": "a7ea5b440e671d58dd4c424c79d422da"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/testdata/e2e/timeout/pipeline.yaml": {
+    "mtime": 1777776367.6287856,
+    "hash": "a3877a11489395250b52daffe00f52c8"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/testdata/e2e/volumes/pipeline.yaml": {
+    "mtime": 1777776367.6287856,
+    "hash": "8525b2fc5389fe932f24f94dd5736d4e"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/testdata/e2e/when-and-finally/pipeline.yaml": {
+    "mtime": 1777776367.6297855,
+    "hash": "f48703a7df31c0cf5e64434be252a64a"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/testdata/e2e/workspaces/pipeline.yaml": {
+    "mtime": 1777776367.6297855,
+    "hash": "2fc0b4ede2052c22bd4a49df1a813086"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/testdata/limitations/README.md": {
+    "mtime": 1777776367.6297855,
+    "hash": "87bb5314fc04ecb42d7f706afd48d87c"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/testdata/limitations/sidecars/pipeline.yaml": {
+    "mtime": 1777776367.6297855,
+    "hash": "5c7d504079de423ffac499817a506964"
+  },
+  "/workspaces/tkn-act/.worktrees/cross-backend-fidelity/testdata/limitations/step-state/pipeline.yaml": {
+    "mtime": 1777776367.6297855,
+    "hash": "0c1123466a661848b74723b3fcf502b4"
+  }
+}

@@ -116,19 +116,33 @@ type PipelineRunInvocation struct {
 	Params          []tektontypes.Param
 	Workspaces      map[string]WorkspaceMount
 	LogSink         LogSink
-	EmitEvent       func(taskName, status, message string, started, ended time.Time, results map[string]string)
 }
 
 // PipelineRunResult is what RunPipeline returns.
 type PipelineRunResult struct {
-	Status  string // succeeded | failed
+	Status  string // succeeded | failed | timeout
 	Tasks   map[string]TaskOutcomeOnCluster
 	Started time.Time
 	Ended   time.Time
 }
 
+// TaskOutcomeOnCluster is the per-task summary the cluster backend hands
+// back. Attempts counts every attempt the controller made for this task
+// (1 if no retries); RetryAttempts is the list of failed attempts that
+// preceded the final outcome — one entry per retry, in order. The engine
+// uses these to emit task-retry / task-end events shape-equivalent to the
+// docker side.
 type TaskOutcomeOnCluster struct {
-	Status  string
+	Status        string
+	Message       string
+	Results       map[string]string
+	Attempts      int
+	RetryAttempts []RetryAttempt
+}
+
+type RetryAttempt struct {
+	Attempt int    // 1-based; the attempt that just failed
+	Status  string // failed | infrafailed
 	Message string
-	Results map[string]string
+	Time    time.Time
 }

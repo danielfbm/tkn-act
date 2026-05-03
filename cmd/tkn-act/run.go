@@ -185,6 +185,8 @@ func runWith(rf runFlags) error {
 				ClusterName:    "tkn-act",
 				KubeconfigPath: filepath.Join(cacheRoot, "cluster", "kubeconfig"),
 			}),
+			ConfigMaps: cmStore,
+			Secrets:    secStore,
 		})
 	} else {
 		dockerBe, err := docker.New(docker.Options{})

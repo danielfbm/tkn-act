@@ -450,10 +450,50 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Duration: dur, Message: err.Error()})
 		return RunResult{Status: "failed"}, err
 	}
+	e.emitClusterTaskEvents(res.Tasks)
 	e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: res.Status, Duration: dur})
 	out := RunResult{Status: res.Status, Tasks: map[string]TaskOutcome{}}
 	for n, oc := range res.Tasks {
 		out.Tasks[n] = TaskOutcome{Status: oc.Status, Message: oc.Message, Results: oc.Results}
 	}
 	return out, nil
+}
+
+// emitClusterTaskEvents synthesises the per-task event sequence the docker
+// engine produces live (task-start, [task-retry]*, task-end) from the
+// cluster backend's post-hoc per-TaskRun summary. Cluster-mode events
+// arrive at the end of the run rather than interleaved with execution,
+// but their *shape* matches docker so an agent listening to --output json
+// doesn't have to special-case the backend.
+func (e *Engine) emitClusterTaskEvents(tasks map[string]backend.TaskOutcomeOnCluster) {
+	for n, oc := range tasks {
+		now := time.Now()
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskStart, Time: now, Task: n})
+		for _, r := range oc.RetryAttempts {
+			t := r.Time
+			if t.IsZero() {
+				t = now
+			}
+			e.rep.Emit(reporter.Event{
+				Kind:    reporter.EvtTaskRetry,
+				Time:    t,
+				Task:    n,
+				Status:  r.Status,
+				Message: r.Message,
+				Attempt: r.Attempt,
+			})
+		}
+		attempt := oc.Attempts
+		if attempt == 0 {
+			attempt = 1
+		}
+		e.rep.Emit(reporter.Event{
+			Kind:    reporter.EvtTaskEnd,
+			Time:    time.Now(),
+			Task:    n,
+			Status:  oc.Status,
+			Message: oc.Message,
+			Attempt: attempt,
+		})
+	}
 }
