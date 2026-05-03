@@ -1,0 +1,41 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: emit-commit}
+spec:
+  results:
+    - name: commit
+  steps:
+    - name: emit
+      image: alpine:3
+      script: |
+        printf abc123 > $(results.commit.path)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: emit-id}
+spec:
+  results:
+    - name: id
+  steps:
+    - name: emit
+      image: alpine:3
+      script: |
+        printf notify-42 > $(results.id.path)
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: pipeline-results}
+spec:
+  results:
+    - name: revision
+      value: $(tasks.checkout.results.commit)
+    - name: report
+      value:
+        - $(tasks.checkout.results.commit)
+        - $(tasks.notify.results.id)
+  tasks:
+    - name: checkout
+      taskRef: {name: emit-commit}
+  finally:
+    - name: notify
+      taskRef: {name: emit-id}
