@@ -25,7 +25,7 @@ near the top are the ones whose absence forces the most users onto
 | # | Feature | Why it matters | Status |
 |---|---|---|---|
 | 1 | **`Task.sidecars`** | Catalog Tasks rely on database / mock-service sidecars; without it, a large fraction of community Tasks won't run on `--docker`. | Out of scope in v1.2; documented in `testdata/limitations/sidecars/`. Needs design work for the docker backend (per-Task network + shared netns). Cluster mode already works. |
-| 2 | **PipelineRun-level timeouts** (`spec.timeouts.{pipeline,tasks,finally}`) | Wraps the per-Task timeout we shipped in v1.2. Common in CI pipelines that need a hard wall-clock cap. | Not started. Engine has the per-Task primitive; needs an outer policy loop and one new exit-code disambiguation. |
+| 2 | **PipelineRun-level timeouts** (`spec.timeouts.{pipeline,tasks,finally}`) | Wraps the per-Task timeout we shipped in v1.2. Common in CI pipelines that need a hard wall-clock cap. | Done in v1.3 (PR for `feat: PipelineSpec.Timeouts`). Outer policy + cluster pass-through; status `timeout`, exit code 6 unchanged. |
 | 3 | **`PipelineTask.matrix`** | Fan a Task across a parameter matrix (build OS × Go version, etc.). Heavily used in language-toolchain pipelines. | Not started. Engine + DAG changes are non-trivial; probably needs its own spec. |
 | 4 | **`Task.stepTemplate`** | DRY for `image` / `env` shared across steps. Common in catalog Tasks. | Not started. Pure type + merge logic at substitution time; small. |
 | 5 | **Load `kind: ConfigMap` / `kind: Secret` from `-f`** | Already in v1.2 as the deferred "B-3" path. Lets users pass the same YAML they would `kubectl apply` instead of `--configmap-dir`. | Deferred from v1.2. Loader and `volumes.Store` already in place; needs glue. |

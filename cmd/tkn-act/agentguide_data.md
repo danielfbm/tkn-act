@@ -102,9 +102,12 @@ Use this to construct correct invocations without scraping `--help` text.
 
 ### `tkn-act run -o json`
 
-Streams one JSON object per line on stdout, one event per line. Event types
-include `pipeline_started`, `task_started`, `step_log`, `task_finished`,
-`pipeline_finished`. The exit code follows the table below.
+Streams one JSON object per line on stdout, one event per line. Event kinds:
+`run-start`, `run-end`, `task-start`, `task-end`, `task-skip`, `task-retry`,
+`step-start`, `step-end`, `step-log`, `error`. `task-retry` fires between
+attempts of a retried task; the terminal `task-end` carries `attempt: N`.
+Task statuses: `succeeded`, `failed`, `infrafailed`, `skipped`, `not-run`,
+`timeout`. The exit code follows the table below.
 
 ### Other JSON outputs
 
@@ -129,6 +132,7 @@ include `pipeline_started`, `task_started`, `step_log`, `task_finished`,
 | 3    | environment | Docker not running, k3d/kubectl missing, cache dir not writable   |
 | 4    | validate    | Tekton YAML rejected (parse, schema, DAG, when, results)          |
 | 5    | pipeline    | run completed but a Task or finally task failed                   |
+| 6    | timeout     | a Task or finally task ended due to its declared timeout          |
 | 130  | cancelled   | SIGINT or SIGTERM during a run                                    |
 
 These codes are part of `tkn-act`'s public contract and are safe to branch on.
@@ -153,8 +157,39 @@ esac
   client env. Honored via `client.FromEnv`.
 - `KUBECONFIG` — used only by `--cluster` mode for kubectl interactions; the
   cluster driver writes its own kubeconfig under the cache dir.
+- `NO_COLOR` — any non-empty value disables color in pretty output (per
+  https://no-color.org). Equivalent to `--color=never`.
+- `FORCE_COLOR` / `CLICOLOR_FORCE` — any non-empty value forces color in
+  pretty output even when stdout is not a TTY. `--color=always` does the same.
+- `--configmap-dir <path>` / `--secret-dir <path>` — directory layout
+  `<path>/<name>/<key>` per source for configMap and secret volumes.
+  Defaults: `$XDG_CACHE_HOME/tkn-act/{configmaps,secrets}/`. Inline form:
+  `--configmap <name>=<k1>=<v1>[,<k2>=<v2>...]` (repeatable; same shape
+  for `--secret`). Inline overrides win over the on-disk dir per key.
 
 `tkn-act` never reads or modifies your shell's `~/.kube/config`.
+
+---
+
+## Pretty output (humans only)
+
+Pretty output is the default for `tkn-act run`. It streams step logs **in
+arrival order**, prefixing each line with `<task>/<step>` so parallel tasks
+remain readable. Verbosity:
+
+- `-q` / `--quiet` — only task and run summaries; suppresses step logs and
+  the pipeline header.
+- (default) — pipeline header, live step logs, task and run summaries.
+- `-v` / `--verbose` — adds step-start / step-end markers.
+
+Color: `--color=auto` (default) | `always` | `never`. `--no-color` is kept as
+an alias for `--color=never`. Resolution precedence is `--color=never` /
+`--no-color` > `--color=always` > `NO_COLOR` env > `FORCE_COLOR` env > TTY
+detection.
+
+Pretty output is for humans and may change at any time. **Agents should
+always pass `--output json`** — that contract is stable and these pretty
+flags do not affect it.
 
 ---
 
@@ -210,6 +245,78 @@ tkn-act list -o json
 
 ---
 
+## Project default: merge with squash + delete-branch
+
+**When merging any PR in this repo, use squash merge and delete the source
+branch.** Concretely:
+
+```sh
+gh pr merge <num> --squash --delete-branch
+```
+
+This is the project-wide default. Reasons:
+
+- `main` history reads as one commit per landed PR — the PR title becomes
+  the squash subject and the body becomes the squash body, which keeps the
+  log skimmable and bisectable.
+- Stale feature branches don't accumulate locally or on the remote.
+- Force-push or merge-commit alternatives are not used; if a PR needs to
+  preserve internal commit history (rare), call it out explicitly in the
+  PR description and discuss before merging.
+
+AI agents working on this repo should treat squash + delete-branch as the
+default merge style without prompting; only deviate when the user
+explicitly asks for a merge or rebase merge.
+
+---
+
+## Contribution rule: tests required
+
+**Every PR that changes Go production code must include a test change.**
+Concretely: if a PR's diff modifies any `*.go` file outside `_test.go` and
+outside `vendor/`, it must also modify or add at least one `*_test.go` file.
+
+This rule is enforced in CI by `.github/scripts/tests-required.sh` (run as
+the `tests-required` job in `.github/workflows/ci.yml`). The script fails
+the PR if the diff has Go code changes without an accompanying test change.
+
+For genuinely test-immune changes (dependency bumps, doc typos in Go
+comments, regenerated boilerplate, generated stubs), include the literal
+token `[skip-test-check]` in any commit message in the PR. The script
+greps `git log --format=%B base..head` for it.
+
+The rationale is the usual one: every behavior we ship is one we must be
+able to detect breaks in later. AI agents working on this repo should treat
+this as a hard precondition for opening a PR.
+
+---
+
+## Timeout disambiguation
+
+Two distinct timeout primitives can both end a task with `status: "timeout"`
+and exit code 6:
+
+| Field | Scope | Where |
+|---|---|---|
+| `Task.spec.timeout` (per-task) | Wall clock for one Task attempt; retries reset it. | v1.2 |
+| `Pipeline.spec.timeouts.pipeline` | Whole-run wall clock (tasks + finally). | v1.3 |
+| `Pipeline.spec.timeouts.tasks` | Wall clock for the tasks DAG only. | v1.3 |
+| `Pipeline.spec.timeouts.finally` | Wall clock for finally tasks only. | v1.3 |
+
+When a `pipeline` budget fires, in-flight tasks end `timeout` and unstarted
+tasks end `not-run`. The terminal `task-end` event for a budget-killed task
+reports `status: "timeout"` and a `message` such as `"pipeline timeout 2s
+exceeded"`. The run-end status is `timeout`.
+
+`tasks` and `finally` are independent budgets — exhausting `tasks` does not
+shorten `finally`, and vice versa.
+
+We do not default `timeouts.pipeline` to `1h` the way upstream Tekton does;
+omission means "no budget at this level." This may change in a future
+release.
+
+---
+
 ## Conventions
 
 - All JSON shapes documented above are part of the public contract; new
@@ -224,6 +331,10 @@ tkn-act list -o json
 
 ## Where to look next
 
+- **Feature parity scoreboard:** `docs/feature-parity.md` — single source
+  of truth for what's `shipped` / `in-progress` / `gap`, with the e2e
+  fixture and limitations fixture for each row. CI's `parity-check` job
+  enforces that this table doesn't drift from the tree.
 - Spec: `docs/superpowers/specs/2026-05-01-tkn-act-design.md`
 - Cluster spec: `docs/superpowers/specs/2026-05-01-tkn-act-cluster-backend-design.md`
 - This file in the binary: `tkn-act agent-guide`
