@@ -72,12 +72,21 @@ func runFixtureDocker(t *testing.T, f fixtures.Fixture) {
 	}
 
 	cmStore := volumes.NewStore("")
+	// Bundle-loaded CM/Secret resources (kind: ConfigMap / kind: Secret
+	// embedded in the fixture's -f stream) sit at the lowest precedence
+	// layer; inline f.ConfigMaps / f.Secrets entries below shadow them.
+	for name, bytesByKey := range b.ConfigMaps {
+		cmStore.LoadBytes(name, bytesByKey)
+	}
 	for name, kv := range f.ConfigMaps {
 		for k, v := range kv {
 			cmStore.Add(name, k, v)
 		}
 	}
 	secStore := volumes.NewStore("")
+	for name, bytesByKey := range b.Secrets {
+		secStore.LoadBytes(name, bytesByKey)
+	}
 	for name, kv := range f.Secrets {
 		for k, v := range kv {
 			secStore.Add(name, k, v)

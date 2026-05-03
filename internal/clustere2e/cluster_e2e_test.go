@@ -98,6 +98,15 @@ func runFixtureCluster(t *testing.T, cb *clusterbe.Backend, cmStore, secStore *v
 		return mgr.ProvisionResultsDir(taskName)
 	})
 
+	// Bundle-loaded CM/Secret resources (kind: ConfigMap / kind: Secret
+	// embedded in the fixture's -f stream) sit at the lowest precedence
+	// layer; inline f.ConfigMaps / f.Secrets entries below shadow them.
+	for name, bytesByKey := range b.ConfigMaps {
+		cmStore.LoadBytes(name, bytesByKey)
+	}
+	for name, bytesByKey := range b.Secrets {
+		secStore.LoadBytes(name, bytesByKey)
+	}
 	for name, kv := range f.ConfigMaps {
 		for k, v := range kv {
 			cmStore.Add(name, k, v)
