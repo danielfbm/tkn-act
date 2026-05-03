@@ -31,6 +31,9 @@ func (b *Backend) RunPipeline(ctx context.Context, in backend.PipelineRunInvocat
 	if err := b.ensureNamespace(ctx, ns); err != nil {
 		return backend.PipelineRunResult{}, err
 	}
+	if err := b.applyVolumeSources(ctx, in, ns); err != nil {
+		return backend.PipelineRunResult{}, err
+	}
 	pr := buildPipelineRun(in, ns)
 	created, err := b.client.Dynamic.Resource(gvrPipelineRun).Namespace(ns).Create(ctx, pr, metav1.CreateOptions{})
 	if err != nil {
@@ -223,21 +226,37 @@ func (b *Backend) watchPipelineRun(ctx context.Context, in backend.PipelineRunIn
 			if !ok {
 				continue
 			}
-			if cm["type"] == "Succeeded" {
-				switch cm["status"] {
-				case "True":
-					res.Status = "succeeded"
-					res.Ended = time.Now()
-					return res, nil
-				case "False":
-					res.Status = "failed"
-					res.Ended = time.Now()
-					return res, nil
-				}
+			if cm["type"] != "Succeeded" {
+				continue
 			}
+			status, _ := cm["status"].(string)
+			if status != "True" && status != "False" {
+				continue
+			}
+			reason, _ := cm["reason"].(string)
+			res.Status = mapPipelineRunStatus(status, reason)
+			res.Ended = time.Now()
+			return res, nil
 		}
 	}
 	return res, fmt.Errorf("PipelineRun watch closed before terminal status")
+}
+
+// mapPipelineRunStatus translates the (Succeeded condition status, reason)
+// pair on a Tekton PipelineRun into one of our user-visible statuses. Today
+// only timeout needs disambiguation; everything else collapses to
+// succeeded/failed. Keep the table here next to the cluster watch so docker
+// engine.RunResult.Status and cluster engine.RunResult.Status emit the
+// same value for the same outcome.
+func mapPipelineRunStatus(condStatus, reason string) string {
+	if condStatus == "True" {
+		return "succeeded"
+	}
+	switch reason {
+	case "PipelineRunTimeout", "TaskRunTimeout":
+		return "timeout"
+	}
+	return "failed"
 }
 
 func (b *Backend) streamAllTaskRunLogs(ctx context.Context, in backend.PipelineRunInvocation, ns string, streamed map[string]bool) {

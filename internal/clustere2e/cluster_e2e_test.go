@@ -17,6 +17,7 @@ import (
 	"github.com/danielfbm/tkn-act/internal/loader"
 	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
+	"github.com/danielfbm/tkn-act/internal/volumes"
 	"github.com/danielfbm/tkn-act/internal/workspace"
 )
 
@@ -27,9 +28,13 @@ import (
 func TestClusterE2E(t *testing.T) {
 	dir := t.TempDir()
 	kubecfg := filepath.Join(dir, "kubeconfig")
+	cmStore := volumes.NewStore("")
+	secStore := volumes.NewStore("")
 	cb := clusterbe.New(clusterbe.Options{
-		CacheDir: dir,
-		Driver:   k3d.New(k3d.Options{ClusterName: "tkn-act-e2e", KubeconfigPath: kubecfg}),
+		CacheDir:   dir,
+		Driver:     k3d.New(k3d.Options{ClusterName: "tkn-act-e2e", KubeconfigPath: kubecfg}),
+		ConfigMaps: cmStore,
+		Secrets:    secStore,
 	})
 	t.Cleanup(func() { _ = cb.Cleanup(context.Background()) })
 
@@ -39,14 +44,14 @@ func TestClusterE2E(t *testing.T) {
 			continue
 		}
 		t.Run(f.TestName(), func(t *testing.T) {
-			runFixtureCluster(t, cb, f)
+			runFixtureCluster(t, cb, cmStore, secStore, f)
 		})
 	}
 
 	_ = backend.Backend(cb) // compile-time check
 }
 
-func runFixtureCluster(t *testing.T, cb *clusterbe.Backend, f fixtures.Fixture) {
+func runFixtureCluster(t *testing.T, cb *clusterbe.Backend, cmStore, secStore *volumes.Store, f fixtures.Fixture) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -67,6 +72,17 @@ func runFixtureCluster(t *testing.T, cb *clusterbe.Backend, f fixtures.Fixture) 
 	engine.SetResultsDirProvisioner(func(_, taskName string) (string, error) {
 		return mgr.ProvisionResultsDir(taskName)
 	})
+
+	for name, kv := range f.ConfigMaps {
+		for k, v := range kv {
+			cmStore.Add(name, k, v)
+		}
+	}
+	for name, kv := range f.Secrets {
+		for k, v := range kv {
+			secStore.Add(name, k, v)
+		}
+	}
 
 	pmap := map[string]tektontypes.ParamValue{}
 	for k, v := range f.Params {

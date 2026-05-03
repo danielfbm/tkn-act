@@ -84,19 +84,13 @@ func All() []Fixture {
 		{Dir: "failure-propagation", Pipeline: "failprop", WantStatus: "failed"},
 		{Dir: "onerror", Pipeline: "best-effort", WantStatus: "succeeded"},
 		{Dir: "retries", Pipeline: "retries", WantStatus: "succeeded"},
-		{
-			Dir: "timeout", Pipeline: "hangs", WantStatus: "timeout",
-			DockerOnly:  true,
-			Description: "cluster path returns 'failed' until Tekton Reason: PipelineRunTimeout is mapped to status=timeout (cross-backend fidelity commit 2).",
-		},
+		{Dir: "timeout", Pipeline: "hangs", WantStatus: "timeout"},
 		{Dir: "step-results", Pipeline: "stepres", WantStatus: "succeeded"},
 		{
 			Dir: "volumes", Pipeline: "configmap-eater", WantStatus: "succeeded",
 			ConfigMaps: map[string]map[string]string{
 				"app-config": {"greeting": "hello-from-cm"},
 			},
-			DockerOnly:  true,
-			Description: "cluster path needs an ephemeral kube ConfigMap applied into the run namespace before submission (cross-backend fidelity commit 2).",
 		},
 	}
 }
