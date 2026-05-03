@@ -150,6 +150,36 @@ func Validate(b *loader.Bundle, pipelineName string, providedParams map[string]b
 		}
 	}
 
+	// 8b. Pipeline-level timeouts: parseable, positive, and tasks+finally ≤ pipeline.
+	if t := pl.Spec.Timeouts; t != nil {
+		var pdur, tdur, fdur time.Duration
+		var perr, terr, ferr error
+		if t.Pipeline != "" {
+			pdur, perr = parseTimeout("timeouts.pipeline", t.Pipeline)
+			if perr != nil {
+				errs = append(errs, perr)
+			}
+		}
+		if t.Tasks != "" {
+			tdur, terr = parseTimeout("timeouts.tasks", t.Tasks)
+			if terr != nil {
+				errs = append(errs, terr)
+			}
+		}
+		if t.Finally != "" {
+			fdur, ferr = parseTimeout("timeouts.finally", t.Finally)
+			if ferr != nil {
+				errs = append(errs, ferr)
+			}
+		}
+		if perr == nil && terr == nil && ferr == nil &&
+			pdur > 0 && tdur > 0 && fdur > 0 && tdur+fdur > pdur {
+			errs = append(errs, fmt.Errorf(
+				"timeouts.tasks (%s) + timeouts.finally (%s) > timeouts.pipeline (%s)",
+				tdur, fdur, pdur))
+		}
+	}
+
 	// 9. Step.OnError values must be empty, "continue", or "stopAndFail".
 	for taskName, spec := range resolvedTasks {
 		for _, st := range spec.Steps {
@@ -205,4 +235,19 @@ func Validate(b *loader.Bundle, pipelineName string, providedParams map[string]b
 	}
 
 	return errs
+}
+
+// parseTimeout parses a Tekton-style duration string and returns a
+// non-zero positive duration. Empty strings should not reach this
+// function. The error message includes the field name so users see
+// "timeouts.pipeline: invalid duration" rather than just "invalid".
+func parseTimeout(field, s string) (time.Duration, error) {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid duration %q: %w", field, s, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s: must be positive (use omission to mean no budget), got %q", field, s)
+	}
+	return d, nil
 }
