@@ -124,6 +124,16 @@ type PipelineRunResult struct {
 	Tasks   map[string]TaskOutcomeOnCluster
 	Started time.Time
 	Ended   time.Time
+	// Reason is the Tekton condition reason verbatim (e.g.
+	// "PipelineRunTimeout", "PipelineValidationFailed", "Failed").
+	// Surfaced for diagnostic logging — not part of the user-visible
+	// status enum, which is normalized in Status. Empty for backends
+	// that don't expose a condition reason.
+	Reason string
+	// Message is the Tekton condition message verbatim. Same purpose
+	// as Reason — surfaced so failure logs can attribute a misclassified
+	// run to a specific Tekton path.
+	Message string
 }
 
 // TaskOutcomeOnCluster is the per-task summary the cluster backend hands

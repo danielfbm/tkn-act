@@ -6,6 +6,8 @@ import (
 	"context"
 	"io"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -122,9 +124,39 @@ func runFixtureCluster(t *testing.T, cb *clusterbe.Backend, cmStore, secStore *v
 		t.Fatalf("run: %v", err)
 	}
 	if res.Status != f.WantStatus {
-		t.Errorf("status = %s, want %s (%s)", res.Status, f.WantStatus, f.Description)
+		// Include the Tekton reason + message and per-task outcomes so a
+		// flake (or a real classification bug) is debuggable from CI
+		// logs alone. Without this, every cluster-CI mismatch surfaces
+		// as `status = X, want Y ()` with zero attribution.
+		t.Errorf("status = %s, want %s (%s) reason=%q message=%q tasks=%s",
+			res.Status, f.WantStatus, f.Description,
+			res.Reason, res.Message, taskOutcomesString(res.Tasks))
 	}
 	assertEventShape(t, f, cap.snapshot())
+}
+
+// taskOutcomesString renders the per-task map as a stable
+// "name=status,name=status" string for one-line failure attribution.
+// Empty input returns "{}" so callers always see something.
+func taskOutcomesString(tasks map[string]engine.TaskOutcome) string {
+	if len(tasks) == 0 {
+		return "{}"
+	}
+	names := make([]string, 0, len(tasks))
+	for n := range tasks {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, n := range names {
+		oc := tasks[n]
+		if oc.Message != "" {
+			parts = append(parts, n+"="+oc.Status+":"+oc.Message)
+			continue
+		}
+		parts = append(parts, n+"="+oc.Status)
+	}
+	return "[" + strings.Join(parts, ",") + "]"
 }
 
 // assertEventShape checks the per-fixture invariants that fall out of

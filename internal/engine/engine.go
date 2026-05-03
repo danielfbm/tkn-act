@@ -503,8 +503,25 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 		return RunResult{Status: "failed"}, err
 	}
 	e.emitClusterTaskEvents(res.Tasks)
-	e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: res.Status, Duration: dur})
-	out := RunResult{Status: res.Status, Tasks: map[string]TaskOutcome{}}
+	// Surface the backend's terminal Reason/Message on the run-end
+	// event so a misclassification (status doesn't match what the test
+	// expected) can be attributed to a specific backend code path
+	// without needing to re-run with extra logging.
+	endMsg := res.Message
+	if res.Reason != "" {
+		if endMsg != "" {
+			endMsg = res.Reason + ": " + endMsg
+		} else {
+			endMsg = res.Reason
+		}
+	}
+	e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: res.Status, Duration: dur, Message: endMsg})
+	out := RunResult{
+		Status:  res.Status,
+		Reason:  res.Reason,
+		Message: res.Message,
+		Tasks:   map[string]TaskOutcome{},
+	}
 	for n, oc := range res.Tasks {
 		out.Tasks[n] = TaskOutcome{Status: oc.Status, Message: oc.Message, Results: oc.Results}
 	}

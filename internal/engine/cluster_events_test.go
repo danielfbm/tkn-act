@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/danielfbm/tkn-act/internal/backend"
@@ -96,6 +97,63 @@ spec:
 	}
 	if endEvent.Attempt != 3 {
 		t.Errorf("end attempt = %d, want 3", endEvent.Attempt)
+	}
+}
+
+// TestClusterEngineSurfacesReasonAndMessage: the engine must thread the
+// cluster backend's terminal Reason/Message through to RunResult and onto
+// the run-end event. Without this, a misclassified run shows up as
+// `status = X` with no attribution — which is exactly the state that
+// made the pipeline-timeout cluster-CI flake un-debuggable from CI logs
+// alone (see fix(cluster): pipeline-timeout via skippedTasks).
+func TestClusterEngineSurfacesReasonAndMessage(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps: [{name: s, image: alpine, script: 'true'}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - {name: t, taskRef: {name: t}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb := &fakePipelineBackend{result: backend.PipelineRunResult{
+		Status:  "failed",
+		Reason:  "PipelineValidationFailed",
+		Message: "Pipeline p/p can't be Run; it has an invalid spec",
+		Tasks:   map[string]backend.TaskOutcomeOnCluster{},
+	}}
+	sink := &sliceSink{}
+	res, err := engine.New(fb, sink, engine.Options{}).RunPipeline(context.Background(), engine.PipelineInput{Bundle: b, Name: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Reason != "PipelineValidationFailed" {
+		t.Errorf("RunResult.Reason = %q, want PipelineValidationFailed", res.Reason)
+	}
+	if res.Message != "Pipeline p/p can't be Run; it has an invalid spec" {
+		t.Errorf("RunResult.Message = %q, want diagnostic substring", res.Message)
+	}
+	var saw bool
+	for _, ev := range sink.events {
+		if ev.Kind == reporter.EvtRunEnd {
+			saw = true
+			// The run-end event message must include the Reason so
+			// `--output json` consumers can attribute the outcome.
+			if ev.Message == "" || !strings.Contains(ev.Message, "PipelineValidationFailed") {
+				t.Errorf("run-end message = %q, want substring 'PipelineValidationFailed'", ev.Message)
+			}
+		}
+	}
+	if !saw {
+		t.Errorf("no run-end event in %d events", len(sink.events))
 	}
 }
 
