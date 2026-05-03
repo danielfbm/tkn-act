@@ -86,6 +86,7 @@ fixtures under `testdata/e2e/`:
 | `tasks-timeout/`    | `tasks` budget fires; `finally` block still runs to completion |
 | `finally-timeout/`  | `finally` budget fires; `tasks` block already succeeded |
 | `step-template/`    | `Task.spec.stepTemplate` inheritance: image + env, with one Step overriding env |
+| `pipeline-results/` | `Pipeline.spec.results`: string + array result, one referencing finally output |
 
 Plus `internal/backend/docker/docker_integration_test.go`.
 

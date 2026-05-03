@@ -105,7 +105,7 @@ The columns:
 | `finally` tasks | `Pipeline.spec.finally` | shipped | both | when-and-finally | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
 | Per-Task `results` | `Task.spec.results` | shipped | both | params-and-results | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
 | Per-Step `results` | `Step.results` | shipped | both | step-results | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
-| Pipeline-level `results` (surfaced on run-end) | `Pipeline.spec.results` | gap | both | none | none | docs/short-term-goals.md (Track 1 #6) |
+| Pipeline-level `results` (surfaced on run-end) | `Pipeline.spec.results` | shipped | both | pipeline-results | none | docs/superpowers/plans/2026-05-03-pipeline-results.md (Track 1 #6) |
 | Param substitution: `$(params.X)`, `$(tasks.X.results.Y)`, `$(context.*)`, `$(workspaces.X.path)`, `$(step.results.X.path)` | n/a | shipped | both | params-and-results | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
 
 ### Workspaces & volumes

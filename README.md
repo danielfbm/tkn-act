@@ -62,6 +62,9 @@ are exercised by both backends in CI — divergences are explicit
   `$(params.x[*])`
 - Results (file-based at `/tekton/results/<n>`) and
   `$(tasks.X.results.Y)`
+- `Pipeline.spec.results` — named outputs surfaced on the `run-end`
+  event (string / array / object); resolved from task results after
+  the entire run completes
 - Workspaces shared across tasks (host bind mounts)
 - DAG ordering via `runAfter` and result-data deps
 - `when` expressions (`in` / `notin`)
