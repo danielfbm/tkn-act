@@ -264,6 +264,72 @@ spec:
 	}
 }
 
+// Regression: RFC 1123 names allow leading digits, so a PipelineTask
+// can legally be named "1stcheckout". The pipeline-results task-ref
+// validator must catch refs to a leading-digit name that doesn't
+// exist (and accept refs to one that does). Previously the regex
+// silently skipped over digit-prefixed task names, so unknown refs
+// to e.g. $(tasks.1nope.results.x) slipped past validation.
+// See PR #18 review.
+func TestValidatePipelineResultsLeadingDigitTaskNameUnknown(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  results: [{name: x}]
+  steps: [{name: s, image: alpine, script: "true"}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  results:
+    - name: r
+      value: $(tasks.1stcheckout.results.x)
+  tasks:
+    - {name: a, taskRef: {name: t}}
+`)
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) == 0 {
+		t.Fatalf("expected error for unknown leading-digit task ref")
+	}
+	var found bool
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "1stcheckout") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("error did not name the unknown leading-digit task: %v", errs)
+	}
+}
+
+func TestValidatePipelineResultsLeadingDigitTaskNameKnown(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  results: [{name: x}]
+  steps: [{name: s, image: alpine, script: "true"}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  results:
+    - name: r
+      value: $(tasks.1stcheckout.results.x)
+  tasks:
+    - {name: 1stcheckout, taskRef: {name: t}}
+`)
+	if errs := validator.Validate(b, "p", nil); len(errs) != 0 {
+		t.Errorf("unexpected errors when leading-digit task IS declared: %v", errs)
+	}
+}
+
 func TestValidatePipelineResultsArrayAndObjectChecked(t *testing.T) {
 	b := mustLoad(t, `
 apiVersion: tekton.dev/v1

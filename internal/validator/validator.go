@@ -278,8 +278,10 @@ func parseTimeout(field, s string) (time.Duration, error) {
 }
 
 // taskResultRefPat matches $(tasks.<name>.results.<anything>) — we
-// only need to extract the <name> for ref validation.
-var taskResultRefPat = regexp.MustCompile(`\$\(tasks\.([a-zA-Z][\w-]*)\.results\.[\w.-]+\)`)
+// only need to extract the <name> for ref validation. RFC 1123 names
+// allow leading digits (Tekton accepts e.g. "1stcheckout"), so the
+// first char class spans `[a-zA-Z0-9]`, not `[a-zA-Z]`.
+var taskResultRefPat = regexp.MustCompile(`\$\(tasks\.([a-zA-Z0-9][\w-]*)\.results\.[\w.-]+\)`)
 
 // extractTaskRefs returns every task name referenced via
 // $(tasks.X.results.Y) in s (in source order; duplicates allowed —

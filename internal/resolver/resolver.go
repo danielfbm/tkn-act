@@ -35,7 +35,11 @@ type Context struct {
 	CurrentStep string
 }
 
-var refPat = regexp.MustCompile(`\$\(([a-zA-Z][\w.\[\]\*-]*)\)`)
+// First char allows digits to align with RFC 1123 names (Tekton accepts
+// e.g. `1stcheckout` as a PipelineTask name, so $(tasks.1stcheckout...)
+// must match). The remaining class already covers the dotted/bracketed
+// reference grammar; \w includes digits.
+var refPat = regexp.MustCompile(`\$\(([a-zA-Z0-9][\w.\[\]\*-]*)\)`)
 
 // Substitute replaces $(...) references in s using ctx. Returns an error for
 // unknown references.
