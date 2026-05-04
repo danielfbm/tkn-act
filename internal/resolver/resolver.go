@@ -68,10 +68,22 @@ func Substitute(s string, ctx Context) (string, error) {
 	return strings.ReplaceAll(out, sentinel, "$"), nil
 }
 
-// SubstituteAllowStepRefs is like Substitute but leaves $(step.results.X.path)
-// and $(steps.<step>.results.<name>) placeholders intact when the context
-// hasn't populated StepResults / CurrentStep. Used by the engine's task-level
-// pass; per-step substitution happens later in the docker backend.
+// SubstituteAllowStepRefs is the deferred-tolerant counterpart of Substitute.
+// It leaves placeholders intact when the inner pass legitimately cannot
+// resolve them yet:
+//
+//   - $(step.results.X.path) and $(steps.X.results.Y) — resolved by the
+//     docker backend per-step right before each step launches.
+//   - $(params.X) for any X not bound in ctx.Params/ObjectParams — the
+//     StepAction inner pass populates only its own scoped params, so an
+//     outer task-level $(params.<task-param>) survives to the outer pass.
+//   - $(workspaces.<name>.path), $(context.<name>) without a binding,
+//     $(tasks.X.results.Y) without an entry — same deferral rationale; the
+//     outer engine.substituteSpec pass has the full Task scope and resolves
+//     these moments later.
+//
+// Strictly malformed refs (a key that doesn't match any known scope shape)
+// still error here, just as they do in plain Substitute.
 func SubstituteAllowStepRefs(s string, ctx Context) (string, error) {
 	const sentinel = "\x00DOLLAR\x00"
 	s = strings.ReplaceAll(s, "$$", sentinel)
@@ -82,10 +94,10 @@ func SubstituteAllowStepRefs(s string, ctx Context) (string, error) {
 			return m
 		}
 		key := refPat.FindStringSubmatch(m)[1]
-		v, err := lookup(key, ctx)
+		v, err := lookupAllowDefer(key, ctx)
 		if err != nil {
 			if errors.Is(err, errStepRefDeferred) {
-				return m // leave placeholder for the docker backend
+				return m // leave placeholder for the outer pass / docker backend
 			}
 			firstErr = err
 			return m
@@ -122,6 +134,9 @@ func SubstituteArgs(args []string, ctx Context) ([]string, error) {
 }
 
 // SubstituteArgsAllowStepRefs is the AllowStepRefs counterpart of SubstituteArgs.
+// Unknown $(params.x[*]) array refs are LEFT INTACT (deferred) so the outer
+// pass can resolve them under the full Task scope; mirrors the deferral
+// semantics of SubstituteAllowStepRefs for scalar refs.
 func SubstituteArgsAllowStepRefs(args []string, ctx Context) ([]string, error) {
 	var out []string
 	for _, a := range args {
@@ -129,7 +144,11 @@ func SubstituteArgsAllowStepRefs(args []string, ctx Context) ([]string, error) {
 			name := strings.TrimSuffix(strings.TrimPrefix(a, "$(params."), "[*])")
 			vals, ok := ctx.ArrayParams[name]
 			if !ok {
-				return nil, fmt.Errorf("unknown array param %q", name)
+				// Defer to the outer pass — the inner pass only populates
+				// StepAction-scoped params; outer task-level array params
+				// pass through as the literal $(params.X[*]) token.
+				out = append(out, a)
+				continue
 			}
 			out = append(out, vals...)
 			continue
@@ -145,6 +164,50 @@ func SubstituteArgsAllowStepRefs(args []string, ctx Context) ([]string, error) {
 
 func isArrayStarRef(s string) bool {
 	return strings.HasPrefix(s, "$(params.") && strings.HasSuffix(s, "[*])")
+}
+
+// lookupAllowDefer is the deferral-tolerant counterpart of lookup. It calls
+// lookup and then converts the four "unknown name in a known scope" errors
+// into errStepRefDeferred so the AllowStepRefs caller leaves the literal
+// $(...) placeholder intact for a subsequent pass to resolve. The four
+// scopes that can be deferred:
+//
+//   - params.<name> not bound in ctx (the StepAction inner pass populates
+//     only its own scoped params; outer params survive).
+//   - workspaces.<name>.path (the inner StepAction pass has no workspace
+//     scope; the outer task pass resolves these to /workspace/<name>).
+//   - context.<name> not bound (e.g. context.taskRun.name is populated
+//     only by the outer engine pass).
+//   - tasks.<name>.results.<name> not bound (only the outer pass has the
+//     accumulated cross-task results map).
+//
+// Malformed refs (e.g. tasks.X with no .results.Y suffix) still error.
+func lookupAllowDefer(key string, ctx Context) (string, error) {
+	v, err := lookup(key, ctx)
+	if err == nil {
+		return v, nil
+	}
+	if errors.Is(err, errStepRefDeferred) {
+		return "", err
+	}
+	switch {
+	case strings.HasPrefix(key, "params."):
+		// "unknown param" / "unknown object param" / "object param has no key"
+		// all collapse into deferral here. The reference name is the only
+		// thing the outer pass needs preserved.
+		return "", errStepRefDeferred
+	case strings.HasPrefix(key, "context."):
+		return "", errStepRefDeferred
+	case strings.HasPrefix(key, "tasks."):
+		// Only well-formed tasks.X.results.Y can be deferred; lookup
+		// already returns "malformed task ref" for the bad shape.
+		parts := strings.SplitN(key, ".", 4)
+		if len(parts) == 4 && parts[2] == "results" {
+			return "", errStepRefDeferred
+		}
+		return "", err
+	}
+	return "", err
 }
 
 func lookup(key string, ctx Context) (string, error) {
