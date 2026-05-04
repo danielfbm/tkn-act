@@ -1,0 +1,20 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: resolver-http
+spec:
+  params:
+    - name: fixture-server-url
+      type: string
+      description: |
+        URL of the httptest.Server the e2e harness spins up. The Pipeline
+        threads it into the http resolver via $(params.fixture-server-url).
+        In a real run you'd hardcode the URL; the harness substitutes it
+        per-test.
+  tasks:
+    - name: greet
+      taskRef:
+        resolver: http
+        params:
+          - name: url
+            value: $(params.fixture-server-url)/task.yaml

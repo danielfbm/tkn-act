@@ -120,6 +120,24 @@ func runFixtureDocker(t *testing.T, f fixtures.Fixture) {
 		pmap["repoURL"] = tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: url}
 	}
 
+	// Resolver fixtures (Phase 3 of Track 1 #9): bring up an httptest
+	// server + Registry instance the engine can dispatch through. The
+	// helper returns nil when f.Resolver is empty, so non-resolver
+	// fixtures are unaffected.
+	rh, rerr := fixtures.NewResolverHarness(filepath.Join("..", "..", "testdata", "e2e", f.Dir), f.Resolver)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if rh != nil {
+		defer rh.Close()
+		if rh.ExtraParamName != "" {
+			pmap[rh.ExtraParamName] = tektontypes.ParamValue{
+				Type:      tektontypes.ParamTypeString,
+				StringVal: rh.ExtraParamValue,
+			}
+		}
+	}
+
 	cmStore := volumes.NewStore("")
 	// Bundle-loaded CM/Secret resources (kind: ConfigMap / kind: Secret
 	// embedded in the fixture's -f stream) sit at the lowest precedence
@@ -152,12 +170,19 @@ func runFixtureDocker(t *testing.T, f fixtures.Fixture) {
 	// Wire the default refresolver registry so resolver-backed
 	// fixtures (Track 1 #9) dispatch the same way `tkn-act run` does.
 	// The cache dir is a per-test tmpdir so subtests don't share
-	// resolved bytes across runs.
-	reg := refresolver.NewDefaultRegistry(refresolver.Options{
-		Allow:    []string{"git", "hub", "http", "bundles"},
-		CacheDir: t.TempDir(),
-	})
-	res, err := engine.New(be, rep, engine.Options{MaxParallel: 4, VolumeResolver: volResolver, Refresolver: reg}).RunPipeline(ctx, engine.PipelineInput{
+	// resolved bytes across runs. For Phase-3 (hub/http) fixtures,
+	// the harness builds its own Registry pointed at an httptest
+	// server, which takes precedence.
+	engOpts := engine.Options{MaxParallel: 4, VolumeResolver: volResolver}
+	if rh != nil {
+		engOpts.Refresolver = rh.Registry
+	} else {
+		engOpts.Refresolver = refresolver.NewDefaultRegistry(refresolver.Options{
+			Allow:    []string{"git", "hub", "http", "bundles"},
+			CacheDir: t.TempDir(),
+		})
+	}
+	res, err := engine.New(be, rep, engOpts).RunPipeline(ctx, engine.PipelineInput{
 		Bundle: b, Name: f.Pipeline, Params: pmap, Workspaces: wsHost,
 	})
 	if err != nil {

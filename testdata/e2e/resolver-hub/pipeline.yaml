@@ -1,0 +1,28 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: resolver-hub
+spec:
+  params:
+    - name: fixture-server-url
+      type: string
+      description: |
+        URL of the httptest.Server impersonating a Tekton Hub. The harness
+        wires it into the hub resolver via HubOptions.BaseURL — but since
+        the resolver's BaseURL knob isn't exposed via resolver.params,
+        the harness builds a Registry whose hub resolver targets the test
+        server. The Pipeline still declares the canonical resolver.params
+        ({name, version, kind, catalog}) so the engine path is exercised.
+  tasks:
+    - name: greet
+      taskRef:
+        resolver: hub
+        params:
+          - name: name
+            value: resolved-from-hub
+          - name: version
+            value: "0.1"
+          - name: kind
+            value: task
+          - name: catalog
+            value: tekton
