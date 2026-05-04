@@ -308,10 +308,8 @@ func buildVolumeStores(cacheRoot string, b *loader.Bundle) (cm *volumes.Store, s
 			sec.LoadBytes(name, bytesByKey)
 		}
 	}
-	// 1. Inline flags last in this constructor — but they sit at the
-	// HIGHEST precedence in Store.Resolve, which iterates layers in
-	// inverse order. Order of Add() calls doesn't determine precedence;
-	// the Store does.
+	// Order of Add vs LoadBytes calls here doesn't matter; Store.Resolve
+	// composes layers so Inline overwrites Dir overwrites Bundle.
 	if err := parseInlineFlags(cm, gf.configMaps, "configmap"); err != nil {
 		return nil, nil, err
 	}
