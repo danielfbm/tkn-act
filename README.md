@@ -105,6 +105,15 @@ are exercised by both backends in CI — divergences are explicit
   `http`, `bundles`, `cluster`) and the remote `ResolutionRequest`
   driver land in subsequent phases — see
   [`docs/superpowers/plans/2026-05-04-resolvers.md`](docs/superpowers/plans/2026-05-04-resolvers.md)
+- `Task.spec.sidecars` — long-lived helper containers (databases,
+  proxies, mock services). On `--docker`, a tiny per-Task pause
+  container owns the netns and steps + sidecars all join it via
+  `network_mode: container:<pause-id>` so steps reach sidecars at
+  `localhost:<port>`. Two new flags: `--sidecar-start-grace`
+  (default 2s) and `--sidecar-stop-grace` (default 30s, matches
+  upstream Tekton's `terminationGracePeriodSeconds`). Cluster
+  pass-through forwards the full Tekton schema; `sidecar-start` /
+  `sidecar-end` events fire on both backends.
 
 The single source of truth, with one row per Tekton field and links to
 fixtures, plans, and PRs, is
@@ -113,9 +122,9 @@ job enforces that the table doesn't drift from the tree.
 
 ## Not yet supported
 
-Sidecars (cluster-only), StepActions, Resolvers (git/hub/cluster/
-bundles), `PipelineTask.matrix`, custom tasks, signed pipelines,
-tekton-results, Windows.
+StepActions, Resolvers (git/hub/cluster/bundles),
+`PipelineTask.matrix`, custom tasks, signed pipelines, tekton-results,
+Windows.
 
 See [`docs/short-term-goals.md`](docs/short-term-goals.md) for the
 prioritized track of what's next.
