@@ -221,8 +221,24 @@ type PipelineTask struct {
 }
 
 type TaskRef struct {
-	Name string `json:"name"`
+	Name string `json:"name,omitempty"`
 	Kind string `json:"kind,omitempty"` // Task|ClusterTask; default Task
+	// Resolver names a Tekton resolver (git | hub | http | bundles |
+	// cluster | custom-name-in-remote-mode). When non-empty, Name is
+	// ignored — the resolver is authoritative.
+	Resolver string `json:"resolver,omitempty"`
+	// ResolverParams are the resolver-specific name=value pairs nested
+	// inside the `resolver:` block. The YAML key is "params" because
+	// Tekton's schema places this list inside `taskRef:`; this is a
+	// distinct nesting from PipelineTask.Params.
+	ResolverParams []ResolverParam `json:"params,omitempty"`
+}
+
+// ResolverParam is the substitution-eligible shape resolvers consume.
+// Mirrors Tekton's tekton.dev/v1 resolver param: name + value.
+type ResolverParam struct {
+	Name  string     `json:"name"`
+	Value ParamValue `json:"value"`
 }
 
 type WorkspaceBinding struct {
@@ -252,7 +268,14 @@ type PipelineRunSpec struct {
 }
 
 type PipelineRef struct {
-	Name string `json:"name"`
+	Name string `json:"name,omitempty"`
+	// Resolver names a Tekton resolver (git | hub | http | bundles |
+	// cluster | custom-name-in-remote-mode). When non-empty, Name is
+	// ignored — the resolver is authoritative.
+	Resolver string `json:"resolver,omitempty"`
+	// ResolverParams are the resolver-specific name=value pairs nested
+	// inside the `resolver:` block of a pipelineRef.
+	ResolverParams []ResolverParam `json:"params,omitempty"`
 }
 
 type PipelineRunWSBinding struct {
