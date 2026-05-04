@@ -128,6 +128,69 @@ func TestPrettyResolverEndFailureSurfacesMessage(t *testing.T) {
 	}
 }
 
+// TestPrettyResolverStartVerboseShowsLine: at -v, resolver-start
+// emits a tiny "starting" line so users see the dispatch begin
+// before the network round-trip resolves.
+func TestPrettyResolverStartVerboseShowsLine(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Verbose})
+	rep.Emit(Event{
+		Kind: EvtResolverStart, Time: time.Unix(1, 0),
+		Task: "build", Resolver: "git",
+	})
+	out := buf.String()
+	if !strings.Contains(out, "git") || !strings.Contains(out, "starting") {
+		t.Errorf("expected resolver-start verbose line; got %q", out)
+	}
+}
+
+// TestPrettyResolverStartNormalSuppressed: at the default verbosity,
+// resolver-start is silent — the resolver-end line carries the
+// load-bearing info.
+func TestPrettyResolverStartNormalSuppressed(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Normal})
+	rep.Emit(Event{
+		Kind: EvtResolverStart, Time: time.Unix(1, 0),
+		Task: "build", Resolver: "git",
+	})
+	if buf.String() != "" {
+		t.Errorf("normal mode resolver-start should be silent; got %q", buf.String())
+	}
+}
+
+// TestPrettyResolverStartVerboseTopLevel: an empty Task field on the
+// top-level pipelineRef path renders the friendly placeholder.
+func TestPrettyResolverStartVerboseTopLevel(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Verbose})
+	rep.Emit(Event{
+		Kind: EvtResolverStart, Time: time.Unix(1, 0),
+		Resolver: "git",
+	})
+	out := buf.String()
+	if !strings.Contains(out, "(pipeline)") {
+		t.Errorf("expected (pipeline) placeholder for empty task; got %q", out)
+	}
+}
+
+// TestPrettyResolverEndNoSourceFallback: when Source is empty
+// (e.g. a malformed resolver), pretty falls back to a short
+// placeholder rather than emitting raw whitespace.
+func TestPrettyResolverEndNoSourceFallback(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Normal})
+	rep.Emit(Event{
+		Kind: EvtResolverEnd, Time: time.Unix(1, 0),
+		Task: "build", Resolver: "git",
+		Status: StatusSucceeded,
+	})
+	out := buf.String()
+	if !strings.Contains(out, "no source reported") {
+		t.Errorf("expected fallback placeholder; got %q", out)
+	}
+}
+
 // TestPrettyResolverEndTopLevelPipelineRefHasNoTaskPrefix: when Task is
 // empty (the top-level pipelineRef.resolver eager-resolution path), the
 // pretty line still renders without dangling whitespace.
