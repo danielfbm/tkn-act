@@ -698,12 +698,24 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 		wsMap[k] = backend.WorkspaceMount{HostPath: host}
 	}
 
+	// Expand StepAction refs in every Task and every inline PipelineTask.taskSpec
+	// before handing them to the pipeline backend. Cluster mode submits the
+	// inlined Step shape — the cluster's Tekton controller never sees a
+	// Ref-bearing Step (it would try to resolve `stepactions.tekton.dev/<name>`
+	// from the per-run namespace, which we never apply). Errors here drop
+	// the run with status:failed.
+	expandedTasks, plExpanded, expandErr := expandBundleStepActions(in.Bundle, pl)
+	if expandErr != nil {
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Message: expandErr.Error(), DisplayName: pl.Spec.DisplayName})
+		return RunResult{Status: "failed"}, expandErr
+	}
+
 	start := time.Now()
 	res, err := pb.RunPipeline(ctx, backend.PipelineRunInvocation{
 		RunID:           runID,
 		PipelineRunName: pipelineRunName,
-		Pipeline:        pl,
-		Tasks:           in.Bundle.Tasks,
+		Pipeline:        plExpanded,
+		Tasks:           expandedTasks,
 		Params:          paramList,
 		Workspaces:      wsMap,
 		LogSink:         reporter.NewLogSink(e.rep),

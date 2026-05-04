@@ -276,6 +276,144 @@ func TestResolveStepActionsTwoStepsSameAction(t *testing.T) {
 	}
 }
 
+// TestExpandBundleStepActionsRefBearingTasksAndInlineSpecs covers the
+// cluster-dispatch path: every Task in bundle.Tasks AND every inline
+// PipelineTask.taskSpec must come out without a `Ref:` field. Without
+// this, the cluster backend submits a PipelineRun whose taskSpec.steps
+// still has `ref:` set, the Tekton controller tries to look up
+// `stepactions.tekton.dev/<name>` (we never apply it), and the run fails.
+func TestExpandBundleStepActionsRefBearingTasksAndInlineSpecs(t *testing.T) {
+	action := mkAction("greet", "alpine:3", "echo hi", nil, nil)
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{
+		Steps: []tektontypes.Step{{Name: "g", Ref: &tektontypes.StepActionRef{Name: "greet"}}},
+	}}
+	tk.Metadata.Name = "t"
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{
+			{Name: "a", TaskRef: &tektontypes.TaskRef{Name: "t"}},
+			{Name: "b", TaskSpec: &tektontypes.TaskSpec{
+				Steps: []tektontypes.Step{{Name: "g2", Ref: &tektontypes.StepActionRef{Name: "greet"}}},
+			}},
+		},
+		Finally: []tektontypes.PipelineTask{
+			{Name: "f", TaskSpec: &tektontypes.TaskSpec{
+				Steps: []tektontypes.Step{{Name: "g3", Ref: &tektontypes.StepActionRef{Name: "greet"}}},
+			}},
+		},
+	}}
+	pl.Metadata.Name = "p"
+	b := newBundleWithStepActions(action)
+	b.Tasks["t"] = tk
+	b.Pipelines["p"] = pl
+
+	tasks, plOut, err := expandBundleStepActions(b, pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Bundled Task expanded.
+	if got := tasks["t"].Spec.Steps[0]; got.Ref != nil || got.Image != "alpine:3" {
+		t.Errorf("Tasks[t][0] = %+v (want Ref=nil, Image=alpine:3)", got)
+	}
+	// Inline Pipeline.spec.tasks[1].taskSpec expanded.
+	if plOut.Spec.Tasks[1].TaskSpec == nil || plOut.Spec.Tasks[1].TaskSpec.Steps[0].Ref != nil {
+		t.Errorf("inline taskSpec on Pipeline.spec.tasks[1] still has ref: %+v", plOut.Spec.Tasks[1].TaskSpec)
+	}
+	// Inline Pipeline.spec.finally[0].taskSpec expanded.
+	if plOut.Spec.Finally[0].TaskSpec == nil || plOut.Spec.Finally[0].TaskSpec.Steps[0].Ref != nil {
+		t.Errorf("inline taskSpec on Pipeline.spec.finally[0] still has ref: %+v", plOut.Spec.Finally[0].TaskSpec)
+	}
+	// Original bundle's Tasks must NOT be mutated.
+	if b.Tasks["t"].Spec.Steps[0].Ref == nil {
+		t.Errorf("expandBundleStepActions mutated bundle.Tasks[t]")
+	}
+	// Original Pipeline.spec.tasks[1].TaskSpec must NOT be mutated either —
+	// the cluster path mutates a defensive copy.
+	if b.Pipelines["p"].Spec.Tasks[1].TaskSpec.Steps[0].Ref == nil {
+		t.Errorf("expandBundleStepActions mutated bundle.Pipelines[p].Spec.Tasks[1].TaskSpec")
+	}
+}
+
+// TestResolveStepActionsRejectsArrayDefault: defense-in-depth path
+// for validator rule 18 — if the engine is invoked without validation
+// and a StepAction declares an array/object default, inlineStepAction
+// errors out rather than silently dropping the typed value.
+func TestResolveStepActionsRejectsArrayDefault(t *testing.T) {
+	action := tektontypes.StepAction{
+		Spec: tektontypes.StepActionSpec{
+			Image:  "alpine:3",
+			Script: "echo $(params.who)",
+			Params: []tektontypes.ParamSpec{{
+				Name:    "who",
+				Default: &tektontypes.ParamValue{Type: tektontypes.ParamTypeArray, ArrayVal: []string{"a", "b"}},
+			}},
+		},
+	}
+	action.Metadata.Name = "greet"
+	spec := tektontypes.TaskSpec{Steps: []tektontypes.Step{{
+		Name: "g", Ref: &tektontypes.StepActionRef{Name: "greet"},
+	}}}
+	_, err := resolveStepActions(spec, newBundleWithStepActions(action))
+	if err == nil || !strings.Contains(err.Error(), "default type") {
+		t.Errorf("want default-type error from inlineStepAction, got %v", err)
+	}
+}
+
+// TestResolveStepActionsCommandArgsAndEnvInlined: cover the full body-
+// field substitution surface (Command, Args, Env) with caller-bound
+// params, plus WorkingDir + ImagePullPolicy + Resources passthrough.
+func TestResolveStepActionsCommandArgsAndEnvInlined(t *testing.T) {
+	action := tektontypes.StepAction{
+		Spec: tektontypes.StepActionSpec{
+			Image:           "alpine:3",
+			Command:         []string{"sh", "-c"},
+			Args:            []string{"echo $(params.who)"},
+			Script:          "",
+			Env:             []tektontypes.EnvVar{{Name: "WHO", Value: "$(params.who)"}},
+			WorkingDir:      "/work/$(params.who)",
+			ImagePullPolicy: "IfNotPresent",
+			Resources: &tektontypes.StepResources{
+				Requests: tektontypes.ResourceList{CPU: "10m"},
+			},
+			Params: []tektontypes.ParamSpec{{
+				Name:    "who",
+				Default: &tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: "world"},
+			}},
+		},
+	}
+	action.Metadata.Name = "greet"
+	spec := tektontypes.TaskSpec{Steps: []tektontypes.Step{{
+		Name: "g",
+		Ref:  &tektontypes.StepActionRef{Name: "greet"},
+		Params: []tektontypes.Param{{
+			Name:  "who",
+			Value: tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: "tekton"},
+		}},
+	}}}
+	got, err := resolveStepActions(spec, newBundleWithStepActions(action))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := got.Steps[0]
+	if len(st.Command) != 2 || st.Command[0] != "sh" || st.Command[1] != "-c" {
+		t.Errorf("command = %v", st.Command)
+	}
+	if len(st.Args) != 1 || st.Args[0] != "echo tekton" {
+		t.Errorf("args = %v (want [echo tekton])", st.Args)
+	}
+	if len(st.Env) != 1 || st.Env[0].Name != "WHO" || st.Env[0].Value != "tekton" {
+		t.Errorf("env = %v", st.Env)
+	}
+	if st.WorkingDir != "/work/tekton" {
+		t.Errorf("workingDir = %q", st.WorkingDir)
+	}
+	if st.ImagePullPolicy != "IfNotPresent" {
+		t.Errorf("imagePullPolicy = %q", st.ImagePullPolicy)
+	}
+	if st.Resources == nil || st.Resources.Requests.CPU != "10m" {
+		t.Errorf("resources = %+v", st.Resources)
+	}
+}
+
 // TestResolveStepActionsVolumeMountsUnion: Important-7 decision.
 // StepAction body's volumeMounts come first, caller's appended (matches
 // Tekton).

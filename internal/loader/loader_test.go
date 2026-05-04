@@ -1,6 +1,7 @@
 package loader_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -421,4 +422,98 @@ spec: {}
 	if !strings.Contains(err.Error(), "v1beta1") {
 		t.Errorf("err = %v, want unsupported-v1beta1", err)
 	}
+}
+
+func TestLoadStepActionEmptyName(t *testing.T) {
+	_, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata: {}
+spec: {image: alpine:3, script: 'a'}
+`))
+	if err == nil || !strings.Contains(err.Error(), "metadata.name is required") {
+		t.Errorf("want metadata-name-required error, got %v", err)
+	}
+}
+
+func TestLoadStepActionMalformed(t *testing.T) {
+	_, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata: {name: bad}
+spec: 12345
+`))
+	if err == nil {
+		t.Fatal("want StepAction-parse error, got nil")
+	}
+}
+
+// LoadFiles reads from disk; exercise the success + duplicate-across-files
+// paths in one shot. A duplicate StepAction across two files must error
+// with "duplicate StepAction across files".
+func TestLoadFilesAcrossDuplicateStepAction(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.yaml")
+	if err := writeFile(a, `apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata: {name: greet}
+spec: {image: alpine:3, script: 'a'}
+`); err != nil {
+		t.Fatal(err)
+	}
+	b := filepath.Join(dir, "b.yaml")
+	if err := writeFile(b, `apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata: {name: greet}
+spec: {image: alpine:3, script: 'b'}
+`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loader.LoadFiles([]string{a, b})
+	if err == nil || !strings.Contains(err.Error(), "duplicate StepAction") {
+		t.Errorf("want cross-file duplicate StepAction error, got %v", err)
+	}
+}
+
+// Across multiple files a StepAction without a duplicate is merged in.
+func TestLoadFilesMergesStepAction(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.yaml")
+	if err := writeFile(a, `apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata: {name: greet}
+spec: {image: alpine:3, script: 'a'}
+`); err != nil {
+		t.Fatal(err)
+	}
+	b := filepath.Join(dir, "b.yaml")
+	if err := writeFile(b, `apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps:
+    - {name: g, ref: {name: greet}}
+`); err != nil {
+		t.Fatal(err)
+	}
+	bun, err := loader.LoadFiles([]string{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := bun.StepActions["greet"]; !ok {
+		t.Errorf("StepAction not merged: %+v", bun.StepActions)
+	}
+	if _, ok := bun.Tasks["t"]; !ok {
+		t.Errorf("Task not merged: %+v", bun.Tasks)
+	}
+	// The Task's raw YAML must round-trip into RawTasks for rule 17.
+	if _, ok := bun.RawTasks["t"]; !ok {
+		t.Errorf("RawTasks[t] missing: %+v", bun.RawTasks)
+	}
+}
+
+// writeFile is a small helper used by the LoadFiles tests above; mirrors
+// os.WriteFile but keeps the test imports minimal.
+func writeFile(path, body string) error {
+	return os.WriteFile(path, []byte(body), 0o644)
 }

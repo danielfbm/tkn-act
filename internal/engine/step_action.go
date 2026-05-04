@@ -80,6 +80,61 @@ func assertNoInlineBody(st tektontypes.Step) error {
 	return nil
 }
 
+// expandBundleStepActions returns a copy of bundle.Tasks and pl with every
+// Step.Ref expanded into its inlined StepAction body. Used by the
+// pipeline-backend dispatch path (cluster mode) so the controller never
+// sees a Ref-bearing Step. The docker per-task path doesn't need this
+// because runOne already calls resolveStepActions on the per-task
+// TaskSpec.
+//
+// Both Tasks (referenced by PipelineTask.taskRef.name) and inline
+// taskSpec on PipelineTask entries (in pl.Spec.Tasks ∪ pl.Spec.Finally)
+// are expanded. The original bundle and Pipeline are not mutated.
+func expandBundleStepActions(b *loader.Bundle, pl tektontypes.Pipeline) (map[string]tektontypes.Task, tektontypes.Pipeline, error) {
+	tasksOut := make(map[string]tektontypes.Task, len(b.Tasks))
+	for name, tk := range b.Tasks {
+		expanded, err := resolveStepActions(tk.Spec, b)
+		if err != nil {
+			return nil, tektontypes.Pipeline{}, fmt.Errorf("Task %q: %w", name, err)
+		}
+		tk.Spec = expanded
+		tasksOut[name] = tk
+	}
+	// Defensive copy of the pipeline-task slices: rewriting pts[i].TaskSpec
+	// would otherwise mutate the bundle's Pipeline via the shared backing
+	// array.
+	plOut := pl
+	tasksCopy, err := expandPipelineTaskSpecs(b, append([]tektontypes.PipelineTask(nil), pl.Spec.Tasks...))
+	if err != nil {
+		return nil, tektontypes.Pipeline{}, err
+	}
+	plOut.Spec.Tasks = tasksCopy
+	finallyCopy, err := expandPipelineTaskSpecs(b, append([]tektontypes.PipelineTask(nil), pl.Spec.Finally...))
+	if err != nil {
+		return nil, tektontypes.Pipeline{}, err
+	}
+	plOut.Spec.Finally = finallyCopy
+	return tasksOut, plOut, nil
+}
+
+// expandPipelineTaskSpecs returns the slice with each entry's inline
+// TaskSpec expanded (when set). The slice itself is a fresh copy made
+// by the caller; this function mutates pts[i].TaskSpec safely.
+func expandPipelineTaskSpecs(b *loader.Bundle, pts []tektontypes.PipelineTask) ([]tektontypes.PipelineTask, error) {
+	for i := range pts {
+		if pts[i].TaskSpec == nil {
+			continue
+		}
+		expanded, err := resolveStepActions(*pts[i].TaskSpec, b)
+		if err != nil {
+			return nil, fmt.Errorf("PipelineTask %q: %w", pts[i].Name, err)
+		}
+		copy := expanded
+		pts[i].TaskSpec = &copy
+	}
+	return pts, nil
+}
+
 func inlineStepAction(st tektontypes.Step, action tektontypes.StepAction) (tektontypes.Step, error) {
 	// Build the scoped param view: StepAction defaults first, then
 	// caller overrides. Caller values are forwarded as LITERAL
