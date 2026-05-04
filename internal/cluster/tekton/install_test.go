@@ -106,6 +106,9 @@ func TestEnablesStepActionsFlag(t *testing.T) {
 	if got := cm.Data["enable-step-actions"]; got != "true" {
 		t.Errorf("enable-step-actions = %q, want \"true\"", got)
 	}
+	if got := cm.Data["enable-api-fields"]; got != "alpha" {
+		t.Errorf("enable-api-fields = %q, want \"alpha\" (matrix-result [*] aggregation needs alpha api fields)", got)
+	}
 }
 
 // TestEnablesStepActionsFlagCreatesIfMissing: a fresh cluster where
@@ -132,6 +135,9 @@ func TestEnablesStepActionsFlagCreatesIfMissing(t *testing.T) {
 	}
 	if got := cm.Data["enable-step-actions"]; got != "true" {
 		t.Errorf("enable-step-actions = %q, want \"true\"", got)
+	}
+	if got := cm.Data["enable-api-fields"]; got != "alpha" {
+		t.Errorf("enable-api-fields = %q, want \"alpha\"", got)
 	}
 }
 
