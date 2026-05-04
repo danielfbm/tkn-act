@@ -97,8 +97,8 @@ are exercised by both backends in CI — divergences are explicit
 - `displayName` / `description` on Task / Pipeline / PipelineTask / Step
   — surfaced on the JSON event stream as `display_name` / `description`,
   preferred over `name` in pretty output
-- `taskRef.resolver` / `pipelineRef.resolver` — **partly shipped in
-  v1.6.x**: scaffolding (types, lazy dispatch at task-dispatch time,
+- `taskRef.resolver` / `pipelineRef.resolver` — **fully shipped in
+  v1.6**: scaffolding (types, lazy dispatch at task-dispatch time,
   eager top-level pipelineRef resolution at load time, cluster-backend
   inline-before-submit, validator pre-flight, two new event kinds —
   `resolver-start` / `resolver-end`, and CLI flags), plus the
@@ -131,7 +131,13 @@ are exercised by both backends in CI — divergences are explicit
   `--remote-resolver-namespace=<ns>` (default `default`) and
   `--remote-resolver-timeout=<duration>` (default `60s`). Arbitrary
   custom resolver names are valid in Mode B (the validator's
-  allow-list is short-circuited). See
+  allow-list is short-circuited). **Phase 6** ships `--offline`
+  end-to-end (validate-time + run-time), an on-disk cross-run cache
+  (every direct resolver writes
+  `<--resolver-cache-dir>/<resolver>/<sha256>.{yaml,json}`; second
+  runs surface `cached: true` on `resolver-end`), and the
+  `tkn-act cache list / prune --older-than / clear -y` subcommand
+  family. See
   [`docs/superpowers/plans/2026-05-04-resolvers.md`](docs/superpowers/plans/2026-05-04-resolvers.md)
 - `PipelineTask.matrix` — Cartesian-product fan-out across named
   string-list params, plus optional `include` rows for named extras.
@@ -165,8 +171,8 @@ job enforces that the table doesn't drift from the tree.
 Custom tasks, signed pipelines, tekton-results, Windows.
 (`taskRef.resolver` is shipped for the five canonical names — `git`,
 `hub`, `http`, `bundles`, `cluster` — plus Mode B remote resolution
-via `ResolutionRequest`; offline cache management subcommands land
-in v1.6 Phase 6.)
+via `ResolutionRequest`, `--offline` mode, and the `tkn-act cache`
+subcommand family.)
 
 See [`docs/short-term-goals.md`](docs/short-term-goals.md) for the
 prioritized track of what's next.
