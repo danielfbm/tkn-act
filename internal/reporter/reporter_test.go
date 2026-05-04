@@ -479,6 +479,81 @@ func TestJSONEventOmitsEmptyDisplayName(t *testing.T) {
 	}
 }
 
+func TestPrettyRendersSidecarLogsAndCrashEvents(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewPretty(&buf, reporter.PrettyOptions{Verbosity: reporter.Normal})
+	r.Emit(reporter.Event{Kind: reporter.EvtSidecarLog, Task: "t", Step: "redis", Line: "ready"})
+	r.Emit(reporter.Event{Kind: reporter.EvtSidecarEnd, Task: "t", Step: "redis", Status: "failed", ExitCode: 137})
+	out := buf.String()
+	if !strings.Contains(out, "t:redis") {
+		t.Errorf("missing sidecar log line prefix; got: %s", out)
+	}
+	if !strings.Contains(out, "ready") {
+		t.Errorf("missing sidecar log content; got: %s", out)
+	}
+	if !strings.Contains(out, "137") {
+		t.Errorf("missing sidecar exit code; got: %s", out)
+	}
+}
+
+func TestPrettyQuietSuppressesSidecarLogs(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewPretty(&buf, reporter.PrettyOptions{Verbosity: reporter.Quiet})
+	r.Emit(reporter.Event{Kind: reporter.EvtSidecarLog, Task: "t", Step: "redis", Line: "noisy"})
+	if strings.Contains(buf.String(), "noisy") {
+		t.Errorf("quiet mode leaked sidecar log: %s", buf.String())
+	}
+}
+
+func TestPrettyVerboseShowsSidecarStart(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewPretty(&buf, reporter.PrettyOptions{Verbosity: reporter.Verbose})
+	r.Emit(reporter.Event{Kind: reporter.EvtSidecarStart, Task: "t", Step: "redis"})
+	if !strings.Contains(buf.String(), "sidecar started") {
+		t.Errorf("verbose mode missing sidecar-start line: %s", buf.String())
+	}
+}
+
+func TestJSONSidecarEventsEncodeKind(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewJSON(&buf)
+	r.Emit(reporter.Event{Kind: reporter.EvtSidecarStart, Task: "t", Step: "redis"})
+	r.Emit(reporter.Event{Kind: reporter.EvtSidecarLog, Task: "t", Step: "redis", Stream: "sidecar-stdout", Line: "ready"})
+	r.Emit(reporter.Event{Kind: reporter.EvtSidecarEnd, Task: "t", Step: "redis", Status: "succeeded", ExitCode: 0})
+	out := buf.String()
+	for _, want := range []string{`"kind":"sidecar-start"`, `"kind":"sidecar-log"`, `"kind":"sidecar-end"`, `"stream":"sidecar-stdout"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q; got: %s", want, out)
+		}
+	}
+}
+
+func TestLogSinkSidecarLogEmitsEvent(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewJSON(&buf)
+	sink := reporter.NewLogSink(r)
+	sink.SidecarLog("t", "redis", "sidecar-stdout", "hello")
+	var got map[string]any
+	if err := json.Unmarshal(bytes.TrimRight(buf.Bytes(), "\n"), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["kind"] != "sidecar-log" {
+		t.Errorf("kind = %v, want sidecar-log", got["kind"])
+	}
+	if got["task"] != "t" {
+		t.Errorf("task = %v", got["task"])
+	}
+	if got["step"] != "redis" {
+		t.Errorf("step = %v", got["step"])
+	}
+	if got["stream"] != "sidecar-stdout" {
+		t.Errorf("stream = %v", got["stream"])
+	}
+	if got["line"] != "hello" {
+		t.Errorf("line = %v", got["line"])
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

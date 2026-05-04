@@ -9,18 +9,25 @@ import (
 type EventKind string
 
 const (
-	EvtRunStart       EventKind = "run-start"
-	EvtRunEnd         EventKind = "run-end"
-	EvtTaskStart      EventKind = "task-start"
-	EvtTaskEnd        EventKind = "task-end"
-	EvtTaskSkip       EventKind = "task-skip"
-	EvtTaskRetry      EventKind = "task-retry"
-	EvtStepStart      EventKind = "step-start"
-	EvtStepEnd        EventKind = "step-end"
-	EvtStepLog        EventKind = "step-log"
-	EvtError          EventKind = "error"
-	EvtResolverStart  EventKind = "resolver-start"
-	EvtResolverEnd    EventKind = "resolver-end"
+	EvtRunStart  EventKind = "run-start"
+	EvtRunEnd    EventKind = "run-end"
+	EvtTaskStart EventKind = "task-start"
+	EvtTaskEnd   EventKind = "task-end"
+	EvtTaskSkip  EventKind = "task-skip"
+	EvtTaskRetry EventKind = "task-retry"
+	EvtStepStart EventKind = "step-start"
+	EvtStepEnd   EventKind = "step-end"
+	EvtStepLog   EventKind = "step-log"
+	// Sidecar events surface long-lived helper containers' lifecycle
+	// on the JSON event stream. The Step field carries the sidecar
+	// name (no dedicated payload field — agents that need the
+	// disambiguation can branch on Kind or Stream).
+	EvtSidecarStart  EventKind = "sidecar-start"
+	EvtSidecarEnd    EventKind = "sidecar-end"
+	EvtSidecarLog    EventKind = "sidecar-log"
+	EvtError         EventKind = "error"
+	EvtResolverStart EventKind = "resolver-start"
+	EvtResolverEnd   EventKind = "resolver-end"
 )
 
 // Status values that can appear on task-end. Existing values are unchanged;
@@ -119,6 +126,22 @@ func (s *LogSink) StepLog(taskName, stepName, stepDisplayName, stream, line stri
 		DisplayName: stepDisplayName,
 		Stream:      stream,
 		Line:        line,
+	})
+}
+
+// SidecarLog forwards a sidecar's stdout/stderr line as an
+// EvtSidecarLog event. The sidecar name lands in Event.Step (reused
+// from the step contract) and stream is one of "sidecar-stdout" /
+// "sidecar-stderr" — never plain "stdout" / "stderr" — so consumers
+// can attribute the line to a sidecar without re-parsing.
+func (s *LogSink) SidecarLog(taskName, sidecarName, stream, line string) {
+	s.r.Emit(Event{
+		Kind:   EvtSidecarLog,
+		Time:   time.Now(),
+		Task:   taskName,
+		Step:   sidecarName,
+		Stream: stream,
+		Line:   line,
 	})
 }
 

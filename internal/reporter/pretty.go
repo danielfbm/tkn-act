@@ -107,6 +107,54 @@ func (p *prettySink) Emit(e Event) {
 			e.Line,
 		)
 
+	case EvtSidecarLog:
+		if p.verb < Normal {
+			return
+		}
+		// Use ":" between task and sidecar name (steps use "/") so
+		// mixed step + sidecar logs are visually attributable at a glance.
+		stream := " "
+		if e.Stream == "sidecar-stderr" {
+			stream = p.pal.wrap(p.pal.yellow, "!")
+		}
+		fmt.Fprintf(p.w, "  %s %s %s %s\n",
+			p.pal.wrap(p.pal.cyan, e.Task+":"+e.Step),
+			p.pal.wrap(p.pal.dim, "│"),
+			stream,
+			e.Line,
+		)
+
+	case EvtSidecarStart:
+		if p.verb >= Verbose {
+			fmt.Fprintf(p.w, "  %s %s sidecar started\n",
+				p.pal.wrap(p.pal.dim, "·"),
+				p.pal.wrap(p.pal.dim, e.Task+":"+e.Step),
+			)
+		}
+
+	case EvtSidecarEnd:
+		// Always surface anomalies (non-zero exit, infrafailed). Quiet
+		// only the clean shutdown case unless we're in Verbose.
+		if e.Status != StatusSucceeded || e.ExitCode != 0 {
+			detail := e.Status
+			if e.Status == StatusInfraFailed {
+				detail = "failed to start"
+			} else if e.Status == StatusFailed {
+				detail = "crashed"
+			}
+			fmt.Fprintf(p.w, "  %s %s sidecar exited %d (%s)\n",
+				p.pal.wrap(p.pal.yellow, "·"),
+				p.pal.wrap(p.pal.dim, e.Task+":"+e.Step),
+				e.ExitCode,
+				detail,
+			)
+		} else if p.verb >= Verbose {
+			fmt.Fprintf(p.w, "  %s %s sidecar exited 0\n",
+				p.pal.wrap(p.pal.dim, "·"),
+				p.pal.wrap(p.pal.dim, e.Task+":"+e.Step),
+			)
+		}
+
 	case EvtTaskSkip:
 		fmt.Fprintf(p.w, "%s %s  skipped (%s)\n",
 			glyph("skipped", p.pal),
