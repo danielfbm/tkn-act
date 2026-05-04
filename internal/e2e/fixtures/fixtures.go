@@ -130,6 +130,14 @@ type Fixture struct {
 	// produce the same Results map for any fixture that sets this. If
 	// nil, only WantStatus is asserted (the existing behavior).
 	WantResults map[string]any
+	// WantEventFields, if non-nil, asserts that for each named event
+	// kind the first matching event in the captured stream carries
+	// each named JSON-key/value pair. Shape:
+	//   kind -> { jsonKey -> expectedValue }
+	// Only the first event of each kind is inspected (run-start /
+	// run-end always have exactly one; task-start / step-log are
+	// asserted on the first emission). Skipped if the map is nil.
+	WantEventFields map[string]map[string]string
 }
 
 // TestName returns the subtest name for this fixture: explicit Name when

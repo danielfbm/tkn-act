@@ -23,6 +23,27 @@ func TestResultsEqualNormalisesObjectShape(t *testing.T) {
 	}
 }
 
+// TestFixtureCarriesWantEventFields locks in that the Fixture struct
+// exposes a WantEventFields map so both e2e harnesses can assert
+// per-event-kind JSON-key/value pairs. The shape is part of the
+// cross-backend fidelity contract; if a future refactor renames or
+// removes the field, the harnesses go silent — this test keeps that
+// from happening unnoticed.
+func TestFixtureCarriesWantEventFields(t *testing.T) {
+	f := Fixture{
+		Dir: "fake", Pipeline: "fake", WantStatus: "succeeded",
+		WantEventFields: map[string]map[string]string{
+			"run-start": {"display_name": "X", "description": "Y"},
+		},
+	}
+	if got := f.WantEventFields["run-start"]["display_name"]; got != "X" {
+		t.Errorf("WantEventFields read-back failed: got %q, want X", got)
+	}
+	if got := f.WantEventFields["run-start"]["description"]; got != "Y" {
+		t.Errorf("WantEventFields read-back failed: got %q, want Y", got)
+	}
+}
+
 func TestResultsEqualStringsExact(t *testing.T) {
 	if !ResultsEqual(
 		map[string]any{"a": "x"},
