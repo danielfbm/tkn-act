@@ -12,6 +12,21 @@ backends, structured JSON output, and stable exit codes for CI/agents.
 See [`docs/feature-parity.md`](docs/feature-parity.md) for the full
 shipped/in-progress/gap scoreboard.
 
+## Quickstart
+
+If you have Docker, [`k3d`](https://k3d.io), and `kubectl` on your
+`PATH`:
+
+    make quickstart
+
+That builds `bin/tkn-act`, boots a local k3d cluster, installs Tekton,
+and runs the `testdata/e2e/hello/pipeline.yaml` fixture against the real
+controller. If anything is missing, run `make doctor` first — it prints
+install hints and pinned versions matching the
+[`cluster-integration`](.github/workflows/cluster-integration.yml) CI
+job. `make help` lists every target; [`AGENTS.md`](AGENTS.md) is the
+canonical agent / JSON contract.
+
 ## Install
 
     go install github.com/dfbmorinigo/tkn-act/cmd/tkn-act@latest

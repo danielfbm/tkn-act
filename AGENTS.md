@@ -291,6 +291,28 @@ this as a hard precondition for opening a PR.
 
 ---
 
+## Local development
+
+The repo-root `Makefile` is the supported one-command bootstrap for new
+contributors:
+
+```sh
+make quickstart   # doctor -> build -> cluster-up -> hello-cluster
+```
+
+`make help` lists every target. The Makefile is a convenience layer over
+the same commands CI runs (`go test -race ./...`, `go vet` across all
+build tags, `tkn-act cluster up`, `tkn-act run --cluster`); it does not
+duplicate behavior CI already covers, and there is no CI gate that runs
+`make` itself. See `docs/test-coverage.md` for what is and isn't gated.
+
+K3d / kubectl version pins in the Makefile (`K3D_VERSION`,
+`KUBECTL_VERSION`) mirror those in
+`.github/workflows/cluster-integration.yml`; bump both together so local
+runs continue to match CI.
+
+---
+
 ## `stepTemplate` (DRY for Steps)
 
 `Task.spec.stepTemplate` lets a Task declare base values that every
