@@ -30,6 +30,12 @@ type globalFlags struct {
 	offline                   bool
 	remoteResolverContext     string
 	resolverAllowInsecureHTTP bool
+	// Cluster resolver (Phase 4 of Track 1 #9). The resolver is OFF by
+	// default; setting either of the two flags below opts the user in.
+	// KUBECONFIG may point at production, so the security stance is
+	// "explicit consent required."
+	clusterResolverContext    string
+	clusterResolverKubeconfig string
 	// Sidecar pacing.
 	sidecarStartGrace time.Duration
 	sidecarStopGrace  time.Duration
@@ -88,7 +94,9 @@ Designed for both humans and AI agents:
 	cmd.PersistentFlags().StringVar(&gf.resolverConfig, "resolver-config", "", "path to a YAML/JSON file with per-resolver settings (auth tokens, mirror URLs, etc.)")
 	cmd.PersistentFlags().BoolVar(&gf.offline, "offline", false, "reject any resolver cache miss; useful for hermetic CI")
 	cmd.PersistentFlags().StringVar(&gf.remoteResolverContext, "remote-resolver-context", "", "kubeconfig context for Mode B (delegate resolution to a Tekton cluster); unset = direct mode")
-	cmd.PersistentFlags().BoolVar(&gf.resolverAllowInsecureHTTP, "resolver-allow-insecure-http", false, "allow plain http:// for the http resolver (CI-only escape hatch)")
+	cmd.PersistentFlags().BoolVar(&gf.resolverAllowInsecureHTTP, "resolver-allow-insecure-http", false, "allow plain http:// for the http and bundles resolvers (CI-only escape hatch; loopback always permitted)")
+	cmd.PersistentFlags().StringVar(&gf.clusterResolverContext, "cluster-resolver-context", "", "kubeconfig context for the `cluster` resolver (off-by-default; setting this opts in)")
+	cmd.PersistentFlags().StringVar(&gf.clusterResolverKubeconfig, "cluster-resolver-kubeconfig", "", "explicit kubeconfig path for the cluster resolver (default: KUBECONFIG / ~/.kube/config)")
 	// Sidecar pacing.
 	cmd.PersistentFlags().DurationVar(&gf.sidecarStartGrace, "sidecar-start-grace", 2*time.Second, "how long to wait after starting all sidecars before launching the first step")
 	cmd.PersistentFlags().DurationVar(&gf.sidecarStopGrace, "sidecar-stop-grace", 30*time.Second, "SIGTERM-then-SIGKILL window when stopping sidecars at end of Task (matches upstream Tekton's terminationGracePeriodSeconds)")

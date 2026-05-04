@@ -98,9 +98,10 @@ func TestRegistryEmptyResolverNameRejected(t *testing.T) {
 // TestInlineResolverRegistered: NewDefaultRegistry pre-registers the
 // "inline" stub resolver. The inline resolver is the magic name the
 // test harness uses to feed bytes into the engine without touching the
-// network. Phase 2 adds the git resolver and Phase 3 adds hub; the
-// remaining direct resolvers (bundles/cluster) still return
-// ErrResolverNotRegistered until their respective phases land.
+// network. Phase 2 adds git, Phase 3 adds hub+http, and Phase 4 adds
+// bundles. The cluster resolver remains off-by-default for security
+// (KUBECONFIG may point at production); see TestClusterResolverNot
+// RegisteredByDefault for the negative-space check.
 func TestInlineResolverRegistered(t *testing.T) {
 	reg := refresolver.NewDefaultRegistry(refresolver.Options{})
 	if reg == nil {
@@ -116,14 +117,15 @@ func TestInlineResolverRegistered(t *testing.T) {
 		t.Errorf("err = %v, want wrapping ErrInlineNoData", err)
 	}
 
-	// Phase-4+ resolvers must still be rejected with a "not yet
-	// implemented" hint until their phase ships.
+	// `bundles` is registered as of Phase 4 — so the dispatch path
+	// should reach the resolver and surface its own param-validation
+	// error rather than ErrResolverNotRegistered.
 	_, err = reg.Resolve(context.Background(), refresolver.Request{Resolver: "bundles"})
 	if err == nil {
-		t.Fatal("expected error for bundles (not yet implemented)")
+		t.Fatal("expected error for bundles (missing required params)")
 	}
-	if !errors.Is(err, refresolver.ErrResolverNotRegistered) {
-		t.Errorf("err = %v, want ErrResolverNotRegistered for bundles", err)
+	if errors.Is(err, refresolver.ErrResolverNotRegistered) {
+		t.Errorf("err = %v, bundles should be registered after Phase 4", err)
 	}
 }
 

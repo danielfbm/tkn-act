@@ -89,6 +89,24 @@ type Options struct {
 	// AllowInsecureHTTP opts the http resolver into plain http://. Phase
 	// 1 stores it but does nothing with it (Phase 3 wires it).
 	AllowInsecureHTTP bool
+
+	// AllowCluster opts the cluster resolver into the default registry.
+	// The cluster resolver reads from the user's KUBECONFIG and is
+	// disabled by default for safety (KUBECONFIG may point at
+	// production). Set true via --resolver-allow=...,cluster on the
+	// CLI; alternatively the engine flips this when --cluster-resolver-
+	// context=<ctx> is set explicitly.
+	AllowCluster bool
+
+	// ClusterResolverContext, when non-empty, names the kubeconfig
+	// context the cluster resolver reads from. Empty means "use the
+	// kubeconfig's current-context."
+	ClusterResolverContext string
+
+	// ClusterResolverKubeconfig overrides the path the cluster resolver
+	// loads its kubeconfig from. Empty falls back to the standard
+	// $KUBECONFIG / ~/.kube/config resolution chain.
+	ClusterResolverKubeconfig string
 }
 
 // Registry routes Requests to one of its registered Resolvers, applies
@@ -140,7 +158,39 @@ func NewDefaultRegistry(opts Options) *Registry {
 	// the same hook (Phase 4: bundles + cluster).
 	r.Register(NewHubResolver(HubOptions{}))
 	r.Register(NewHTTPResolver(HTTPOptions{AllowInsecureHTTP: opts.AllowInsecureHTTP}))
+
+	// Phase 4 (Track 1 #9): bundles is registered by default; cluster is
+	// off-by-default and only registers when opts.AllowCluster is set
+	// OR the user explicitly added "cluster" to opts.Allow. The cluster
+	// resolver reads from the user's KUBECONFIG which may point at
+	// production, so the default --resolver-allow=git,hub,http,bundles
+	// excludes it; an opt-in is required.
+	r.Register(NewBundlesResolver(BundlesOptions{
+		AllowInsecureHTTP: opts.AllowInsecureHTTP,
+	}))
+	if opts.AllowCluster || allowListIncludes(opts.Allow, "cluster") || opts.ClusterResolverContext != "" {
+		cr, err := NewClusterResolver(ClusterResolverOptions{
+			Kubeconfig: opts.ClusterResolverKubeconfig,
+			Context:    opts.ClusterResolverContext,
+		})
+		if err == nil {
+			r.Register(cr)
+		} else {
+			// Register a stub that always errors so dispatch surfaces a
+			// clear, actionable diagnostic rather than ErrResolverNotRegistered.
+			r.Register(newClusterResolverStub(err))
+		}
+	}
 	return r
+}
+
+func allowListIncludes(allow []string, name string) bool {
+	for _, a := range allow {
+		if a == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Register adds a Resolver to the registry, keyed by its Name(). A

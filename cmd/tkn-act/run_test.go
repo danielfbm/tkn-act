@@ -119,6 +119,50 @@ func TestRunFlagsResolverDefaults(t *testing.T) {
 	}
 }
 
+// TestRunFlagsClusterResolverDefaultsAreOff: --cluster-resolver-context
+// and --cluster-resolver-kubeconfig must exist as flags but default to
+// empty, so the security stance "cluster resolver off by default" is
+// preserved in the absence of explicit user opt-in.
+func TestRunFlagsClusterResolverDefaultsAreOff(t *testing.T) {
+	gf = globalFlags{}
+	cmd := newRootCmd()
+	if err := cmd.Flags().Parse(nil); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cmd.PersistentFlags().Lookup("cluster-resolver-context") == nil {
+		t.Error("missing --cluster-resolver-context flag")
+	}
+	if cmd.PersistentFlags().Lookup("cluster-resolver-kubeconfig") == nil {
+		t.Error("missing --cluster-resolver-kubeconfig flag")
+	}
+	if gf.clusterResolverContext != "" {
+		t.Errorf("clusterResolverContext default = %q, want empty (off-by-default)", gf.clusterResolverContext)
+	}
+	if gf.clusterResolverKubeconfig != "" {
+		t.Errorf("clusterResolverKubeconfig default = %q, want empty", gf.clusterResolverKubeconfig)
+	}
+	// The default --resolver-allow MUST NOT include "cluster".
+	for _, n := range gf.resolverAllow {
+		if n == "cluster" {
+			t.Errorf("default --resolver-allow includes %q (security: cluster must be opt-in)", n)
+		}
+	}
+}
+
+// TestRunFlagsClusterResolverContextOptsIn: parsing --cluster-resolver-
+// context=<ctx> wires the flag into globalFlags so the registry
+// constructor can flip AllowCluster=true.
+func TestRunFlagsClusterResolverContextOptsIn(t *testing.T) {
+	gf = globalFlags{}
+	cmd := newRootCmd()
+	if err := cmd.PersistentFlags().Parse([]string{"--cluster-resolver-context", "ci-test"}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if gf.clusterResolverContext != "ci-test" {
+		t.Errorf("clusterResolverContext = %q, want ci-test", gf.clusterResolverContext)
+	}
+}
+
 // TestResolverCacheDirDefault: when --resolver-cache-dir is empty, the
 // CLI's helper resolves to $XDG_CACHE_HOME/tkn-act/resolved.
 func TestResolverCacheDirDefault(t *testing.T) {

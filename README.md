@@ -108,9 +108,18 @@ are exercised by both backends in CI — divergences are explicit
   `--resolver-allow-insecure-http` is set. **`hub` and `http` direct
   resolvers ship in Phase 3** (HTTPS-only by default; loopback http
   exempt; bearer-token via `HubOptions.Token` / `HTTPOptions.Token` /
-  env `TKNACT_HTTP_RESOLVER_TOKEN`; 5xx single-retry budget). The
-  remaining direct resolvers (`bundles`, `cluster`) and the remote
-  `ResolutionRequest` driver land in subsequent phases — see
+  env `TKNACT_HTTP_RESOLVER_TOKEN`; 5xx single-retry budget). **`bundles`
+  and `cluster` direct resolvers ship in Phase 4** — `bundles` pulls
+  Tekton OCI bundles via `go-containerregistry`, walks layer
+  `dev.tekton.image.{name,kind,apiVersion}` annotations, and returns
+  the layer's embedded YAML (HTTPS-only by default; loopback exempt;
+  `--resolver-allow-insecure-http` opens HTTP for non-loopback
+  registries; auth honors `~/.docker/config.json`); `cluster` reads
+  Tekton resources via the kube dynamic client and is **OFF BY
+  DEFAULT** for safety (KUBECONFIG may point at production) — opt in
+  via `--cluster-resolver-context=<ctx>` or by adding `cluster` to
+  `--resolver-allow`. The remote `ResolutionRequest` driver lands in
+  Phase 5 — see
   [`docs/superpowers/plans/2026-05-04-resolvers.md`](docs/superpowers/plans/2026-05-04-resolvers.md)
 - `PipelineTask.matrix` — Cartesian-product fan-out across named
   string-list params, plus optional `include` rows for named extras.

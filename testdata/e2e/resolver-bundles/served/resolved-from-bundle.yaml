@@ -1,0 +1,9 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: resolved-from-bundle
+spec:
+  steps:
+    - name: greet
+      image: alpine:3
+      script: echo "hello-from-bundles-resolver"

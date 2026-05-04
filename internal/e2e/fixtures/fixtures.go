@@ -296,6 +296,17 @@ func All() []Fixture {
 			// configures the Registry's hub resolver BaseURL to it.
 		},
 		{
+			Dir: "resolver-bundles", Pipeline: "resolver-bundles", WantStatus: "succeeded",
+			Resolver: "bundles",
+			// The harness spins up an in-memory OCI registry via
+			// go-containerregistry's pkg/registry, packages the YAML
+			// files under served/ as a Tekton bundle (one layer per
+			// file, annotated with dev.tekton.image.{name,kind,
+			// apiVersion}), pushes it as
+			// <host>/tkn-act/test-bundle:v1, and feeds that reference
+			// into the Pipeline's $(params.bundle-ref).
+		},
+		{
 			Dir: "matrix-include", Pipeline: "matrix-include", WantStatus: "succeeded",
 			// 1 cross-product row (os=linux, arch=amd64 from Task default)
 			// + 2 include rows (arch=arm64 named arm-extra; arch=armv7
