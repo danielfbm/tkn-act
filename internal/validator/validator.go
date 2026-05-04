@@ -185,7 +185,9 @@ func Validate(b *loader.Bundle, pipelineName string, providedParams map[string]b
 	// must name a task that exists in spec.tasks ∪ spec.finally. Result-
 	// name existence isn't checked here (some Tasks compute results
 	// dynamically; resolution-time error handling drops unknown names
-	// non-fatally).
+	// non-fatally). Result names themselves must also be unique — two
+	// entries with the same name silently collide in the resolved map
+	// and the user has no recovery path.
 	if len(pl.Spec.Results) > 0 {
 		known := map[string]bool{}
 		for _, pt := range pl.Spec.Tasks {
@@ -194,7 +196,12 @@ func Validate(b *loader.Bundle, pipelineName string, providedParams map[string]b
 		for _, pt := range pl.Spec.Finally {
 			known[pt.Name] = true
 		}
+		seenName := map[string]bool{}
 		for _, r := range pl.Spec.Results {
+			if seenName[r.Name] {
+				errs = append(errs, fmt.Errorf("duplicate pipeline result name %q (each Pipeline.spec.results[].name must be unique)", r.Name))
+			}
+			seenName[r.Name] = true
 			collectStrings(r.Value, func(s string) {
 				for _, ref := range extractTaskRefs(s) {
 					if !known[ref] {
