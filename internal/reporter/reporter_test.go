@@ -514,6 +514,43 @@ func TestPrettyVerboseShowsSidecarStart(t *testing.T) {
 	}
 }
 
+func TestPrettyNormalSuppressesCleanSidecarEnd(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewPretty(&buf, reporter.PrettyOptions{Verbosity: reporter.Normal})
+	// Clean shutdown (status succeeded, exit 0) → no output unless Verbose.
+	r.Emit(reporter.Event{Kind: reporter.EvtSidecarEnd, Task: "t", Step: "redis", Status: "succeeded", ExitCode: 0})
+	if strings.Contains(buf.String(), "sidecar exited") {
+		t.Errorf("normal mode should suppress clean sidecar-end: %s", buf.String())
+	}
+}
+
+func TestPrettyVerboseShowsCleanSidecarEnd(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewPretty(&buf, reporter.PrettyOptions{Verbosity: reporter.Verbose})
+	r.Emit(reporter.Event{Kind: reporter.EvtSidecarEnd, Task: "t", Step: "redis", Status: "succeeded", ExitCode: 0})
+	if !strings.Contains(buf.String(), "sidecar exited 0") {
+		t.Errorf("verbose mode missing clean sidecar-end: %s", buf.String())
+	}
+}
+
+func TestPrettySidecarEndInfraFailedShowsFailedToStart(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewPretty(&buf, reporter.PrettyOptions{Verbosity: reporter.Normal})
+	r.Emit(reporter.Event{Kind: reporter.EvtSidecarEnd, Task: "t", Step: "redis", Status: "infrafailed", ExitCode: 0})
+	if !strings.Contains(buf.String(), "failed to start") {
+		t.Errorf("infrafailed sidecar-end should show 'failed to start': %s", buf.String())
+	}
+}
+
+func TestPrettySidecarLogStderrMarked(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewPretty(&buf, reporter.PrettyOptions{Verbosity: reporter.Normal})
+	r.Emit(reporter.Event{Kind: reporter.EvtSidecarLog, Task: "t", Step: "redis", Stream: "sidecar-stderr", Line: "warn"})
+	if !strings.Contains(buf.String(), "!") {
+		t.Errorf("sidecar-stderr line should carry stderr marker: %s", buf.String())
+	}
+}
+
 func TestJSONSidecarEventsEncodeKind(t *testing.T) {
 	var buf bytes.Buffer
 	r := reporter.NewJSON(&buf)
@@ -525,6 +562,43 @@ func TestJSONSidecarEventsEncodeKind(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q; got: %s", want, out)
 		}
+	}
+}
+
+func TestLogSinkEmitSidecarStartEmitsEvent(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewJSON(&buf)
+	sink := reporter.NewLogSink(r)
+	sink.EmitSidecarStart("t", "redis")
+	var got map[string]any
+	if err := json.Unmarshal(bytes.TrimRight(buf.Bytes(), "\n"), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["kind"] != "sidecar-start" || got["task"] != "t" || got["step"] != "redis" || got["stream"] != "sidecar" {
+		t.Errorf("got = %v, want kind=sidecar-start task=t step=redis stream=sidecar", got)
+	}
+}
+
+func TestLogSinkEmitSidecarEndEmitsEvent(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewJSON(&buf)
+	sink := reporter.NewLogSink(r)
+	sink.EmitSidecarEnd("t", "redis", 137, "failed", "killed")
+	var got map[string]any
+	if err := json.Unmarshal(bytes.TrimRight(buf.Bytes(), "\n"), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["kind"] != "sidecar-end" {
+		t.Errorf("kind = %v, want sidecar-end", got["kind"])
+	}
+	if got["status"] != "failed" {
+		t.Errorf("status = %v, want failed", got["status"])
+	}
+	if got["exitCode"].(float64) != 137 {
+		t.Errorf("exitCode = %v, want 137", got["exitCode"])
+	}
+	if got["message"] != "killed" {
+		t.Errorf("message = %v, want killed", got["message"])
 	}
 }
 
