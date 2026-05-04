@@ -764,6 +764,75 @@ func TestRunPipelineSurfacesResults(t *testing.T) {
 	}
 }
 
+// TestBuildPipelineRunRoundTripsDisplayName: every displayName /
+// description on the input Pipeline + Task must appear under the
+// inlined spec.pipelineSpec.* on the resulting PipelineRun object.
+// Locks in that a future hand-written conversion can't silently drop
+// these fields.
+func TestBuildPipelineRunRoundTripsDisplayName(t *testing.T) {
+	be, _, _, _, _ := fakeBackend(t)
+
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		DisplayName: "Build & test",
+		Description: "Build then test.",
+		Tasks: []tektontypes.PipelineTask{{
+			Name:        "t1",
+			DisplayName: "Compile binary",
+			TaskRef:     &tektontypes.TaskRef{Name: "tk"},
+		}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{
+		DisplayName: "Unit-test runner",
+		Description: "Runs go test.",
+		Steps: []tektontypes.Step{{
+			Name:        "s",
+			DisplayName: "Compile",
+			Description: "Compile the binary.",
+			Image:       "alpine:3",
+			Script:      "true",
+		}},
+	}}
+	tk.Metadata.Name = "tk"
+
+	prObj, err := be.BuildPipelineRunObject(backend.PipelineRunInvocation{
+		RunID: "12345678", PipelineRunName: "p-12345678",
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"tk": tk},
+	}, "tkn-act-12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	un := prObj.(*unstructured.Unstructured)
+
+	plSpec, _, _ := unstructured.NestedMap(un.Object, "spec", "pipelineSpec")
+	if plSpec["displayName"] != "Build & test" {
+		t.Errorf("pipelineSpec.displayName = %v", plSpec["displayName"])
+	}
+	if plSpec["description"] != "Build then test." {
+		t.Errorf("pipelineSpec.description = %v", plSpec["description"])
+	}
+	tasks, _, _ := unstructured.NestedSlice(un.Object, "spec", "pipelineSpec", "tasks")
+	taskMap := tasks[0].(map[string]any)
+	if taskMap["displayName"] != "Compile binary" {
+		t.Errorf("tasks[0].displayName = %v", taskMap["displayName"])
+	}
+	taskSpec := taskMap["taskSpec"].(map[string]any)
+	if taskSpec["displayName"] != "Unit-test runner" {
+		t.Errorf("taskSpec.displayName = %v", taskSpec["displayName"])
+	}
+	if taskSpec["description"] != "Runs go test." {
+		t.Errorf("taskSpec.description = %v", taskSpec["description"])
+	}
+	steps := taskSpec["steps"].([]any)
+	stepMap := steps[0].(map[string]any)
+	if stepMap["displayName"] != "Compile" {
+		t.Errorf("step.displayName = %v", stepMap["displayName"])
+	}
+	if stepMap["description"] != "Compile the binary." {
+		t.Errorf("step.description = %v", stepMap["description"])
+	}
+}
+
 // flipStatusWithResultsUntilStop is flipStatusUntilStop but also writes
 // `status.results` to the PR.
 func flipStatusWithResultsUntilStop(t *testing.T, dyn *dynamicfake.FakeDynamicClient, ns, prName, status, reason string, results []any) chan struct{} {
