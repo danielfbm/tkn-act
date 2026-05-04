@@ -79,6 +79,12 @@ func (s *Store) Reset() {
 // overwrite earlier ones); duplicate-name detection happens at the
 // loader layer, not here.
 func (s *Store) LoadBytes(name string, bytesByKey map[string][]byte) {
+	if len(bytesByKey) == 0 {
+		// Empty input is a no-op; we deliberately do not create an
+		// empty bucket for `name` so that callers (and tests) can
+		// rely on `s.Bundle[name] != nil` as a presence check.
+		return
+	}
 	if s.Bundle[name] == nil {
 		s.Bundle[name] = map[string][]byte{}
 	}

@@ -196,6 +196,33 @@ func TestStoreResetClearsInlineAndBundle(t *testing.T) {
 	}
 }
 
+// TestStoreLoadBytesEmptyIsNoOp asserts that LoadBytes with an empty
+// (or nil) bytesByKey map does not register an empty bucket for
+// `name`. A bucket without keys would surface as a "no keys" error
+// from Resolve only after a confusing detour through the Bundle
+// layer; early-returning keeps the per-name presence test
+// (`s.Bundle[name] == nil`) honest.
+func TestStoreLoadBytesEmptyIsNoOp(t *testing.T) {
+	s := volumes.NewStore("")
+
+	s.LoadBytes("cfg", nil)
+	if _, ok := s.Bundle["cfg"]; ok {
+		t.Errorf("LoadBytes(name, nil) registered an empty bucket; want no-op")
+	}
+
+	s.LoadBytes("cfg", map[string][]byte{})
+	if _, ok := s.Bundle["cfg"]; ok {
+		t.Errorf("LoadBytes(name, empty) registered an empty bucket; want no-op")
+	}
+
+	// A subsequent non-empty LoadBytes for the same name must still
+	// work after the no-op calls above.
+	s.LoadBytes("cfg", map[string][]byte{"k": []byte("v")})
+	if got, ok := s.Bundle["cfg"]; !ok || string(got["k"]) != "v" {
+		t.Errorf("after no-op + non-empty LoadBytes, Bundle[cfg] = %v, ok=%v; want {k: v}", got, ok)
+	}
+}
+
 func TestStoreBundleOnlyResolves(t *testing.T) {
 	s := volumes.NewStore("")
 	s.LoadBytes("cfg", map[string][]byte{
