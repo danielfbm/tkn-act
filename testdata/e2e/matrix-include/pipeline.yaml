@@ -5,6 +5,7 @@ metadata:
 spec:
   params:
     - name: os
+      default: linux
     - name: arch
       default: amd64
   results:
