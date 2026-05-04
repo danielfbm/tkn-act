@@ -132,7 +132,7 @@ The columns:
 | Feature | Spec field | Status | Backends | e2e fixture | Limitations fixture | Plan / Spec / PR |
 |---|---|---|---|---|---|---|
 | `Pipeline.spec.timeouts.{pipeline,tasks,finally}` | `PipelineSpec.timeouts` | shipped | both | pipeline-timeout | none | docs/superpowers/plans/2026-05-03-pipelinerun-timeouts.md (Track 1 #2); also covered by `tasks-timeout`, `finally-timeout` |
-| `PipelineTask.matrix` (parameter-matrix fan-out) | `PipelineTask.matrix` | shipped | both | matrix | none | docs/superpowers/plans/2026-05-04-pipeline-matrix.md (Track 1 #3); also covered by `matrix-include`. |
+| `PipelineTask.matrix` (parameter-matrix fan-out) | `PipelineTask.matrix` | shipped | both | matrix | none | docs/superpowers/plans/2026-05-04-pipeline-matrix.md (Track 1 #3); also covered by `matrix-include`. The two e2e fixtures are flagged DockerOnly: Tekton v0.65 (the pinned cluster install) does not surface matrix-fanned task results as Pipeline-level results via `$(tasks.X.results.Y[*])` even with `enable-api-fields=alpha`. Cluster-mode reconstruction of per-TaskRun MatrixInfo is exercised by `internal/backend/cluster/run_test.go::TestMatchMatrixRowFromTaskRun*`. Track to a Tekton bump. |
 | `PipelineTask.matrix.include` overlap with cross-product param | `PipelineTask.matrix.include` (overlap fold) | gap | both | none | matrix-include-overlap | Real Tekton folds the include row into the matching cross-product row; tkn-act validate-rejects the overlap to prevent docker-vs-cluster divergence. Tracked as Track 1 #3 follow-up; see docs/superpowers/specs/2026-05-04-pipeline-matrix-design.md § 7. |
 
 ### Task structure
