@@ -123,6 +123,7 @@ fixtures under `testdata/e2e/`:
 | `display-name-description/` | `displayName` + `description` on Pipeline / PipelineTask / Task / Step; asserts JSON event fields |
 | `configmap-from-yaml/` | `kind: ConfigMap` (apiVersion v1) embedded in `-f`; mounted as a volume |
 | `secret-from-yaml/`    | `kind: Secret` (apiVersion v1) embedded in `-f`; both `data` (base64) and `stringData` exercised |
+| `sidecars/`            | `Task.spec.sidecars`: redis sidecar; steps connect on `localhost:6379` (shared netns via per-Task pause container on docker; native pod-shared netns on cluster) |
 
 Plus `internal/backend/docker/docker_integration_test.go`.
 
@@ -152,10 +153,6 @@ In rough order of "you should be aware":
 
 ### By design (won't be tested locally)
 
-- **Sidecars.** Need shared network namespaces; out of scope for the
-  Docker backend. `testdata/limitations/sidecars/` documents the gap.
-  Cluster mode covers them but our cluster e2e doesn't yet exercise a
-  sidecar fixture.
 - **Step-state isolation.** Each step is a separate container; cwd /
   env / `/tmp` from a prior step is gone. Documented as a foot-gun in
   `testdata/limitations/step-state/`.

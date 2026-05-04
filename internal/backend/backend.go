@@ -62,6 +62,10 @@ type WorkspaceMount struct {
 // string is the no-displayName state; consumers must fall back to stepName.
 type LogSink interface {
 	StepLog(taskName, stepName, stepDisplayName, stream, line string)
+	// SidecarLog forwards a sidecar's stdout/stderr line. Stream is
+	// one of "sidecar-stdout" or "sidecar-stderr" so consumers can
+	// disambiguate sidecar logs from step logs without re-parsing.
+	SidecarLog(taskName, sidecarName, stream, line string)
 }
 
 // TaskResult is what RunTask returns.

@@ -546,6 +546,30 @@ func substituteSpec(spec tektontypes.TaskSpec, ctx resolver.Context) tektontypes
 		}
 		out.Steps[i] = ns
 	}
+	// Sidecars start before any step in the Task and are torn down
+	// after the last step, so step-result references don't apply
+	// (use the plain Substitute, not SubstituteAllowStepRefs).
+	if len(spec.Sidecars) > 0 {
+		out.Sidecars = make([]tektontypes.Sidecar, len(spec.Sidecars))
+		for i, sc := range spec.Sidecars {
+			ns := sc
+			ns.Image, _ = resolver.Substitute(sc.Image, ctx)
+			if len(sc.Command) > 0 {
+				ns.Command, _ = resolver.SubstituteArgs(sc.Command, ctx)
+			}
+			if len(sc.Args) > 0 {
+				ns.Args, _ = resolver.SubstituteArgs(sc.Args, ctx)
+			}
+			ns.Script, _ = resolver.Substitute(sc.Script, ctx)
+			ns.WorkingDir, _ = resolver.Substitute(sc.WorkingDir, ctx)
+			ns.Env = make([]tektontypes.EnvVar, len(sc.Env))
+			for j, e := range sc.Env {
+				v, _ := resolver.Substitute(e.Value, ctx)
+				ns.Env[j] = tektontypes.EnvVar{Name: e.Name, Value: v}
+			}
+			out.Sidecars[i] = ns
+		}
+	}
 	return out
 }
 
@@ -572,6 +596,11 @@ func uniqueImages(b *loader.Bundle, pl tektontypes.Pipeline) []string {
 		spec = applyStepTemplate(spec)
 		for _, s := range spec.Steps {
 			seen[s.Image] = struct{}{}
+		}
+		for _, sc := range spec.Sidecars {
+			if sc.Image != "" {
+				seen[sc.Image] = struct{}{}
+			}
 		}
 	}
 	out := make([]string, 0, len(seen))

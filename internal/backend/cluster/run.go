@@ -516,18 +516,87 @@ func (b *Backend) streamAllTaskRunLogs(ctx context.Context, in backend.PipelineR
 		return
 	}
 	defer w.Stop()
+	// Per-TaskRun sidecar lifecycle tracker. We diff the
+	// status.sidecars[] slice between events and emit
+	// EvtSidecarStart / EvtSidecarEnd as states transition.
+	// Cross-backend fidelity is a hard project rule — the same
+	// `sidecars` e2e fixture must produce equivalent JSON event
+	// shapes on docker and cluster.
+	sidecarSeen := map[string]map[string]sidecarSeenState{} // taskRunName → sidecarName → state
 	for ev := range w.ResultChan() {
 		un, ok := ev.Object.(*unstructured.Unstructured)
 		if !ok {
 			continue
 		}
+		taskName, _, _ := unstructured.NestedString(un.Object, "metadata", "labels", "tekton.dev/pipelineTask")
+		trName := un.GetName()
+		// Diff sidecar statuses and emit transition events.
+		b.emitSidecarTransitions(in, taskName, trName, un, sidecarSeen)
+
 		podName, found, _ := unstructured.NestedString(un.Object, "status", "podName")
 		if !found || streamed[podName] {
 			continue
 		}
 		streamed[podName] = true
-		taskName, _, _ := unstructured.NestedString(un.Object, "metadata", "labels", "tekton.dev/pipelineTask")
 		go b.streamPodLogs(ctx, in, ns, podName, taskName)
+	}
+}
+
+// sidecarSeenState tracks which lifecycle events have already been
+// emitted for a given (taskRun, sidecar) pair. Both flags monotonic
+// — once set they never flip back, so we never emit duplicate
+// events even if the watch loop re-observes the same status.
+type sidecarSeenState struct {
+	startedEmitted    bool
+	terminatedEmitted bool
+}
+
+// sidecarEventEmitter is the optional interface a LogSink may
+// satisfy to receive sidecar lifecycle events. Mirrors the docker
+// backend's helper of the same name; the production
+// reporter.LogSink implements it.
+type sidecarEventEmitter interface {
+	EmitSidecarStart(taskName, sidecarName string)
+	EmitSidecarEnd(taskName, sidecarName string, exitCode int, status, message string)
+}
+
+// emitSidecarTransitions diffs status.sidecars[] against the prior
+// per-TaskRun seen map and emits EvtSidecarStart / EvtSidecarEnd
+// for each transition. Pure-helper-driven (parsePodSidecarStatuses)
+// for unit-testability; this wrapper does the LogSink emission and
+// state-tracking the helper deliberately omits.
+func (b *Backend) emitSidecarTransitions(in backend.PipelineRunInvocation, taskName, trName string, tr *unstructured.Unstructured, seen map[string]map[string]sidecarSeenState) {
+	if in.LogSink == nil {
+		return
+	}
+	emitter, ok := in.LogSink.(sidecarEventEmitter)
+	if !ok {
+		return
+	}
+	statuses := parsePodSidecarStatuses(tr)
+	if len(statuses) == 0 {
+		return
+	}
+	if seen[trName] == nil {
+		seen[trName] = map[string]sidecarSeenState{}
+	}
+	for _, s := range statuses {
+		st := seen[trName][s.Name]
+		if s.Running && !st.startedEmitted {
+			emitter.EmitSidecarStart(taskName, s.Name)
+			st.startedEmitted = true
+		}
+		if s.Terminated && !st.terminatedEmitted {
+			status := "succeeded"
+			msg := ""
+			if s.ExitCode != 0 {
+				status = "failed"
+				msg = "exited non-zero"
+			}
+			emitter.EmitSidecarEnd(taskName, s.Name, int(s.ExitCode), status, msg)
+			st.terminatedEmitted = true
+		}
+		seen[trName][s.Name] = st
 	}
 }
 
@@ -546,24 +615,33 @@ func (b *Backend) streamPodLogs(ctx context.Context, in backend.PipelineRunInvoc
 	// Source-of-truth is the input YAML, NOT the controller verdict.
 	stepDisplayByName := stepDisplayNameLookup(in, taskName)
 	for _, c := range p.Spec.Containers {
-		if !strings.HasPrefix(c.Name, "step-") {
+		var stepName, sidecarName string
+		switch {
+		case strings.HasPrefix(c.Name, "step-"):
+			stepName = strings.TrimPrefix(c.Name, "step-")
+		case strings.HasPrefix(c.Name, "sidecar-"):
+			sidecarName = strings.TrimPrefix(c.Name, "sidecar-")
+		default:
 			continue
 		}
-		stepName := strings.TrimPrefix(c.Name, "step-")
 		stepDisplayName := stepDisplayByName[stepName]
 		req := b.client.Kube.CoreV1().Pods(ns).GetLogs(pod, &corev1.PodLogOptions{Container: c.Name, Follow: true})
 		rc, err := req.Stream(ctx)
 		if err != nil {
 			continue
 		}
-		go func(stepName, stepDisplayName string, rc io.ReadCloser) {
+		go func(stepName, stepDisplayName, sidecarName string, rc io.ReadCloser) {
 			defer rc.Close()
 			s := bufio.NewScanner(rc)
 			s.Buffer(make([]byte, 64*1024), 1024*1024)
 			for s.Scan() {
-				in.LogSink.StepLog(taskName, stepName, stepDisplayName, "stdout", s.Text())
+				if sidecarName != "" {
+					in.LogSink.SidecarLog(taskName, sidecarName, "sidecar-stdout", s.Text())
+				} else {
+					in.LogSink.StepLog(taskName, stepName, stepDisplayName, "stdout", s.Text())
+				}
 			}
-		}(stepName, stepDisplayName, rc)
+		}(stepName, stepDisplayName, sidecarName, rc)
 	}
 }
 

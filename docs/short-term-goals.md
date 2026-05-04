@@ -24,7 +24,7 @@ near the top are the ones whose absence forces the most users onto
 
 | # | Feature | Why it matters | Status |
 |---|---|---|---|
-| 1 | **`Task.sidecars`** | Catalog Tasks rely on database / mock-service sidecars; without it, a large fraction of community Tasks won't run on `--docker`. | Out of scope in v1.2; documented in `testdata/limitations/sidecars/`. Needs design work for the docker backend (per-Task network + shared netns). Cluster mode already works. |
+| 1 | **`Task.sidecars`** | Catalog Tasks rely on database / mock-service sidecars; without it, a large fraction of community Tasks won't run on `--docker`. | Done in v1.6 (PR for `feat: Task.sidecars`). Per-Task pause container owns the netns; sidecars + steps join via `network_mode: container:<pause-id>`; cluster pass-through with `sidecar-start` / `sidecar-end` events from `status.sidecars[]`. |
 | 2 | **PipelineRun-level timeouts** (`spec.timeouts.{pipeline,tasks,finally}`) | Wraps the per-Task timeout we shipped in v1.2. Common in CI pipelines that need a hard wall-clock cap. | Done in v1.3 (PR for `feat: PipelineSpec.Timeouts`). Outer policy + cluster pass-through; status `timeout`, exit code 6 unchanged. |
 | 3 | **`PipelineTask.matrix`** | Fan a Task across a parameter matrix (build OS × Go version, etc.). Heavily used in language-toolchain pipelines. | Not started. Engine + DAG changes are non-trivial; probably needs its own spec. |
 | 4 | **`Task.stepTemplate`** | DRY for `image` / `env` shared across steps. Common in catalog Tasks. | Done in v1.4 (PR for `feat: TaskSpec.StepTemplate`). Engine-side merge before substitution; cluster pass-through verified. |
