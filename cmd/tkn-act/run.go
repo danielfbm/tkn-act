@@ -109,11 +109,23 @@ func runWith(rf runFlags) error {
 		}
 	}
 
-	// Validate (resolver-aware).
+	// Validate (resolver-aware). The CacheCheck callback wires the
+	// validator's --offline pre-flight to the on-disk resolver cache;
+	// when --offline is set, every resolver-backed ref must already be
+	// in the cache by content-hash, otherwise the run aborts before
+	// any task starts (exit 4).
+	resolverCacheRoot := resolveResolverCacheDir(gf.resolverCacheDir)
+	diskCache := refresolver.NewDiskCache(resolverCacheRoot)
 	vopts := validator.Options{
 		Offline:               gf.offline,
 		RegisteredResolvers:   gf.resolverAllow,
 		RemoteResolverEnabled: gf.remoteResolverContext != "",
+		CacheCheck: func(ref validator.UnresolvedRef) bool {
+			return diskCache.Has(refresolver.Request{
+				Resolver: ref.Resolver,
+				Params:   ref.Params,
+			})
+		},
 	}
 	if errs := validator.ValidateWithOptions(b, pipe, nil, vopts); len(errs) > 0 {
 		for _, e := range errs {
@@ -217,13 +229,16 @@ func runWith(rf runFlags) error {
 	allowCluster := gf.clusterResolverContext != ""
 	reg := refresolver.NewDefaultRegistry(refresolver.Options{
 		Allow:                     gf.resolverAllow,
-		CacheDir:                  resolveResolverCacheDir(gf.resolverCacheDir),
+		CacheDir:                  resolverCacheRoot,
 		Offline:                   gf.offline,
 		AllowInsecureHTTP:         gf.resolverAllowInsecureHTTP,
 		AllowCluster:              allowCluster,
 		ClusterResolverContext:    gf.clusterResolverContext,
 		ClusterResolverKubeconfig: gf.clusterResolverKubeconfig,
 	})
+	// Reuse the same DiskCache instance for run-time hits as the one
+	// the validator used at load time (ensures Has → Get consistency).
+	reg.SetCache(diskCache)
 
 	// Mode B: when --remote-resolver-context is set, every resolver
 	// dispatch goes through the remote driver instead of the direct
