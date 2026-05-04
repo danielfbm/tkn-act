@@ -194,3 +194,57 @@ func TestResolvePipelineResultsDropsMissingResultName(t *testing.T) {
 		t.Fatalf("errs = %v, want 1", errs)
 	}
 }
+
+// TestResolvePipelineResultsArrayStarFromMatrix asserts the type of
+// the resolved value is []string (NOT string) when the array element
+// is a sole $(tasks.X.results.Y[*]) reference. Without the array-aware
+// path the resolver would return a JSON-array-literal *string*, which
+// is wrong for an array-typed pipeline result.
+func TestResolvePipelineResultsArrayStarFromMatrix(t *testing.T) {
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Results: []tektontypes.PipelineResultSpec{{
+			Name: "tags",
+			Value: tektontypes.ParamValue{
+				Type:     tektontypes.ParamTypeArray,
+				ArrayVal: []string{"$(tasks.build.results.tag[*])"},
+			},
+		}},
+	}}
+	results := map[string]map[string]string{
+		"build": {"tag": `["linux-1.21","linux-1.22","darwin-1.21","darwin-1.22"]`},
+	}
+	got, errs := resolvePipelineResults(pl, results)
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errs: %v", errs)
+	}
+	arr, ok := got["tags"].([]string)
+	if !ok {
+		t.Fatalf("Results[tags] type = %T, want []string", got["tags"])
+	}
+	want := []string{"linux-1.21", "linux-1.22", "darwin-1.21", "darwin-1.22"}
+	if !reflect.DeepEqual(arr, want) {
+		t.Errorf("Results[tags] = %v, want %v", arr, want)
+	}
+}
+
+// TestResolvePipelineResultsArrayStarMissingTaskDrops covers the
+// drop path for an array element with a [*] ref pointing at a task
+// that didn't produce.
+func TestResolvePipelineResultsArrayStarMissingTaskDrops(t *testing.T) {
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Results: []tektontypes.PipelineResultSpec{{
+			Name: "tags",
+			Value: tektontypes.ParamValue{
+				Type:     tektontypes.ParamTypeArray,
+				ArrayVal: []string{"$(tasks.absent.results.tag[*])"},
+			},
+		}},
+	}}
+	got, errs := resolvePipelineResults(pl, map[string]map[string]string{})
+	if _, present := got["tags"]; present {
+		t.Errorf("tags should be dropped, got %+v", got)
+	}
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "tags") {
+		t.Errorf("errs = %v, want one mentioning 'tags'", errs)
+	}
+}

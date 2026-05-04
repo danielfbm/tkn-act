@@ -104,6 +104,16 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 	if err != nil {
 		return RunResult{}, err
 	}
+
+	// Fan out PipelineTask.matrix into expansion children before
+	// building the DAG. The DAG layer is matrix-unaware after this
+	// pass — every expansion looks like an ordinary PipelineTask.
+	pl, err = expandMatrix(pl, params)
+	if err != nil {
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Message: err.Error(), DisplayName: pl.Spec.DisplayName})
+		return RunResult{Status: "failed"}, err
+	}
+
 	results := map[string]map[string]string{} // task → result name → value
 	outcomes := map[string]TaskOutcome{}      // task → outcome
 
@@ -180,7 +190,7 @@ levelLoop:
 					continue
 				}
 				outcomes[taskName] = TaskOutcome{Status: "not-run"}
-				e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: taskName, Message: "tasks timeout fired", DisplayName: main[taskName].DisplayName})
+				e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: taskName, Message: "tasks timeout fired", DisplayName: main[taskName].DisplayName, Matrix: matrixEventFor(main[taskName])})
 			}
 			continue
 		}
@@ -191,21 +201,13 @@ levelLoop:
 			pt := main[tname]
 
 			mu.Lock()
-			anyAncestorBad := false
-			for _, ancestor := range upstream(g, tname) {
-				if oc, ok := outcomes[ancestor]; ok {
-					if oc.Status == "failed" || oc.Status == "not-run" || oc.Status == "skipped" {
-						anyAncestorBad = true
-						break
-					}
-				}
-			}
+			anyAncestorBad := upstreamBlocksDispatch(g, tname, main, outcomes)
 			mu.Unlock()
 			if anyAncestorBad {
 				mu.Lock()
 				outcomes[tname] = TaskOutcome{Status: "not-run"}
 				mu.Unlock()
-				e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: tname, Message: "upstream failure", DisplayName: pt.DisplayName})
+				e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: tname, Message: "upstream failure", DisplayName: pt.DisplayName, Matrix: matrixEventFor(pt)})
 				continue
 			}
 
@@ -231,18 +233,40 @@ levelLoop:
 					Kind: reporter.EvtTaskStart, Time: time.Now(), Task: tname,
 					DisplayName: pt.DisplayName,
 					Description: taskSpec.Description,
+					Matrix:      matrixEventFor(pt),
 				})
 				oc := e.runOneWithPolicy(gctx, in, pl, pt, params, resultsSnap, runID, pipelineRunName)
+				if pt.MatrixInfo != nil {
+					oc.Matrix = pt.MatrixInfo
+				}
+				// Per-row when: a skipped expansion emits its own
+				// task-skip under the expansion name with Matrix
+				// populated, then we mark it not-run (so siblings can
+				// still proceed) and skip the task-end emission.
+				if oc.Status == "skipped" && pt.MatrixInfo != nil {
+					e.rep.Emit(reporter.Event{
+						Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: tname,
+						Message: oc.Message, DisplayName: pt.DisplayName,
+						Matrix: matrixEventFor(pt),
+					})
+					mu.Lock()
+					outcomes[tname] = TaskOutcome{Status: "not-run", Message: oc.Message, Matrix: pt.MatrixInfo}
+					maybeAggregateMatrix(pt, pl, outcomes, results)
+					mu.Unlock()
+					return nil
+				}
 				e.rep.Emit(reporter.Event{
 					Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: tname,
 					Status: oc.Status, Duration: oc.Duration, Message: oc.Message, Attempt: oc.Attempt,
 					DisplayName: pt.DisplayName,
+					Matrix:      matrixEventFor(pt),
 				})
 				mu.Lock()
 				outcomes[tname] = oc
 				if oc.Results != nil {
 					results[tname] = oc.Results
 				}
+				maybeAggregateMatrix(pt, pl, outcomes, results)
 				switch oc.Status {
 				case "failed", "infrafailed":
 					if overall != "timeout" {
@@ -271,7 +295,7 @@ levelLoop:
 	for _, pt := range pl.Spec.Finally {
 		if finallyCtx.Err() != nil {
 			outcomes[pt.Name] = TaskOutcome{Status: "not-run"}
-			e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: pt.Name, Message: "finally timeout fired", DisplayName: pt.DisplayName})
+			e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: pt.Name, Message: "finally timeout fired", DisplayName: pt.DisplayName, Matrix: matrixEventFor(pt)})
 			continue
 		}
 		finallyTaskSpec, _ := lookupTaskSpec(in.Bundle, pt)
@@ -279,8 +303,12 @@ levelLoop:
 			Kind: reporter.EvtTaskStart, Time: time.Now(), Task: pt.Name,
 			DisplayName: pt.DisplayName,
 			Description: finallyTaskSpec.Description,
+			Matrix:      matrixEventFor(pt),
 		})
 		oc := e.runOneWithPolicy(finallyCtx, in, pl, pt, params, results, runID, pipelineRunName)
+		if pt.MatrixInfo != nil {
+			oc.Matrix = pt.MatrixInfo
+		}
 		// If the finally (or pipeline) budget fired during this task, the
 		// backend returned a cancellation-class outcome ("infrafailed" /
 		// "failed"). Re-classify it as "timeout" so the per-task event and
@@ -291,10 +319,22 @@ levelLoop:
 				oc.Message = "finally timeout exceeded"
 			}
 		}
+		// Per-row when: skipped finally expansion emits its own task-skip.
+		if oc.Status == "skipped" && pt.MatrixInfo != nil {
+			e.rep.Emit(reporter.Event{
+				Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: pt.Name,
+				Message: oc.Message, DisplayName: pt.DisplayName,
+				Matrix: matrixEventFor(pt),
+			})
+			outcomes[pt.Name] = TaskOutcome{Status: "not-run", Message: oc.Message, Matrix: pt.MatrixInfo}
+			maybeAggregateMatrix(pt, pl, outcomes, results)
+			continue
+		}
 		e.rep.Emit(reporter.Event{
 			Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: pt.Name,
 			Status: oc.Status, Duration: oc.Duration, Message: oc.Message, Attempt: oc.Attempt,
 			DisplayName: pt.DisplayName,
+			Matrix:      matrixEventFor(pt),
 		})
 		outcomes[pt.Name] = oc
 		// Finally-task results must enter the same `results` map the
@@ -306,6 +346,7 @@ levelLoop:
 		if oc.Results != nil {
 			results[pt.Name] = oc.Results
 		}
+		maybeAggregateMatrix(pt, pl, outcomes, results)
 		switch oc.Status {
 		case "failed", "infrafailed":
 			if overall != "timeout" {
@@ -342,9 +383,25 @@ levelLoop:
 }
 
 func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pipeline, pt tektontypes.PipelineTask, params map[string]tektontypes.ParamValue, results map[string]map[string]string, runID, pipelineRunName string) TaskOutcome {
-	// Build resolver context.
+	// Build resolver context. For matrix-fanned expansions we layer
+	// the row's matrix-contributed params on top of the pipeline-level
+	// params so $(params.<matrix-name>) inside `when:` resolves to the
+	// row's value (Tekton's per-row when semantics).
+	rctxParams := flattenStringParams(params)
+	if pt.MatrixInfo != nil {
+		// pt.MatrixInfo.Params already holds the row's string-keyed
+		// string values. Layer them onto the pipeline-level view.
+		merged := make(map[string]string, len(rctxParams)+len(pt.MatrixInfo.Params))
+		for k, v := range rctxParams {
+			merged[k] = v
+		}
+		for k, v := range pt.MatrixInfo.Params {
+			merged[k] = v
+		}
+		rctxParams = merged
+	}
 	rctx := resolver.Context{
-		Params:       flattenStringParams(params),
+		Params:       rctxParams,
 		ArrayParams:  arrayParams(params),
 		ObjectParams: objectParams(params),
 		Results:      results,
@@ -361,7 +418,13 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		return TaskOutcome{Status: "failed", Message: err.Error()}
 	}
 	if !pass {
-		e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: pt.Name, Message: reason, DisplayName: pt.DisplayName})
+		// For matrix-fanned tasks, the *expansion-name* skip is
+		// emitted by the caller (RunPipeline's eg.Go closure) so
+		// that Matrix is populated; suppress the inner skip event
+		// here to avoid duplicates.
+		if pt.MatrixInfo == nil {
+			e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: pt.Name, Message: reason, DisplayName: pt.DisplayName})
+		}
 		return TaskOutcome{Status: "skipped", Message: reason}
 	}
 
@@ -501,6 +564,71 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		msg = res.Err.Error()
 	}
 	return TaskOutcome{Status: status, Message: msg, Results: res.Results, Duration: dur}
+}
+
+// upstreamBlocksDispatch decides whether `target` should be skipped
+// due to upstream failure. For ordinary tasks the rule is the same as
+// before: any non-success ancestor blocks. For matrix-fanned ancestors
+// we treat the *parent* as a single logical node — if AT LEAST ONE
+// expansion of the parent succeeded, downstream may proceed (matches
+// upstream Tekton's per-row when semantics; see spec § 6.3).
+//
+// If every expansion of a parent is non-success, that parent is
+// considered "bad" and downstream is skipped. Mixed-success matrix
+// parents do NOT block downstream.
+func upstreamBlocksDispatch(g *dag.Graph, target string, main map[string]tektontypes.PipelineTask, outcomes map[string]TaskOutcome) bool {
+	// Group ancestors by matrix-parent name. Non-matrix ancestors are
+	// keyed by their own name; matrix expansions group under their
+	// parent. A group is "bad" iff every member is non-success.
+	type group struct {
+		members []string
+		anyOK   bool
+	}
+	groups := map[string]*group{}
+	keyFor := func(name string) string {
+		pt, ok := main[name]
+		if !ok {
+			return name
+		}
+		if pt.MatrixInfo != nil {
+			return "matrix:" + pt.MatrixInfo.Parent
+		}
+		return name
+	}
+	for _, ancestor := range upstream(g, target) {
+		k := keyFor(ancestor)
+		grp, ok := groups[k]
+		if !ok {
+			grp = &group{}
+			groups[k] = grp
+		}
+		grp.members = append(grp.members, ancestor)
+		oc, present := outcomes[ancestor]
+		if present && oc.Status == "succeeded" {
+			grp.anyOK = true
+		}
+	}
+	for _, grp := range groups {
+		// At least one outcome must be present (not-yet-run ancestors
+		// shouldn't block dispatch — engine relies on level ordering).
+		anyTerminal := false
+		allBad := true
+		for _, m := range grp.members {
+			oc, ok := outcomes[m]
+			if !ok {
+				allBad = false
+				continue
+			}
+			anyTerminal = true
+			if oc.Status == "succeeded" {
+				allBad = false
+			}
+		}
+		if anyTerminal && allBad {
+			return true
+		}
+	}
+	return false
 }
 
 // upstream returns nodes that have a path to target.

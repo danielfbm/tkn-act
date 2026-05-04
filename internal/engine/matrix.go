@@ -331,6 +331,33 @@ func siblingsAllTerminal(mi *tektontypes.MatrixInfo, pts []tektontypes.PipelineT
 	return true
 }
 
+// maybeAggregateMatrix is called from the engine's per-task terminal
+// block (caller holds outcomes/results mutex). When pt is the LAST
+// expansion of a matrix-fanned parent to reach a terminal state,
+// aggregateMatrixResults folds the per-expansion string results into
+// the parent name. Concurrent expansions are serialised by the engine's
+// outcomes/results mutex; the aggregation is therefore single-fire per
+// parent.
+func maybeAggregateMatrix(pt tektontypes.PipelineTask, pl tektontypes.Pipeline, outcomes map[string]TaskOutcome, results map[string]map[string]string) {
+	if pt.MatrixInfo == nil {
+		return
+	}
+	// Use the union of main + finally; a matrix-fanned parent lives
+	// in exactly one of these lists, so the union is safe.
+	all := append([]tektontypes.PipelineTask{}, pl.Spec.Tasks...)
+	all = append(all, pl.Spec.Finally...)
+	if !siblingsAllTerminal(pt.MatrixInfo, all, outcomes) {
+		return
+	}
+	// Already aggregated? aggregate is a no-op on subsequent calls
+	// only if the parent map already contains every name; skip the
+	// re-marshal cost when results[parent] is already populated.
+	if _, ok := results[pt.MatrixInfo.Parent]; ok {
+		return
+	}
+	aggregateMatrixResults(pt.MatrixInfo.Parent, expansionNamesOf(pt.MatrixInfo, all), results)
+}
+
 // MaterializeMatrixRows is the exported helper the cluster backend's
 // param-hash matcher uses to compute the same row order the engine
 // uses internally. Returns the per-row params as an

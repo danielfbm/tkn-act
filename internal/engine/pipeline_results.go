@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/danielfbm/tkn-act/internal/resolver"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
@@ -49,6 +50,22 @@ func resolvePipelineResults(pl tektontypes.Pipeline, results map[string]map[stri
 			items := make([]string, 0, len(spec.Value.ArrayVal))
 			dropped := false
 			for _, item := range spec.Value.ArrayVal {
+				// Sole $(...[*]) reference for the entire element →
+				// splice via the array-aware path so the result lands
+				// as []string (matrix-fanned task results, array
+				// params). Mixed text + [*] would be an upstream
+				// error; fall through to scalar substitute and let
+				// it surface.
+				if isSoleArrayStarRef(item) {
+					arr, err := resolver.SubstituteArgs([]string{item}, ctx)
+					if err != nil {
+						errs = append(errs, fmt.Errorf("pipeline result %q dropped: %w", spec.Name, err))
+						dropped = true
+						break
+					}
+					items = append(items, arr...)
+					continue
+				}
 				s, err := resolver.Substitute(item, ctx)
 				if err != nil {
 					errs = append(errs, fmt.Errorf("pipeline result %q dropped: %w", spec.Name, err))
@@ -89,6 +106,22 @@ func resolvePipelineResults(pl tektontypes.Pipeline, results map[string]map[stri
 		}
 	}
 	return out, errs
+}
+
+// isSoleArrayStarRef reports whether s is exactly a single `$(...[*])`
+// reference — no surrounding text. The resolver's array-splice path
+// only runs in this case; mixed `$(x[*])-suffix` falls through to
+// scalar substitution.
+func isSoleArrayStarRef(s string) bool {
+	if !strings.HasPrefix(s, "$(") || !strings.HasSuffix(s, "[*])") {
+		return false
+	}
+	// Reject `$(a)$(b[*])` and similar by ensuring there's only one
+	// closing paren (the one at the end).
+	if strings.Count(s, ")") != 1 {
+		return false
+	}
+	return true
 }
 
 // droppedClusterResultNames returns the names declared in

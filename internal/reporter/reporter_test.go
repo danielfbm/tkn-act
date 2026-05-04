@@ -712,3 +712,50 @@ func TestJSONResolverEventEmptyTaskForTopLevelPipelineRef(t *testing.T) {
 		t.Errorf("missing resolver field: %s", out)
 	}
 }
+
+// TestEventMatrixRoundTrip pins the JSON shape of Event.Matrix and
+// verifies that non-matrix events (Matrix == nil) marshal to a JSON
+// object that does NOT contain a "matrix" key. This is the
+// byte-identical-non-matrix invariant promised by the spec § 6.4.
+func TestEventMatrixRoundTrip(t *testing.T) {
+	ev := reporter.Event{
+		Kind: reporter.EvtTaskStart,
+		Task: "build-1",
+		Matrix: &reporter.MatrixEvent{
+			Parent: "build",
+			Index:  1,
+			Of:     4,
+			Params: map[string]string{"os": "darwin", "goversion": "1.21"},
+		},
+	}
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v map[string]any
+	if err := json.Unmarshal(b, &v); err != nil {
+		t.Fatal(err)
+	}
+	m, ok := v["matrix"].(map[string]any)
+	if !ok {
+		t.Fatalf("matrix key missing or wrong type: %v", v)
+	}
+	if m["parent"] != "build" || m["index"].(float64) != 1 || m["of"].(float64) != 4 {
+		t.Errorf("matrix payload = %+v", m)
+	}
+	ps, ok := m["params"].(map[string]any)
+	if !ok || ps["os"] != "darwin" || ps["goversion"] != "1.21" {
+		t.Errorf("matrix.params = %+v", m["params"])
+	}
+}
+
+func TestEventMatrixOmitemptyOnNonMatrixEvents(t *testing.T) {
+	ev := reporter.Event{Kind: reporter.EvtTaskEnd, Task: "ordinary", Status: "succeeded"}
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"matrix"`) {
+		t.Errorf("non-matrix event should not include a matrix key, got %s", b)
+	}
+}

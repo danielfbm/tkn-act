@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/danielfbm/tkn-act/internal/backend"
@@ -13,17 +14,30 @@ import (
 // so tests can assert that StepTemplate inheritance happened *before*
 // the backend got the spec.
 type captureBackend struct {
-	steps map[string][]backend.TaskInvocation
+	mu                 sync.Mutex
+	steps              map[string][]backend.TaskInvocation
+	invocationsInOrder []backend.TaskInvocation
+	// results scripts per-task results to populate downstream task
+	// resolver context. Tests set this before RunPipeline; key is
+	// TaskName (or matrix-expansion name like "build-0").
+	results map[string]map[string]string
 }
 
 func (c *captureBackend) Prepare(_ context.Context, _ backend.RunSpec) error { return nil }
 func (c *captureBackend) Cleanup(_ context.Context) error                    { return nil }
 func (c *captureBackend) RunTask(_ context.Context, inv backend.TaskInvocation) (backend.TaskResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.steps == nil {
 		c.steps = map[string][]backend.TaskInvocation{}
 	}
 	c.steps[inv.TaskName] = append(c.steps[inv.TaskName], inv)
-	return backend.TaskResult{Status: backend.TaskSucceeded}, nil
+	c.invocationsInOrder = append(c.invocationsInOrder, inv)
+	res := backend.TaskResult{Status: backend.TaskSucceeded}
+	if r, ok := c.results[inv.TaskName]; ok {
+		res.Results = r
+	}
+	return res, nil
 }
 
 func TestStepTemplateAppliedBeforeBackend(t *testing.T) {
