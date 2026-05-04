@@ -1,0 +1,14 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: greet
+spec:
+  description: |
+    Pre-loaded Task referenced via taskRef.resolver: cluster from a
+    ResolutionRequest the remote-resolver e2e fixture submits. tkn-act
+    receives the rendered Task bytes back via status.data, validates
+    them, and runs them on the same ephemeral k3d.
+  steps:
+    - name: hi
+      image: alpine:3
+      script: echo hello-from-resolver-remote

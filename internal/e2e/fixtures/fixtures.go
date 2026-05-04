@@ -307,6 +307,16 @@ func All() []Fixture {
 			// into the Pipeline's $(params.bundle-ref).
 		},
 		{
+			Dir: "resolver-remote", Pipeline: "resolver-remote", WantStatus: "succeeded",
+			// Mode B (Track 1 #9 Phase 5): the remote resolver submits a
+			// ResolutionRequest CRD to a Tekton cluster instead of
+			// fetching directly. The cluster harness re-uses the same
+			// k3d as the --remote-resolver-context target; the docker
+			// harness has no cluster to delegate to.
+			ClusterOnly: true,
+			Description: "Mode B remote resolver via ResolutionRequest CRD; requires a Tekton cluster",
+		},
+		{
 			Dir: "matrix-include", Pipeline: "matrix-include", WantStatus: "succeeded",
 			// 1 cross-product row (os=linux, arch=amd64 from Task default)
 			// + 2 include rows (arch=arm64 named arm-extra; arch=armv7

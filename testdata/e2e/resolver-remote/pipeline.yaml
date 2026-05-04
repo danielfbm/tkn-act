@@ -1,0 +1,31 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: resolver-remote
+spec:
+  description: |
+    End-to-end fixture for Mode B (remote resolver via ResolutionRequest)
+    — Track 1 #9 Phase 5. The Pipeline declares a single task whose
+    Tekton spec is fetched at dispatch time by submitting a
+    `resolution.tekton.dev/v1beta1.ResolutionRequest` CRD to the cluster
+    named by `--remote-resolver-context`. In CI we point that context
+    at the same ephemeral k3d the rest of the cluster harness uses,
+    pre-load a Task via `kubectl apply -f`, and let Tekton's built-in
+    `cluster` resolver controller satisfy the request.
+
+    The resolver name (`cluster`) is *not* in the direct-mode allow-list
+    by default — Mode B short-circuits the allow-list (any resolver name
+    the remote cluster's controller knows is dispatchable). This pins
+    the validator's RemoteResolverEnabled behavior end-to-end.
+  params:
+    - name: targetNamespace
+      type: string
+      description: namespace the pre-loaded Task lives in (set by the e2e harness)
+  tasks:
+    - name: greet
+      taskRef:
+        resolver: cluster
+        params:
+          - {name: kind, value: task}
+          - {name: name, value: greet}
+          - {name: namespace, value: $(params.targetNamespace)}
