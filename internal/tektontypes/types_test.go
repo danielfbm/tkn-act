@@ -343,6 +343,77 @@ func TestParamValueScalarAndArray(t *testing.T) {
 	}
 }
 
+func TestUnmarshalPipelineTaskWithMatrix(t *testing.T) {
+	in := []byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef: {name: build}
+      matrix:
+        params:
+          - name: os
+            value: [linux, darwin]
+          - name: goversion
+            value: ["1.21", "1.22"]
+        include:
+          - name: arm-extra
+            params:
+              - {name: os, value: linux}
+              - {name: goversion, value: "1.22"}
+              - {name: arch, value: arm64}
+`)
+	var got Pipeline
+	if err := yaml.Unmarshal(in, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Spec.Tasks) != 1 {
+		t.Fatalf("tasks = %d, want 1", len(got.Spec.Tasks))
+	}
+	m := got.Spec.Tasks[0].Matrix
+	if m == nil {
+		t.Fatalf("Matrix is nil")
+	}
+	if len(m.Params) != 2 {
+		t.Fatalf("Params = %d, want 2", len(m.Params))
+	}
+	if m.Params[0].Name != "os" || len(m.Params[0].Value) != 2 || m.Params[0].Value[0] != "linux" {
+		t.Errorf("Params[0] = %+v, want os=[linux,darwin]", m.Params[0])
+	}
+	if m.Params[1].Name != "goversion" || m.Params[1].Value[1] != "1.22" {
+		t.Errorf("Params[1] = %+v", m.Params[1])
+	}
+	if len(m.Include) != 1 || m.Include[0].Name != "arm-extra" {
+		t.Errorf("Include = %+v, want one arm-extra row", m.Include)
+	}
+	if len(m.Include[0].Params) != 3 || m.Include[0].Params[2].Name != "arch" {
+		t.Errorf("Include[0].Params = %+v", m.Include[0].Params)
+	}
+	if m.Include[0].Params[2].Value.StringVal != "arm64" {
+		t.Errorf("Include[0].Params[2].Value = %+v", m.Include[0].Params[2].Value)
+	}
+}
+
+func TestUnmarshalPipelineTaskWithoutMatrix(t *testing.T) {
+	in := []byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - {name: build, taskRef: {name: build}}
+`)
+	var got Pipeline
+	if err := yaml.Unmarshal(in, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.Tasks[0].Matrix != nil {
+		t.Errorf("Matrix = %+v, want nil", got.Spec.Tasks[0].Matrix)
+	}
+}
+
 // TestUnmarshalTaskRefWithResolver pins the YAML round-trip for a
 // resolver-backed taskRef. The Phase 1 spec adds Resolver+ResolverParams
 // as optional fields on TaskRef; agents should be able to load a
