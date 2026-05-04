@@ -40,6 +40,21 @@ func resolvePipelineResults(pl tektontypes.Pipeline, results map[string]map[stri
 	for _, spec := range pl.Spec.Results {
 		switch spec.Value.Type {
 		case tektontypes.ParamTypeString, "":
+			// A sole $(tasks.X.results.Y[*]) reference at the value
+			// position promotes to []string (Tekton's array-indexing
+			// shorthand for matrix-fanned results). Keeps the
+			// pipeline-result type stable as []string regardless of
+			// whether the author wrote `value: $(...[*])` (string) or
+			// `value: ["$(...[*])"]` (array literal containing the ref).
+			if isSoleArrayStarRef(spec.Value.StringVal) {
+				arr, err := resolver.SubstituteArgs([]string{spec.Value.StringVal}, ctx)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("pipeline result %q dropped: %w", spec.Name, err))
+					continue
+				}
+				out[spec.Name] = arr
+				continue
+			}
 			s, err := resolver.Substitute(spec.Value.StringVal, ctx)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("pipeline result %q dropped: %w", spec.Name, err))

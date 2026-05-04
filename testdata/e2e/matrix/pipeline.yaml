@@ -20,10 +20,13 @@ metadata:
   name: matrix
 spec:
   results:
+    # Per Tekton v1, an array result from a matrix-fanned task is
+    # written as the unwrapped $(tasks.X.results.Y[*]) reference (not
+    # an array literal containing it) — both backends resolve this
+    # to the array of per-expansion strings.
     - name: tags
       type: array
-      value:
-        - "$(tasks.build.results.tag[*])"
+      value: $(tasks.build.results.tag[*])
   tasks:
     - name: build
       taskRef: { name: emit }

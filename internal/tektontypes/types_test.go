@@ -559,3 +559,93 @@ spec:
 		t.Errorf("params = %+v", got.Spec.Steps[0].Params)
 	}
 }
+
+func TestMaterializeMatrixRowsCrossProduct(t *testing.T) {
+	pt := PipelineTask{
+		Name: "build",
+		Matrix: &Matrix{Params: []MatrixParam{
+			{Name: "os", Value: []string{"linux", "darwin"}},
+			{Name: "goversion", Value: []string{"1.21", "1.22"}},
+		}},
+	}
+	rows := MaterializeMatrixRows(pt)
+	if len(rows) != 4 {
+		t.Fatalf("rows = %d, want 4", len(rows))
+	}
+	want := []map[string]string{
+		{"os": "linux", "goversion": "1.21"},
+		{"os": "linux", "goversion": "1.22"},
+		{"os": "darwin", "goversion": "1.21"},
+		{"os": "darwin", "goversion": "1.22"},
+	}
+	for i, w := range want {
+		for k, v := range w {
+			if rows[i].Params[k] != v {
+				t.Errorf("rows[%d].Params[%q] = %q, want %q", i, k, rows[i].Params[k], v)
+			}
+		}
+	}
+}
+
+func TestMaterializeMatrixRowsIncludeRows(t *testing.T) {
+	pt := PipelineTask{
+		Name: "build",
+		Matrix: &Matrix{
+			Params: []MatrixParam{{Name: "os", Value: []string{"linux"}}},
+			Include: []MatrixInclude{
+				{Name: "arm-extra", Params: []Param{
+					{Name: "arch", Value: ParamValue{Type: ParamTypeString, StringVal: "arm64"}},
+				}},
+			},
+		},
+	}
+	rows := MaterializeMatrixRows(pt)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if rows[1].IncludeName != "arm-extra" || rows[1].Params["arch"] != "arm64" {
+		t.Errorf("rows[1] = %+v", rows[1])
+	}
+}
+
+func TestMaterializeMatrixRowsNilOnNonMatrix(t *testing.T) {
+	pt := PipelineTask{Name: "x"}
+	if rows := MaterializeMatrixRows(pt); rows != nil {
+		t.Errorf("expected nil for non-matrix task; got %+v", rows)
+	}
+}
+
+func TestMaterializeMatrixRowsNilOnEmptyValue(t *testing.T) {
+	pt := PipelineTask{
+		Name: "x",
+		Matrix: &Matrix{Params: []MatrixParam{
+			{Name: "os", Value: []string{}},
+		}},
+	}
+	if rows := MaterializeMatrixRows(pt); rows != nil {
+		t.Errorf("expected nil on empty value list; got %+v", rows)
+	}
+}
+
+func TestMaterializeMatrixRowsIncludeOnly(t *testing.T) {
+	// No cross-product params, only include rows.
+	pt := PipelineTask{
+		Name: "build",
+		Matrix: &Matrix{
+			Include: []MatrixInclude{
+				{Params: []Param{{Name: "k", Value: ParamValue{Type: ParamTypeString, StringVal: "v1"}}}},
+				{Name: "named", Params: []Param{{Name: "k", Value: ParamValue{Type: ParamTypeString, StringVal: "v2"}}}},
+			},
+		},
+	}
+	rows := MaterializeMatrixRows(pt)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if rows[0].Params["k"] != "v1" || rows[0].IncludeName != "" {
+		t.Errorf("rows[0] = %+v", rows[0])
+	}
+	if rows[1].Params["k"] != "v2" || rows[1].IncludeName != "named" {
+		t.Errorf("rows[1] = %+v", rows[1])
+	}
+}

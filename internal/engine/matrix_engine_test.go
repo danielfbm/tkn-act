@@ -207,8 +207,7 @@ spec:
   results:
     - name: tags
       type: array
-      value:
-        - "$(tasks.build.results.tag[*])"
+      value: $(tasks.build.results.tag[*])
   tasks:
     - name: build
       taskRef: {name: emit}

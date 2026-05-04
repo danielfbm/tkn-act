@@ -23,18 +23,13 @@ spec:
   results:
     - name: tags
       type: array
-      value:
-        - "$(tasks.build.results.tag[*])"
+      value: $(tasks.build.results.tag[*])
   tasks:
     - name: build
       taskRef: { name: emit }
-      params:
-        # PipelineTask-level os is inherited by include rows that don't
-        # override it. Include rows here introduce `arch` only — `os` is
-        # the cross-product param, and matrix.include cannot override it
-        # in v1 (validator rejects overlap; see
-        # testdata/limitations/matrix-include-overlap/).
-        - { name: os, value: linux }
+      # No PipelineTask-level params — Tekton rejects a name appearing in
+      # both `params` and `matrix.params` ("expected exactly one"). The
+      # cross-product carries `os`; include rows contribute `arch` only.
       matrix:
         params:
           - name: os

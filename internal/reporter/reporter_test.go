@@ -759,3 +759,22 @@ func TestEventMatrixOmitemptyOnNonMatrixEvents(t *testing.T) {
 		t.Errorf("non-matrix event should not include a matrix key, got %s", b)
 	}
 }
+
+// TestLogSinkReporterAccessor pins that the wrapped Reporter is
+// retrievable for callers like the cluster backend's matrix-fallback
+// EvtError path.
+func TestLogSinkReporterAccessor(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewJSON(&buf)
+	sink := reporter.NewLogSink(r)
+	if got := sink.Reporter(); got != r {
+		t.Errorf("Reporter() returned %v, want underlying reporter", got)
+	}
+}
+
+func TestLogSinkReporterAccessorNil(t *testing.T) {
+	sink := reporter.NewLogSink(nil)
+	if got := sink.Reporter(); got != nil {
+		t.Errorf("Reporter() = %v, want nil for nil-backed LogSink", got)
+	}
+}
