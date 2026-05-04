@@ -1,0 +1,46 @@
+apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata:
+  name: greet
+spec:
+  params:
+    - name: who
+      default: world
+  results:
+    - name: greeting
+  image: alpine:3
+  script: |
+    msg="hello $(params.who)"
+    echo "$msg"
+    printf "%s" "$msg" > $(step.results.greeting.path)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: greeter
+spec:
+  results:
+    - name: greeting
+  steps:
+    - name: greet
+      ref: { name: greet }
+      params:
+        - name: who
+          value: tekton
+    - name: consume
+      image: alpine:3
+      env:
+        - name: MSG
+          value: $(steps.greet.results.greeting)
+      script: |
+        echo "got: $MSG"
+        test "$MSG" = "hello tekton"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: step-actions
+spec:
+  tasks:
+    - name: t
+      taskRef: { name: greeter }

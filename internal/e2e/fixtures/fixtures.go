@@ -200,6 +200,7 @@ func All() []Fixture {
 			},
 		},
 		{Dir: "step-results", Pipeline: "stepres", WantStatus: "succeeded"},
+		{Dir: "step-actions", Pipeline: "step-actions", WantStatus: "succeeded"},
 		{
 			Dir: "display-name-description", Pipeline: "display-name-description", WantStatus: "succeeded",
 			// WantEventFields asserts that specific event kinds carry the
