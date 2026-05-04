@@ -554,6 +554,62 @@ func TestBuildPipelineRunPromotesTaskTimeout(t *testing.T) {
 	}
 }
 
+// TestBuildPipelineRunInlinesSidecars: when a referenced Task has
+// sidecars, the cluster backend must inline them under
+// pipelineSpec.tasks[].taskSpec.sidecars[] intact. Tekton's
+// EmbeddedTask schema accepts sidecars natively, so taskSpecToMap
+// (a json.Marshal round-trip) carries them through automatically.
+// This is a regression lock against a future hand-rolled converter
+// silently dropping the field.
+func TestBuildPipelineRunInlinesSidecars(t *testing.T) {
+	be, _, _, _, _ := fakeBackend(t)
+
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{Name: "a", TaskRef: &tektontypes.TaskRef{Name: "t"}}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{
+		Sidecars: []tektontypes.Sidecar{
+			{Name: "redis", Image: "redis:7-alpine"},
+		},
+		Steps: []tektontypes.Step{{Name: "s", Image: "alpine:3", Script: "true"}},
+	}}
+	tk.Metadata.Name = "t"
+
+	prObj, err := be.BuildPipelineRunObject(backend.PipelineRunInvocation{
+		RunID: "12345678", PipelineRunName: "p-12345678",
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"t": tk},
+	}, "tkn-act-12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	un := prObj.(*unstructured.Unstructured)
+
+	tasks, _, _ := unstructured.NestedSlice(un.Object, "spec", "pipelineSpec", "tasks")
+	if len(tasks) != 1 {
+		t.Fatalf("tasks slice = %d, want 1", len(tasks))
+	}
+	taskMap, ok := tasks[0].(map[string]any)
+	if !ok {
+		t.Fatalf("tasks[0] not a map: %T", tasks[0])
+	}
+	taskSpec, ok := taskMap["taskSpec"].(map[string]any)
+	if !ok {
+		t.Fatalf("taskSpec missing under inlined task")
+	}
+	scs, ok := taskSpec["sidecars"].([]any)
+	if !ok {
+		t.Fatalf("sidecars missing on inlined taskSpec; got: %v", taskSpec)
+	}
+	if len(scs) != 1 {
+		t.Fatalf("sidecars len = %d, want 1", len(scs))
+	}
+	scMap, ok := scs[0].(map[string]any)
+	if !ok || scMap["name"] != "redis" || scMap["image"] != "redis:7-alpine" {
+		t.Errorf("sidecars[0] = %v", scMap)
+	}
+}
+
 // TestCollectTaskOutcomesIgnoresUnlabelled: a TaskRun without the
 // tekton.dev/pipelineTask label must be skipped — we don't know which
 // pipeline task it belongs to, so it can't appear in res.Tasks.
