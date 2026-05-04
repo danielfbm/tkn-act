@@ -202,6 +202,25 @@ func taskSpecToMap(ts tektontypes.TaskSpec) map[string]any {
 	if m == nil {
 		m = map[string]any{}
 	}
+	// Tekton v1 Step (as of v0.65) has no `displayName` or `description`
+	// fields — only Pipeline.spec, PipelineTask, and TaskSpec do. The
+	// admission webhook strict-decodes the inlined PipelineRun and
+	// rejects unknown fields, so strip them from the serialised steps
+	// before submission. tkn-act's docker backend consumes Step.
+	// DisplayName / Description locally; cluster mode doesn't need to
+	// round-trip them through the Tekton controller.
+	if steps, ok := m["steps"].([]any); ok {
+		for i, s := range steps {
+			sm, ok := s.(map[string]any)
+			if !ok {
+				continue
+			}
+			delete(sm, "displayName")
+			delete(sm, "description")
+			steps[i] = sm
+		}
+		m["steps"] = steps
+	}
 	return m
 }
 

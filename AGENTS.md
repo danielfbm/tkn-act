@@ -459,10 +459,21 @@ them on the JSON event stream as snake_case keys:
 
 `step-start` and `step-end` event kinds are defined in the API but no
 production code emits them today (v1.5). Step `description` is parsed
-and round-trips through cluster mode but is not surfaced on any event
-(carrying it on every `step-log` line would balloon log output). The
-Step's `displayName` is consumed in two places: the `step-log` JSON
-event (above) and pretty output's log-line prefix.
+locally but is not surfaced on any event (carrying it on every
+`step-log` line would balloon log output). The Step's `displayName` is
+consumed in two places: the `step-log` JSON event (above) and pretty
+output's log-line prefix.
+
+In cluster mode, `Step.displayName` and `Step.description` are
+**stripped** from the inlined PipelineRun before submission to Tekton
+— the upstream Tekton v1 `Step` schema (as of v0.65) has no such
+fields, and the admission webhook rejects unknown fields on strict
+decode. The fields still surface on tkn-act's JSON event stream and
+pretty output the same way they do under docker, since cluster mode
+reads them from the input bundle (not the controller verdict) when
+emitting events. Pipeline-, PipelineTask-, and TaskSpec-level
+`displayName` / `description` round-trip intact (the upstream schema
+supports them at those levels).
 
 Empty fields are omitted from the JSON object. Agents should fall
 back to the corresponding `pipeline` / `task` / `step` (raw name) field

@@ -764,11 +764,17 @@ func TestRunPipelineSurfacesResults(t *testing.T) {
 	}
 }
 
-// TestBuildPipelineRunRoundTripsDisplayName: every displayName /
-// description on the input Pipeline + Task must appear under the
-// inlined spec.pipelineSpec.* on the resulting PipelineRun object.
-// Locks in that a future hand-written conversion can't silently drop
-// these fields.
+// TestBuildPipelineRunRoundTripsDisplayName: displayName / description
+// at Pipeline-, PipelineTask-, and TaskSpec-level must round-trip
+// through the inlined spec.pipelineSpec.*. Locks in that a future
+// hand-written conversion can't silently drop these fields.
+//
+// Step-level displayName / description are intentionally NOT carried
+// onto the inlined PipelineRun: Tekton v1 Step (as of v0.65) has no
+// such fields, and the admission webhook rejects unknown fields. We
+// consume them locally for the docker backend and on the JSON event
+// stream; the cluster backend strips them in taskSpecToMap before
+// submission. This test asserts the strip happens.
 func TestBuildPipelineRunRoundTripsDisplayName(t *testing.T) {
 	be, _, _, _, _ := fakeBackend(t)
 
@@ -823,13 +829,15 @@ func TestBuildPipelineRunRoundTripsDisplayName(t *testing.T) {
 	if taskSpec["description"] != "Runs go test." {
 		t.Errorf("taskSpec.description = %v", taskSpec["description"])
 	}
+	// Step-level fields MUST be stripped — Tekton v1 Step has no such
+	// fields and the admission webhook rejects unknown fields.
 	steps := taskSpec["steps"].([]any)
 	stepMap := steps[0].(map[string]any)
-	if stepMap["displayName"] != "Compile" {
-		t.Errorf("step.displayName = %v", stepMap["displayName"])
+	if _, ok := stepMap["displayName"]; ok {
+		t.Errorf("step.displayName must be stripped before submission; got: %v", stepMap["displayName"])
 	}
-	if stepMap["description"] != "Compile the binary." {
-		t.Errorf("step.description = %v", stepMap["description"])
+	if _, ok := stepMap["description"]; ok {
+		t.Errorf("step.description must be stripped before submission; got: %v", stepMap["description"])
 	}
 }
 

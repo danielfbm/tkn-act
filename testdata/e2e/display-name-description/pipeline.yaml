@@ -10,7 +10,8 @@ spec:
       displayName: "Compile"
       description: "Compile the test binary."
       image: alpine:3
-      script: 'true'
+      script: |
+        echo "compiling"
 ---
 apiVersion: tekton.dev/v1
 kind: Pipeline
