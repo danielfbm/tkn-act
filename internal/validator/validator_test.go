@@ -469,3 +469,216 @@ spec:
 		t.Errorf("errors did not name both unknown tasks: %v", errs)
 	}
 }
+
+// TestValidateAcceptsResolverBackedTaskRef: a Pipeline whose taskRef
+// uses a resolver name that's in the allow-list (the default direct
+// set) validates cleanly when --offline is unset.
+func TestValidateAcceptsResolverBackedTaskRef(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef:
+        resolver: git
+        params:
+          - {name: url, value: https://github.com/x/y}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := validator.Options{
+		RegisteredResolvers: []string{"git", "hub", "http", "bundles"},
+	}
+	errs := validator.ValidateWithOptions(b, "p", nil, opts)
+	for _, e := range errs {
+		// Resolver-backed tasks pass validation; the task body itself
+		// isn't known yet, so the per-step / per-volume checks don't
+		// run for it. Ensure the validator didn't reject it.
+		if strings.Contains(e.Error(), "build") && strings.Contains(e.Error(), "unknown Task") {
+			t.Errorf("rejected resolver-backed task as unknown Task: %v", e)
+		}
+		if strings.Contains(e.Error(), "git") && strings.Contains(e.Error(), "unknown") {
+			t.Errorf("rejected git resolver: %v", e)
+		}
+	}
+}
+
+// TestValidateRejectsUnknownResolverInDirectMode: a resolver name not
+// in the allow-list is rejected when RemoteResolverEnabled is false.
+func TestValidateRejectsUnknownResolverInDirectMode(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef:
+        resolver: made-up
+        params:
+          - {name: x, value: y}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := validator.Options{
+		RegisteredResolvers: []string{"git", "hub", "http", "bundles"},
+	}
+	errs := validator.ValidateWithOptions(b, "p", nil, opts)
+	if len(errs) == 0 {
+		t.Fatal("expected error for unknown resolver in direct mode")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "made-up") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected made-up in error, got %v", errs)
+	}
+}
+
+// TestValidateAcceptsAnyResolverNameInRemoteMode: when
+// RemoteResolverEnabled is true, an arbitrary resolver name is allowed
+// — the remote cluster's controller knows what to do with it.
+func TestValidateAcceptsAnyResolverNameInRemoteMode(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef:
+        resolver: my-private-resolver
+        params:
+          - {name: x, value: y}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := validator.Options{
+		RegisteredResolvers:   []string{"git", "hub", "http", "bundles"},
+		RemoteResolverEnabled: true,
+	}
+	errs := validator.ValidateWithOptions(b, "p", nil, opts)
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "my-private-resolver") {
+			t.Errorf("rejected custom name in remote mode: %v", e)
+		}
+	}
+}
+
+// TestValidateRejectsResolverBackedTaskRefOffline: with Offline=true
+// and an empty cache, every resolver-backed ref must fail validation
+// before any task runs.
+func TestValidateRejectsResolverBackedTaskRefOffline(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef:
+        resolver: git
+        params:
+          - {name: url, value: u}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := validator.Options{
+		RegisteredResolvers: []string{"git", "hub", "http", "bundles"},
+		Offline:             true,
+		// No CacheCheck — defaults to "always miss" which is what
+		// --offline expects when no cache is wired.
+	}
+	errs := validator.ValidateWithOptions(b, "p", nil, opts)
+	if len(errs) == 0 {
+		t.Fatal("expected error for offline + cache miss")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "offline") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected --offline mention, got %v", errs)
+	}
+}
+
+// TestValidateOfflineWithCacheHit: same setup, but a CacheCheck
+// callback that returns true short-circuits the offline rejection.
+func TestValidateOfflineWithCacheHit(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef:
+        resolver: git
+        params:
+          - {name: url, value: u}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := validator.Options{
+		RegisteredResolvers: []string{"git", "hub", "http", "bundles"},
+		Offline:             true,
+		CacheCheck: func(_ validator.UnresolvedRef) bool {
+			return true
+		},
+	}
+	errs := validator.ValidateWithOptions(b, "p", nil, opts)
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "offline") {
+			t.Errorf("offline error fired despite cache hit: %v", e)
+		}
+	}
+}
+
+// TestValidateRejectsResolverParamWithUnknownTaskResultRef: a
+// resolver.params containing $(tasks.does-not-exist.results.foo) must
+// fail validation with the missing task name.
+func TestValidateRejectsResolverParamWithUnknownTaskResultRef(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef:
+        resolver: git
+        params:
+          - {name: pathInRepo, value: "$(tasks.does-not-exist.results.foo)"}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := validator.Options{
+		RegisteredResolvers: []string{"git", "hub", "http", "bundles"},
+	}
+	errs := validator.ValidateWithOptions(b, "p", nil, opts)
+	if len(errs) == 0 {
+		t.Fatal("expected error for unknown task in resolver.params")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "does-not-exist") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected does-not-exist in error, got %v", errs)
+	}
+}

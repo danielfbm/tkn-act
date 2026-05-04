@@ -13,10 +13,129 @@ import (
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 )
 
+// Options carries optional knobs for resolver-aware validation. Zero
+// value is fine; ValidateWithOptions(b, name, params, Options{}) is
+// equivalent to Validate(b, name, params).
+type Options struct {
+	// Offline rejects any resolver-backed ref that isn't already in
+	// the cache. The actual cache-presence check is delegated to
+	// CacheCheck (nil means "always miss").
+	Offline bool
+	// RegisteredResolvers is the allow-list of resolver names that
+	// dispatch in direct mode. Default empty means "no restriction"
+	// — every non-empty resolver name is accepted (useful in tests).
+	// Phase 1's CLI populates this from --resolver-allow.
+	RegisteredResolvers []string
+	// RemoteResolverEnabled short-circuits the direct-mode allow-list
+	// check: when true, an arbitrary resolver name is accepted because
+	// the remote cluster's controller knows it. Phase 5 flips this on
+	// when --remote-resolver-context is set.
+	RemoteResolverEnabled bool
+	// CacheCheck answers "is this resolver request in the cache?"
+	// for the --offline pre-flight. nil means "no cache wired" —
+	// every offline check fails. Phase 6 wires the on-disk cache.
+	CacheCheck func(UnresolvedRef) bool
+}
+
+// UnresolvedRef is the validator's view of a resolver-backed ref
+// (mirrors loader.UnresolvedRef but lives here so the CacheCheck
+// callback shape is stable).
+type UnresolvedRef struct {
+	Pipeline     string
+	PipelineTask string
+	Kind         string
+	Resolver     string
+	Params       map[string]string
+}
+
 // Validate checks the named pipeline against the bundle. providedParams names
 // only — values are checked elsewhere. Returns all errors found, not just the
 // first.
 func Validate(b *loader.Bundle, pipelineName string, providedParams map[string]bool) []error {
+	return ValidateWithOptions(b, pipelineName, providedParams, Options{})
+}
+
+// ValidateWithOptions is Validate plus resolver-aware checks driven by
+// Options. The shared check pipeline runs unchanged; resolver checks
+// run after, on the same pl.Spec.Tasks ∪ pl.Spec.Finally walk.
+func ValidateWithOptions(b *loader.Bundle, pipelineName string, providedParams map[string]bool, opts Options) []error {
+	errs := validateCore(b, pipelineName, providedParams)
+	pl, ok := b.Pipelines[pipelineName]
+	if !ok {
+		return errs
+	}
+	// Resolver-aware checks. Walk both main tasks and finally.
+	allow := map[string]struct{}{}
+	for _, n := range opts.RegisteredResolvers {
+		allow[n] = struct{}{}
+	}
+	knownTasks := map[string]struct{}{}
+	for _, pt := range pl.Spec.Tasks {
+		knownTasks[pt.Name] = struct{}{}
+	}
+	for _, pt := range pl.Spec.Finally {
+		knownTasks[pt.Name] = struct{}{}
+	}
+
+	check := func(pt tektontypes.PipelineTask) {
+		if pt.TaskRef == nil || pt.TaskRef.Resolver == "" {
+			return
+		}
+		// Direct-mode allow-list check (skipped in remote mode).
+		if !opts.RemoteResolverEnabled && len(opts.RegisteredResolvers) > 0 {
+			if _, ok := allow[pt.TaskRef.Resolver]; !ok {
+				errs = append(errs, fmt.Errorf("pipeline task %q: resolver %q is not in the allow-list (use --resolver-allow=%s,%s or --remote-resolver-context)",
+					pt.Name, pt.TaskRef.Resolver, strings.Join(opts.RegisteredResolvers, ","), pt.TaskRef.Resolver))
+			}
+		}
+		// resolver.params upstream-result reference check.
+		params := map[string]string{}
+		for _, p := range pt.TaskRef.ResolverParams {
+			collectStrings(p.Value, func(s string) {
+				for _, ref := range extractTaskRefs(s) {
+					if _, ok := knownTasks[ref]; !ok {
+						errs = append(errs, fmt.Errorf("pipeline task %q: resolver param %q references unknown task %q (must be in spec.tasks or spec.finally)",
+							pt.Name, p.Name, ref))
+					}
+				}
+			})
+			// Best-effort literal capture for the cache-check callback.
+			// The actual lookup happens at dispatch time after $(...)
+			// substitution; here we feed pre-substitution params.
+			if p.Value.Type == tektontypes.ParamTypeString || p.Value.Type == "" {
+				params[p.Name] = p.Value.StringVal
+			}
+		}
+		// --offline cache check.
+		if opts.Offline {
+			ref := UnresolvedRef{
+				Pipeline: pipelineName, PipelineTask: pt.Name,
+				Kind: "Task", Resolver: pt.TaskRef.Resolver,
+				Params: params,
+			}
+			present := false
+			if opts.CacheCheck != nil {
+				present = opts.CacheCheck(ref)
+			}
+			if !present {
+				errs = append(errs, fmt.Errorf("pipeline task %q: resolver %q cache miss while --offline is set", pt.Name, pt.TaskRef.Resolver))
+			}
+		}
+	}
+	for _, pt := range pl.Spec.Tasks {
+		check(pt)
+	}
+	for _, pt := range pl.Spec.Finally {
+		check(pt)
+	}
+	return errs
+}
+
+// validateCore is the original Validate body, refactored to share with
+// ValidateWithOptions. It does NOT examine resolver-backed taskRefs
+// (those are intentionally allowed to skip the "unknown Task" rule;
+// the resolver layer fetches them at dispatch time).
+func validateCore(b *loader.Bundle, pipelineName string, providedParams map[string]bool) []error {
 	var errs []error
 
 	pl, ok := b.Pipelines[pipelineName]
@@ -32,6 +151,13 @@ func Validate(b *loader.Bundle, pipelineName string, providedParams map[string]b
 		switch {
 		case pt.TaskRef != nil && pt.TaskSpec != nil:
 			errs = append(errs, fmt.Errorf("pipeline task %q sets both taskRef and taskSpec", pt.Name))
+		case pt.TaskRef != nil && pt.TaskRef.Resolver != "":
+			// Resolver-backed taskRef: bytes aren't available at
+			// validate time. Resolver-aware checks (allow-list, offline
+			// cache, dangling result-refs in resolver.params) run from
+			// ValidateWithOptions. The per-Task-spec checks (steps
+			// non-empty, params bound, etc.) get applied at dispatch
+			// time via validator.ValidateTaskSpec.
 		case pt.TaskRef != nil:
 			t, ok := b.Tasks[pt.TaskRef.Name]
 			if !ok {
