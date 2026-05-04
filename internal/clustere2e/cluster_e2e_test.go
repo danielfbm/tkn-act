@@ -162,6 +162,16 @@ func runFixtureCluster(t *testing.T, cb *clusterbe.Backend, cmStore, secStore *v
 	if f.WantResults != nil && !fixtures.ResultsEqual(res.Results, f.WantResults) {
 		t.Errorf("results = %v, want %v (%s)", res.Results, f.WantResults, f.Description)
 	}
+	// Drain in-flight log-streaming goroutines: the cluster backend
+	// streams pod logs in goroutines that aren't joined by RunPipeline
+	// (the pod-logs Get -> follow stream completes after the watch
+	// loop returns). Without this, the captured event stream may miss
+	// step-log events for fast-completing fixtures.
+	if f.WantEventFields != nil {
+		if _, want := f.WantEventFields["step-log"]; want {
+			time.Sleep(2 * time.Second)
+		}
+	}
 	assertEventShape(t, f, cap.snapshot())
 }
 
