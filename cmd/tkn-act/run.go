@@ -196,7 +196,10 @@ func runWith(rf runFlags) error {
 			Secrets:    secStore,
 		})
 	} else {
-		dockerBe, err := docker.New(docker.Options{})
+		dockerBe, err := docker.New(docker.Options{
+			SidecarStartGrace: gf.sidecarStartGrace,
+			SidecarStopGrace:  gf.sidecarStopGrace,
+		})
 		if err != nil {
 			return exitcode.Wrap(exitcode.Env, fmt.Errorf("docker backend: %w", err))
 		}

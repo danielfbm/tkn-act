@@ -1,6 +1,10 @@
 package main
 
-import "github.com/spf13/cobra"
+import (
+	"time"
+
+	"github.com/spf13/cobra"
+)
 
 type globalFlags struct {
 	output       string
@@ -26,6 +30,9 @@ type globalFlags struct {
 	offline                   bool
 	remoteResolverContext     string
 	resolverAllowInsecureHTTP bool
+	// Sidecar pacing.
+	sidecarStartGrace time.Duration
+	sidecarStopGrace  time.Duration
 }
 
 var gf globalFlags
@@ -82,6 +89,9 @@ Designed for both humans and AI agents:
 	cmd.PersistentFlags().BoolVar(&gf.offline, "offline", false, "reject any resolver cache miss; useful for hermetic CI")
 	cmd.PersistentFlags().StringVar(&gf.remoteResolverContext, "remote-resolver-context", "", "kubeconfig context for Mode B (delegate resolution to a Tekton cluster); unset = direct mode")
 	cmd.PersistentFlags().BoolVar(&gf.resolverAllowInsecureHTTP, "resolver-allow-insecure-http", false, "allow plain http:// for the http resolver (CI-only escape hatch)")
+	// Sidecar pacing.
+	cmd.PersistentFlags().DurationVar(&gf.sidecarStartGrace, "sidecar-start-grace", 2*time.Second, "how long to wait after starting all sidecars before launching the first step")
+	cmd.PersistentFlags().DurationVar(&gf.sidecarStopGrace, "sidecar-stop-grace", 30*time.Second, "SIGTERM-then-SIGKILL window when stopping sidecars at end of Task (matches upstream Tekton's terminationGracePeriodSeconds)")
 
 	cmd.AddCommand(newRunCmd())
 	cmd.AddCommand(newListCmd())
