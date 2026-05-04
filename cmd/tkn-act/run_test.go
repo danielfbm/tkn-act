@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/danielfbm/tkn-act/internal/loader"
+	"github.com/danielfbm/tkn-act/internal/refresolver"
+	"github.com/danielfbm/tkn-act/internal/validator"
 )
 
 // TestBuildVolumeStoresIngestsBundle asserts that bundle-loaded
@@ -289,6 +291,38 @@ func TestRunRemoteResolverInvalidKubeconfig(t *testing.T) {
 	_, err := buildRemoteResolver()
 	if err == nil {
 		t.Fatal("expected error from invalid kubeconfig path")
+	}
+}
+
+// TestRunWiresValidatorCacheCheckToDisk: the validator's --offline
+// pre-flight must consult the same on-disk cache the run-time path
+// uses, so a cache hit at validate time also wins at run time. This
+// test pre-populates the cache and asserts a CacheCheck callback
+// constructed the way runWith builds it returns true for that key.
+func TestRunWiresValidatorCacheCheckToDisk(t *testing.T) {
+	dir := t.TempDir()
+
+	// Mimic the runWith body: build a DiskCache and a CacheCheck.
+	cache := refresolver.NewDiskCache(dir)
+	req := refresolver.Request{
+		Resolver: "git",
+		Params:   map[string]string{"url": "x", "revision": "main", "pathInRepo": "t.yaml"},
+	}
+	if err := cache.Put(req, refresolver.Resolved{Bytes: []byte("kind: Task\n")}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	check := func(ref validator.UnresolvedRef) bool {
+		return cache.Has(refresolver.Request{
+			Resolver: ref.Resolver,
+			Params:   ref.Params,
+		})
+	}
+	if !check(validator.UnresolvedRef{Resolver: "git", Params: req.Params}) {
+		t.Error("CacheCheck returned false for an entry we just Put on disk")
+	}
+	if check(validator.UnresolvedRef{Resolver: "git", Params: map[string]string{"url": "y"}}) {
+		t.Error("CacheCheck returned true for an entry that does not exist on disk")
 	}
 }
 

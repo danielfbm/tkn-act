@@ -113,5 +113,6 @@ Designed for both humans and AI agents:
 	cmd.AddCommand(newDoctorCmd())
 	cmd.AddCommand(newHelpJSONCmd())
 	cmd.AddCommand(newAgentGuideCmd())
+	cmd.AddCommand(newCacheCmd())
 	return cmd
 }

@@ -397,6 +397,90 @@ spec:
 // errSome is a tiny helper for making backend.TaskResult.Err non-nil.
 func errSome(s string) error { return errors.New(s) }
 
+// TestRunOneDiskCacheHitAcrossRuns: the FIRST run populates the on-disk
+// cache via Registry.SetCache(disk). A SECOND run with a fresh Registry
+// pointed at the same disk root sees Cached=true on resolver-end and
+// the underlying resolver is NOT invoked again. This is the cache-hit
+// fixture's load-bearing assertion: same Pipeline runs twice, the
+// second run shows cached:true. Locks the on-disk cache contract for
+// every backend (engine path is shared between docker and cluster).
+func TestRunOneDiskCacheHitAcrossRuns(t *testing.T) {
+	pipelineYAML := []byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef:
+        resolver: stub
+        params:
+          - {name: name, value: "x"}
+`)
+	mkBundle := func() *loader.Bundle {
+		b, err := loader.LoadBytes(pipelineYAML)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	stub := &countingResolver{
+		name: "stub",
+		bytesFn: func(_ refresolver.Request) ([]byte, error) {
+			return []byte(`apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: x}
+spec:
+  steps:
+    - {name: s, image: alpine, script: 'true'}
+`), nil
+		},
+	}
+	disk := refresolver.NewDiskCache(t.TempDir())
+
+	// --- Run 1: cold cache.
+	{
+		reg := refresolver.NewRegistry()
+		reg.Register(stub)
+		reg.SetCache(disk)
+		fb := &orderedBackend{}
+		out := &strings.Builder{}
+		e := engine.New(fb, reporter.NewJSON(out), engine.Options{MaxParallel: 4, Refresolver: reg})
+		res, err := e.RunPipeline(context.Background(), engine.PipelineInput{Bundle: mkBundle(), Name: "p"})
+		if err != nil || res.Status != "succeeded" {
+			t.Fatalf("run 1: status=%s err=%v", res.Status, err)
+		}
+		if got := atomic.LoadInt64(&stub.count); got != 1 {
+			t.Fatalf("run 1: stub calls = %d, want 1", got)
+		}
+		// First run's resolver-end MUST report cached:false.
+		if strings.Contains(out.String(), `"cached":true`) {
+			t.Errorf("run 1: expected cached:false on a cold cache, stream=%s", out.String())
+		}
+	}
+
+	// --- Run 2: warm cache via the same DiskCache.
+	{
+		reg := refresolver.NewRegistry()
+		reg.Register(stub)
+		reg.SetCache(disk)
+		fb := &orderedBackend{}
+		out := &strings.Builder{}
+		e := engine.New(fb, reporter.NewJSON(out), engine.Options{MaxParallel: 4, Refresolver: reg})
+		res, err := e.RunPipeline(context.Background(), engine.PipelineInput{Bundle: mkBundle(), Name: "p"})
+		if err != nil || res.Status != "succeeded" {
+			t.Fatalf("run 2: status=%s err=%v", res.Status, err)
+		}
+		if got := atomic.LoadInt64(&stub.count); got != 1 {
+			t.Errorf("run 2: stub calls = %d, want 1 (disk cache hit must short-circuit)", got)
+		}
+		// Second run's resolver-end MUST report cached:true.
+		if !strings.Contains(out.String(), `"cached":true`) {
+			t.Errorf("run 2: expected cached:true on resolver-end; stream=%s", out.String())
+		}
+	}
+}
+
 // Compile-time check that orderedBackend conforms to the unsync
 // concurrent-use pattern other engine tests rely on.
 var _ sync.Locker = (*sync.Mutex)(nil)
