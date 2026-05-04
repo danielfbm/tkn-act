@@ -683,8 +683,9 @@ release.
 ## Resolvers (Track 1 #9, in progress)
 
 `taskRef.resolver` and `pipelineRef.resolver` (the Tekton catalog-consumption
-pattern) are **partly supported** in v1.6.x. Phase 1 (scaffolding) and
-Phase 2 (the direct `git` resolver) have shipped:
+pattern) are **partly supported** in v1.6.x. Phase 1 (scaffolding),
+Phase 2 (direct `git`), Phase 3 (`hub` + `http`), and Phase 4
+(`bundles` + off-by-default `cluster`) have shipped:
 
 - New types `TaskRef.Resolver` / `TaskRef.ResolverParams` and the
   `PipelineRef` counterparts. Existing inline-only YAML is unaffected
@@ -725,10 +726,17 @@ Phase 2 (the direct `git` resolver) have shipped:
   `cached: true`. SSH delegation honors `ssh-agent`; tkn-act never
   reads SSH keys directly.
 - **CLI flags**: `--resolver-cache-dir`,
-  `--resolver-allow=git,hub,http,bundles` (default — git, hub, and
-  http dispatch; bundles still errors until Phase 4 lands),
+  `--resolver-allow=git,hub,http,bundles` (default — `cluster` is
+  intentionally absent and must be opted in explicitly),
   `--resolver-config`, `--offline`, `--remote-resolver-context`,
-  `--resolver-allow-insecure-http`.
+  `--resolver-allow-insecure-http` (now also opens HTTP for the
+  bundles resolver against non-loopback registries),
+  **`--cluster-resolver-context=<ctx>`** (Phase 4) opts the
+  off-by-default `cluster` resolver in by naming the kubeconfig
+  context to read from, and **`--cluster-resolver-kubeconfig=<path>`**
+  overrides the kubeconfig path. Setting either flag implicitly flips
+  the registry's `AllowCluster=true` so the cluster resolver registers
+  in the default registry.
 - **Validator** rejects unknown resolver names in direct mode (unless
   `--remote-resolver-context` is set, which short-circuits the
   allow-list); rejects `resolver.params` that reference a task not in
@@ -743,14 +751,13 @@ Phase 2 (the direct `git` resolver) have shipped:
 | `git` | shipped (Phase 2) | `url` (req), `revision` (default `main`), `pathInRepo` (req) | Shallow clone via `go-git/v5`. Cache layout: `<--resolver-cache-dir>/git/<sha256(url+revision)>/repo/`. SSH delegation honors `ssh-agent`. |
 | `hub` | shipped (Phase 3) | `name` (req), `version` (default `latest`), `kind` (default `task`), `catalog` (default `tekton`) | HTTPS GET to `<BaseURL>/v1/resource/<catalog>/<kind>/<name>/<version>/yaml`. Default BaseURL `https://api.hub.tekton.dev`. HTTPS-only (no opt-out for hub). 5xx retries once. Bearer token via `HubOptions.Token` library API; CLI plumbing for `--resolver-config hub.token` lands in Phase 6. |
 | `http` | shipped (Phase 3) | `url` (req) | Plain HTTPS GET. 5xx retries once. HTTPS-only by default; `--resolver-allow-insecure-http` opts plain http:// non-loopback URLs in (loopback always allowed for unit tests with `httptest.NewServer`). Bearer token via `HTTPOptions.Token` (library) or env `TKNACT_HTTP_RESOLVER_TOKEN` (CLI escape hatch). |
-| `bundles`, `cluster` | gap | — | Not yet registered; calls fail with `refresolver: resolver "bundles" not registered (not yet implemented in this release)`. Tracked in Phase 4. |
+| `bundles` | shipped (Phase 4) | `bundle` (req — OCI ref like `gcr.io/foo/bar:v1`), `name` (req — resource `metadata.name` to extract), `kind` (default `task`) | Pulls a Tekton OCI bundle via `go-containerregistry`. Walks layers in declaration order, matches on the conventional `dev.tekton.image.{name,kind,apiVersion}` annotations, and returns the YAML embedded in the matching layer's tar. HTTPS-only by default; loopback registries always permit HTTP (so unit tests with `pkg/registry` work); `--resolver-allow-insecure-http` extends that to non-loopback registries. Auth honors `~/.docker/config.json` via `authn.DefaultKeychain`. |
+| `cluster` | shipped (Phase 4) — **OFF BY DEFAULT** | `name` (req), `kind` (default `task`, also accepts `pipeline`), `namespace` (default `default`) | Reads from the user's KUBECONFIG via the kube dynamic client. Strips server-side bookkeeping (`status`, `metadata.uid`/`resourceVersion`/`generation`/`creationTimestamp`/`managedFields`) before serializing back to YAML. **Off by default in `NewDefaultRegistry`** — `KUBECONFIG` may point at production. Opt-in either by adding `cluster` to `--resolver-allow` or by setting `--cluster-resolver-context=<ctx>` (which also names the kubeconfig context). Both require explicit user consent before the resolver registers. |
 
-Failure surfaces as `task-end` `status: "failed"` with `message: "resolver: hub: ..."` / `"resolver: http: ..."`, which routes through the standard pipeline-failure exit code (5).
+Failure surfaces as `task-end` `status: "failed"` with `message: "resolver: hub: ..."` / `"resolver: http: ..."` / `"resolver: bundles: ..."` / `"resolver: cluster: ..."`, which routes through the standard pipeline-failure exit code (5).
 
 What's deferred to follow-up phases (each ships independently):
 
-- **`bundles` and `cluster` resolvers** (Phase 4). The `bundles`
-  resolver pulls an OCI artifact via `go-containerregistry`.
 - **Mode B (remote)** — submit a `ResolutionRequest` CRD to a
   user-configured cluster and use the response (Phase 5).
 - **Offline cache + management subcommands** (`tkn-act cache prune`,
