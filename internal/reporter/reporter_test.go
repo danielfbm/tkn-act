@@ -340,6 +340,39 @@ func TestJSONRunEndIncludesResults(t *testing.T) {
 	}
 }
 
+func TestJSONEventCarriesDisplayNameAndDescription(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewJSON(&buf)
+	r.Emit(reporter.Event{
+		Kind:        reporter.EvtRunStart,
+		Pipeline:    "p",
+		DisplayName: "Build & test",
+		Description: "Build then test.",
+	})
+	var got map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["display_name"] != "Build & test" {
+		t.Errorf("display_name = %v", got["display_name"])
+	}
+	if got["description"] != "Build then test." {
+		t.Errorf("description = %v", got["description"])
+	}
+}
+
+func TestJSONEventOmitsEmptyDisplayName(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewJSON(&buf)
+	r.Emit(reporter.Event{Kind: reporter.EvtRunStart, Pipeline: "p"})
+	if bytes.Contains(buf.Bytes(), []byte("display_name")) {
+		t.Errorf("expected display_name to be omitted, got: %s", buf.Bytes())
+	}
+	if bytes.Contains(buf.Bytes(), []byte(`"description"`)) {
+		t.Errorf("expected description to be omitted, got: %s", buf.Bytes())
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
