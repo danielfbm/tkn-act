@@ -26,6 +26,15 @@ import (
 type Options struct {
 	// PullPolicy overrides per-step ImagePullPolicy when non-empty.
 	PullPolicyOverride string
+	// SidecarStartGrace is how long to wait after starting all
+	// sidecars before launching the first step. Substitutes for
+	// upstream Tekton's readinessProbe-driven start gate. Default
+	// 2s; New() applies the default when zero.
+	SidecarStartGrace time.Duration
+	// SidecarStopGrace is the SIGTERM-then-SIGKILL window when
+	// stopping sidecars at end of Task. Default 30s; matches
+	// upstream Tekton's terminationGracePeriodSeconds.
+	SidecarStopGrace time.Duration
 }
 
 type Backend struct {
@@ -41,6 +50,12 @@ func New(opts Options) (*Backend, error) {
 	}
 	if _, err := cli.Ping(context.Background()); err != nil {
 		return nil, fmt.Errorf("docker daemon not reachable: %w", err)
+	}
+	if opts.SidecarStartGrace == 0 {
+		opts.SidecarStartGrace = 2 * time.Second
+	}
+	if opts.SidecarStopGrace == 0 {
+		opts.SidecarStopGrace = 30 * time.Second
 	}
 	return &Backend{cli: cli, opts: opts}, nil
 }
@@ -68,6 +83,49 @@ func (b *Backend) Cleanup(ctx context.Context) error {
 
 func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (backend.TaskResult, error) {
 	res := backend.TaskResult{Started: time.Now(), Status: backend.TaskSucceeded, Results: map[string]string{}}
+
+	// Per-Task sidecar lifecycle. When a Task declares one or more
+	// sidecars, tkn-act starts a tiny pause container that owns the
+	// netns, then starts every sidecar joining that netns, then
+	// runs every Step joining the same netns. Steps reach sidecars
+	// at localhost:<port> exactly as in a Tekton pod. See spec §3.1.
+	var pauseID string
+	var sidecars []runningSidecar
+	if len(inv.Task.Sidecars) > 0 {
+		var err error
+		pauseID, err = b.startPause(ctx, inv)
+		if err != nil {
+			res.Status = backend.TaskInfraFailed
+			res.Err = fmt.Errorf("pause container: %w", err)
+			res.Ended = time.Now()
+			return res, nil
+		}
+		// Defer teardown in reverse order: sidecars first, then
+		// pause. Both run on background contexts so a cancelled
+		// run still drains them.
+		defer b.stopPause(pauseID)
+		// Capture sidecars by reference so the deferred stop sees
+		// the populated slice.
+		defer func() { b.stopSidecars(context.Background(), inv, sidecars) }()
+		sidecars, err = b.startSidecars(ctx, inv, pauseID)
+		if err != nil {
+			// Surface a terminal sidecar-end with infrafailed for
+			// any sidecar we never got past start (the slice
+			// returned by startSidecars only includes ones that
+			// did start; the failed name is in the error). The
+			// last segment of the error contains the sidecar name.
+			res.Status = backend.TaskInfraFailed
+			res.Err = err
+			res.Ended = time.Now()
+			// Best-effort: emit start-fail event for the failed sidecar
+			// (the one not in the returned slice, which is identified
+			// implicitly by the error). We can't easily extract the
+			// name here without more plumbing; the per-sidecar event
+			// stream will surface the running ones via teardown, and
+			// an EvtError message captures the failed one.
+			return res, nil
+		}
+	}
 
 	// stepResults accumulates as each step finishes. Earlier steps are
 	// substituted into later steps' refs ($(steps.<step>.results.<name>)).
@@ -109,7 +167,7 @@ func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (back
 			return res, nil
 		}
 
-		exitCode, err := b.runStep(ctx, inv, step)
+		exitCode, err := b.runStep(ctx, inv, step, pauseID)
 		stepRes.ExitCode = exitCode
 		stepRes.Ended = time.Now()
 		if err != nil {
@@ -146,6 +204,21 @@ func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (back
 		}
 		stepRes.Status = backend.StepSucceeded
 		res.Steps = append(res.Steps, stepRes)
+
+		// Inter-step sidecar liveness check. A sidecar that has
+		// crashed since the last step gets a terminal sidecar-end
+		// event but does NOT fail the Task — matches upstream
+		// "sidecars are best-effort". Only a pause-container exit
+		// (defense-in-depth, should never fire) infrafails.
+		if len(sidecars) > 0 || pauseID != "" {
+			pauseAlive, _ := b.checkSidecarLiveness(ctx, inv, sidecars, pauseID)
+			if !pauseAlive {
+				res.Status = backend.TaskInfraFailed
+				res.Err = fmt.Errorf("netns owner (pause container) exited unexpectedly")
+				res.Ended = time.Now()
+				return res, nil
+			}
+		}
 	}
 
 	// Read Task-level result files (existing behavior).
@@ -221,7 +294,7 @@ func (b *Backend) ensureImage(ctx context.Context, img, policy string) error {
 	return nil
 }
 
-func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step tektontypes.Step) (int, error) {
+func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step tektontypes.Step, pauseID string) (int, error) {
 	cmd := step.Command
 	args := step.Args
 
@@ -305,6 +378,11 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 	}
 
 	hostConf := &container.HostConfig{Mounts: extraMounts, AutoRemove: false}
+	// When a Task has sidecars, every Step joins the per-Task pause
+	// container's netns so localhost:<port> reaches a sidecar.
+	if pauseID != "" {
+		hostConf.NetworkMode = container.NetworkMode("container:" + pauseID)
+	}
 	if step.Resources != nil {
 		if step.Resources.Limits.Memory != "" {
 			if v, err := parseMemory(step.Resources.Limits.Memory); err == nil {

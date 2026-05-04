@@ -145,6 +145,36 @@ func (s *LogSink) SidecarLog(taskName, sidecarName, stream, line string) {
 	})
 }
 
+// EmitSidecarStart fires an EvtSidecarStart for the named sidecar.
+// Backends that need to surface sidecar lifecycle on the JSON event
+// stream (the docker backend; the cluster backend's pod-watch loop)
+// invoke this directly. Reuses Event.Step for the sidecar name and
+// sets Stream = "sidecar".
+func (s *LogSink) EmitSidecarStart(taskName, sidecarName string) {
+	s.r.Emit(Event{
+		Kind:   EvtSidecarStart,
+		Time:   time.Now(),
+		Task:   taskName,
+		Step:   sidecarName,
+		Stream: "sidecar",
+	})
+}
+
+// EmitSidecarEnd fires the terminal EvtSidecarEnd for a sidecar.
+// status mirrors the Task* enum (succeeded / failed / infrafailed).
+func (s *LogSink) EmitSidecarEnd(taskName, sidecarName string, exitCode int, status, message string) {
+	s.r.Emit(Event{
+		Kind:     EvtSidecarEnd,
+		Time:     time.Now(),
+		Task:     taskName,
+		Step:     sidecarName,
+		Stream:   "sidecar",
+		Status:   status,
+		ExitCode: exitCode,
+		Message:  message,
+	})
+}
+
 // Tee writes each event to all underlying reporters.
 type Tee struct{ rs []Reporter }
 
