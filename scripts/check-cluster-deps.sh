@@ -49,7 +49,7 @@ check_tool docker \
   "after install, ensure the daemon is running ('systemctl --user start docker' or open Docker Desktop)"
 
 check_tool kubectl \
-  "kubectl version --client=true -o yaml 2>/dev/null | grep -m1 gitVersion || kubectl version --client=true" \
+  "kubectl version --client=true -o yaml 2>/dev/null | awk '/gitVersion/{print \$2; exit}' || kubectl version --client=true" \
   "https://kubernetes.io/docs/tasks/tools/#kubectl" \
   "curl -fsSL -o kubectl 'https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl' && chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl"
 
