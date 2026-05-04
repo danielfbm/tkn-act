@@ -91,7 +91,7 @@ total locally). Covers:
 | `internal/loader/` | YAML parsing; **limitations fixtures parse cleanly** so dropped fields don't silently break the docs |
 | `internal/reporter/` | JSON one-event-per-line; pretty live-ordering across parallel tasks; quiet/verbose; color on/off; `ParseColorMode`; `ResolveColor` (`NO_COLOR`/`FORCE_COLOR`/`CLICOLOR_FORCE` precedence) |
 | `internal/resolver/` | `$(params.x)`, `$(tasks.X.results.Y)`, `$(context.*)`, `$(results.X.path)`, `$(workspaces.X.path)`, array `[*]` expansion, `$$` escape; **per-step**: `$(step.results.X.path)`, `$(steps.X.results.Y)`; `SubstituteAllowStepRefs` deferral semantics |
-| `internal/refresolver/` | Registry dispatch + allow-list + per-run cache; `CacheKey` post-substitution invariant; inline stub resolver; sentinel errors `ErrResolverNotRegistered` / `ErrResolverNotAllowed` / `ErrInlineNoData` (Track 1 #9 Phase 1 — concrete resolvers land in Phase 2-4) |
+| `internal/refresolver/` | Registry dispatch + allow-list + per-run cache; `CacheKey` post-substitution invariant; inline stub resolver; sentinel errors `ErrResolverNotRegistered` / `ErrResolverNotAllowed` / `ErrInlineNoData` (Track 1 #9 Phase 1); **direct `git` resolver** (Track 1 #9 Phase 2): happy path via local bare repo, missing pathInRepo, nonexistent revision, missing-required-params fast-fail, http-by-default rejection, on-disk cache hit served without re-fetching, network-failure error shape; remaining direct resolvers `hub`/`http`/`bundles`/`cluster` land in Phase 3-4 |
 | `internal/tektontypes/` | `ParamValue` JSON round-trip across string/array/object |
 | `internal/validator/` | task ref / DAG / when-operator checks; **policy: negative retries, malformed timeout, unknown onError**; volume-kind plumbing (rejects unknown kinds, multiple sources, undeclared volumeMounts) |
 | `internal/volumes/` | `Store` inline-vs-dir precedence; emptyDir/hostPath/configMap/secret materialization; items-projection; rejects `..` traversal |
@@ -127,6 +127,7 @@ fixtures under `testdata/e2e/`:
 | `sidecars/`            | `Task.spec.sidecars`: redis sidecar; steps connect on `localhost:6379` (shared netns via per-Task pause container on docker; native pod-shared netns on cluster) |
 | `matrix/`              | `PipelineTask.matrix`: 2×2 cross-product, per-row results aggregated into `$(tasks.build.results.tag[*])` (`Pipeline.spec.results`) |
 | `matrix-include/`      | `matrix.include` named + unnamed rows (no overlap with cross-product); result-array order preserved |
+| `resolver-git/`        | direct `git` resolver (Track 1 #9 Phase 2): per-test bare repo built from `seed/` by `fixtures.BuildBareRepoFromSeed`, `taskRef.resolver: git` substitutes the file:// URL via `$(params.repoURL)`; both backends share the same lazy-resolve path |
 
 Plus `internal/backend/docker/docker_integration_test.go`.
 
