@@ -56,8 +56,12 @@ type WorkspaceMount struct {
 }
 
 // LogSink receives streamed step output. Implementations live in the reporter.
+//
+// stepDisplayName is the Step's displayName (Tekton v1) — the renderer and
+// the JSON event stream prefer this over stepName when non-empty. Empty
+// string is the no-displayName state; consumers must fall back to stepName.
 type LogSink interface {
-	StepLog(taskName, stepName, stream string, line string)
+	StepLog(taskName, stepName, stepDisplayName, stream, line string)
 }
 
 // TaskResult is what RunTask returns.

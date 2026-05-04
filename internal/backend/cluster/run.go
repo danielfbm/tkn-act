@@ -522,25 +522,75 @@ func (b *Backend) streamPodLogs(ctx context.Context, in backend.PipelineRunInvoc
 	if err != nil {
 		return
 	}
+	// Build a step-name -> displayName lookup from the input bundle so
+	// log events can carry the same display_name docker mode does.
+	// Source-of-truth is the input YAML, NOT the controller verdict.
+	stepDisplayByName := stepDisplayNameLookup(in, taskName)
 	for _, c := range p.Spec.Containers {
 		if !strings.HasPrefix(c.Name, "step-") {
 			continue
 		}
 		stepName := strings.TrimPrefix(c.Name, "step-")
+		stepDisplayName := stepDisplayByName[stepName]
 		req := b.client.Kube.CoreV1().Pods(ns).GetLogs(pod, &corev1.PodLogOptions{Container: c.Name, Follow: true})
 		rc, err := req.Stream(ctx)
 		if err != nil {
 			continue
 		}
-		go func(stepName string, rc io.ReadCloser) {
+		go func(stepName, stepDisplayName string, rc io.ReadCloser) {
 			defer rc.Close()
 			s := bufio.NewScanner(rc)
 			s.Buffer(make([]byte, 64*1024), 1024*1024)
 			for s.Scan() {
-				in.LogSink.StepLog(taskName, stepName, "stdout", s.Text())
+				in.LogSink.StepLog(taskName, stepName, stepDisplayName, "stdout", s.Text())
 			}
-		}(stepName, rc)
+		}(stepName, stepDisplayName, rc)
 	}
+}
+
+// stepDisplayNameLookup returns step-name -> displayName for the
+// PipelineTask named taskName, using the input bundle as the
+// source-of-truth (mirrors docker mode). Returns an empty map if the
+// PipelineTask isn't found or its resolved spec has no steps.
+func stepDisplayNameLookup(in backend.PipelineRunInvocation, taskName string) map[string]string {
+	out := map[string]string{}
+	var pt *tektontypes.PipelineTask
+	for i := range in.Pipeline.Spec.Tasks {
+		if in.Pipeline.Spec.Tasks[i].Name == taskName {
+			pt = &in.Pipeline.Spec.Tasks[i]
+			break
+		}
+	}
+	if pt == nil {
+		for i := range in.Pipeline.Spec.Finally {
+			if in.Pipeline.Spec.Finally[i].Name == taskName {
+				pt = &in.Pipeline.Spec.Finally[i]
+				break
+			}
+		}
+	}
+	if pt == nil {
+		return out
+	}
+	var spec tektontypes.TaskSpec
+	switch {
+	case pt.TaskSpec != nil:
+		spec = *pt.TaskSpec
+	case pt.TaskRef != nil:
+		t, ok := in.Tasks[pt.TaskRef.Name]
+		if !ok {
+			return out
+		}
+		spec = t.Spec
+	default:
+		return out
+	}
+	for _, s := range spec.Steps {
+		if s.DisplayName != "" {
+			out[s.Name] = s.DisplayName
+		}
+	}
+	return out
 }
 
 // extractPipelineResults reads `pr.status.results` (Tekton v1) into a

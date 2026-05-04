@@ -89,14 +89,15 @@ type LogSink struct {
 
 func NewLogSink(r Reporter) *LogSink { return &LogSink{r: r} }
 
-func (s *LogSink) StepLog(taskName, stepName, stream, line string) {
+func (s *LogSink) StepLog(taskName, stepName, stepDisplayName, stream, line string) {
 	s.r.Emit(Event{
-		Kind:   EvtStepLog,
-		Time:   time.Now(),
-		Task:   taskName,
-		Step:   stepName,
-		Stream: stream,
-		Line:   line,
+		Kind:        EvtStepLog,
+		Time:        time.Now(),
+		Task:        taskName,
+		Step:        stepName,
+		DisplayName: stepDisplayName,
+		Stream:      stream,
+		Line:        line,
 	})
 }
 

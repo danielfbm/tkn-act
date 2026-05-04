@@ -340,6 +340,62 @@ func TestJSONRunEndIncludesResults(t *testing.T) {
 	}
 }
 
+// captureSink is a tiny in-test recorder used by the LogSink tests.
+type captureSink struct {
+	events []reporter.Event
+}
+
+func (c *captureSink) Emit(e reporter.Event) { c.events = append(c.events, e) }
+func (c *captureSink) Close() error          { return nil }
+
+func TestLogSinkStepLogPropagatesDisplayName(t *testing.T) {
+	cap := &captureSink{}
+	ls := reporter.NewLogSink(cap)
+	ls.StepLog("t1", "s1", "Compile binary", "stdout", "hello\n")
+
+	got := cap.events
+	if len(got) != 1 {
+		t.Fatalf("want 1 event, got %d", len(got))
+	}
+	e := got[0]
+	if e.Kind != reporter.EvtStepLog {
+		t.Errorf("Kind = %q", e.Kind)
+	}
+	if e.Task != "t1" || e.Step != "s1" {
+		t.Errorf("Task/Step = %q/%q", e.Task, e.Step)
+	}
+	if e.DisplayName != "Compile binary" {
+		t.Errorf("DisplayName = %q (want %q)", e.DisplayName, "Compile binary")
+	}
+	if e.Stream != "stdout" || e.Line != "hello\n" {
+		t.Errorf("Stream/Line = %q/%q", e.Stream, e.Line)
+	}
+}
+
+func TestLogSinkStepLogEmptyDisplayNameOmitsField(t *testing.T) {
+	// Coverage: empty displayName must produce an event whose JSON omits
+	// display_name (so agents fall back to e.Step).
+	cap := &captureSink{}
+	ls := reporter.NewLogSink(cap)
+	ls.StepLog("t1", "s1", "", "stdout", "hello\n")
+
+	if len(cap.events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(cap.events))
+	}
+	if cap.events[0].DisplayName != "" {
+		t.Errorf("DisplayName = %q, want empty", cap.events[0].DisplayName)
+	}
+	// Encode and assert omitempty.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	if err := enc.Encode(cap.events[0]); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(buf.Bytes(), []byte("display_name")) {
+		t.Errorf("expected display_name to be omitted; got: %s", buf.Bytes())
+	}
+}
+
 func TestPrettyPrefersDisplayNameOverName(t *testing.T) {
 	var buf bytes.Buffer
 	r := reporter.NewPretty(&buf, reporter.PrettyOptions{Color: false, Verbosity: reporter.Normal})
