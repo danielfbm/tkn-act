@@ -48,6 +48,24 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: bash .github/scripts/tests-required.sh "$BASE" "$HEAD"
 
+  coverage:
+    name: coverage no-drop
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: assert no per-package coverage drop vs target branch
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: bash .github/scripts/coverage-check.sh "$BASE" "$HEAD"
+
   parity-check:
     name: parity-check
     runs-on: ubuntu-latest
