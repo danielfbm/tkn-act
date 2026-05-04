@@ -110,8 +110,7 @@ type Options struct {
 }
 
 // Registry routes Requests to one of its registered Resolvers, applies
-// the allow-list, and (in later phases) layers a per-run + on-disk
-// cache on top.
+// the allow-list, and layers a per-run + on-disk cache on top.
 type Registry struct {
 	mu     sync.Mutex
 	direct map[string]Resolver
@@ -124,6 +123,13 @@ type Registry struct {
 	// PerRunCache is a small in-memory map[cacheKey]Resolved the engine
 	// populates per run. Exposed so tests can inspect cache hits.
 	perRun map[string]Resolved
+	// disk is the on-disk cache layer (Phase 6). Survives across runs.
+	// nil means "no on-disk cache" (per-run cache only).
+	disk *DiskCache
+	// offline rejects every cache miss with an error. Wired by
+	// SetOffline; the engine surfaces the error on the resolver-end
+	// event and as the task-end message.
+	offline bool
 }
 
 // NewRegistry returns an empty Registry. Tests that want a single stub
@@ -141,6 +147,10 @@ func NewRegistry() *Registry {
 func NewDefaultRegistry(opts Options) *Registry {
 	r := NewRegistry()
 	r.opts = opts
+	r.offline = opts.Offline
+	if opts.CacheDir != "" {
+		r.disk = NewDiskCache(opts.CacheDir)
+	}
 	if len(opts.Allow) > 0 {
 		r.allow = map[string]struct{}{}
 		for _, n := range opts.Allow {
@@ -239,6 +249,38 @@ func (r *Registry) Remote() *RemoteResolver {
 	return r.remote
 }
 
+// SetCache installs the on-disk cache layer. Pass nil to disable. The
+// cache is consulted between the per-run map and the registered
+// Resolver: hits short-circuit the network call; misses fall through
+// and Put the result on success.
+func (r *Registry) SetCache(c *DiskCache) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.disk = c
+}
+
+// Cache returns the currently-installed disk cache, or nil.
+func (r *Registry) Cache() *DiskCache {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.disk
+}
+
+// SetOffline toggles the --offline gate. When true, every cache miss
+// surfaces an error before dispatching to a Resolver.
+func (r *Registry) SetOffline(b bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.offline = b
+}
+
+// Offline reports whether the registry is in --offline mode.
+func (r *Registry) Offline() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.offline
+}
+
 // Inline returns the inline resolver registered with this Registry, or
 // nil if none was registered. Used by tests to feed bytes in.
 func (r *Registry) Inline() *InlineResolver {
@@ -273,6 +315,27 @@ func (r *Registry) Resolve(ctx context.Context, req Request) (Resolved, error) {
 		r.mu.Unlock()
 		return c, nil
 	}
+	disk := r.disk
+	offline := r.offline
+	r.mu.Unlock()
+
+	// Disk-cache layer (Phase 6). Hits are recorded on the per-run
+	// map so a subsequent dispatch in the same run also short-circuits.
+	if disk != nil {
+		if hit, ok, err := disk.Get(req); err == nil && ok {
+			r.mu.Lock()
+			r.perRun[key] = hit
+			r.mu.Unlock()
+			return hit, nil
+		}
+	}
+
+	// --offline gate: refuse to dispatch on a cache miss.
+	if offline {
+		return Resolved{}, fmt.Errorf("refresolver: cache miss for resolver %q while --offline is set", req.Resolver)
+	}
+
+	r.mu.Lock()
 	// Mode B: remote takes precedence over direct + allow-list.
 	if r.remote != nil {
 		remote := r.remote
@@ -283,6 +346,10 @@ func (r *Registry) Resolve(ctx context.Context, req Request) (Resolved, error) {
 		}
 		if out.SHA256 == "" {
 			out.SHA256 = sha256Bytes(out.Bytes)
+		}
+		// Persist to disk cache for cross-run reuse.
+		if disk != nil {
+			_ = disk.Put(req, out)
 		}
 		r.mu.Lock()
 		r.perRun[key] = out
@@ -307,6 +374,10 @@ func (r *Registry) Resolve(ctx context.Context, req Request) (Resolved, error) {
 	}
 	if out.SHA256 == "" {
 		out.SHA256 = sha256Bytes(out.Bytes)
+	}
+	// Persist to disk cache for cross-run reuse.
+	if disk != nil {
+		_ = disk.Put(req, out)
 	}
 	r.mu.Lock()
 	r.perRun[key] = out
