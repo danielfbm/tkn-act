@@ -63,8 +63,11 @@ func (s *Store) Add(name, key, value string) {
 // table of subtests and need per-subtest isolation without rebuilding
 // the Backend that holds a pointer to this Store.
 //
-// Resetting is a destructive operation; callers that want to keep the
-// existing entries must build a fresh Store with NewStore instead.
+// Resetting is destructive of in-memory state (Inline + Bundle); the
+// Dir layer is preserved. Callers that want to keep the existing
+// entries must build a fresh Store with NewStore instead.
+//
+// Intended for test use only.
 func (s *Store) Reset() {
 	s.Inline = map[string]map[string]string{}
 	s.Bundle = map[string]map[string][]byte{}
