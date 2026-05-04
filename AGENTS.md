@@ -725,8 +725,8 @@ Phase 2 (the direct `git` resolver) have shipped:
   `cached: true`. SSH delegation honors `ssh-agent`; tkn-act never
   reads SSH keys directly.
 - **CLI flags**: `--resolver-cache-dir`,
-  `--resolver-allow=git,hub,http,bundles` (default — git dispatches;
-  hub/http/bundles still error until their phases land),
+  `--resolver-allow=git,hub,http,bundles` (default — git, hub, and
+  http dispatch; bundles still errors until Phase 4 lands),
   `--resolver-config`, `--offline`, `--remote-resolver-context`,
   `--resolver-allow-insecure-http`.
 - **Validator** rejects unknown resolver names in direct mode (unless
@@ -735,9 +735,20 @@ Phase 2 (the direct `git` resolver) have shipped:
   `spec.tasks ∪ spec.finally`; rejects any cache-miss when `--offline`
   is set.
 
+### Direct resolvers — what's wired
+
+| Resolver | Status | `resolver.params` | Notes |
+|---|---|---|---|
+| `inline` | shipped (test harness) | `name` | Magic test resolver. The test harness preloads `(name → bytes)` pairs and the engine looks them up. |
+| `git` | shipped (Phase 2) | `url` (req), `revision` (default `main`), `pathInRepo` (req) | Shallow clone via `go-git/v5`. Cache layout: `<--resolver-cache-dir>/git/<sha256(url+revision)>/repo/`. SSH delegation honors `ssh-agent`. |
+| `hub` | shipped (Phase 3) | `name` (req), `version` (default `latest`), `kind` (default `task`), `catalog` (default `tekton`) | HTTPS GET to `<BaseURL>/v1/resource/<catalog>/<kind>/<name>/<version>/yaml`. Default BaseURL `https://api.hub.tekton.dev`. HTTPS-only (no opt-out for hub). 5xx retries once. Bearer token via `HubOptions.Token` library API; CLI plumbing for `--resolver-config hub.token` lands in Phase 6. |
+| `http` | shipped (Phase 3) | `url` (req) | Plain HTTPS GET. 5xx retries once. HTTPS-only by default; `--resolver-allow-insecure-http` opts plain http:// non-loopback URLs in (loopback always allowed for unit tests with `httptest.NewServer`). Bearer token via `HTTPOptions.Token` (library) or env `TKNACT_HTTP_RESOLVER_TOKEN` (CLI escape hatch). |
+| `bundles`, `cluster` | gap | — | Not yet registered; calls fail with `refresolver: resolver "bundles" not registered (not yet implemented in this release)`. Tracked in Phase 4. |
+
+Failure surfaces as `task-end` `status: "failed"` with `message: "resolver: hub: ..."` / `"resolver: http: ..."`, which routes through the standard pipeline-failure exit code (5).
+
 What's deferred to follow-up phases (each ships independently):
 
-- **`hub` and `http` resolvers** (Phase 3).
 - **`bundles` and `cluster` resolvers** (Phase 4). The `bundles`
   resolver pulls an OCI artifact via `go-containerregistry`.
 - **Mode B (remote)** — submit a `ResolutionRequest` CRD to a

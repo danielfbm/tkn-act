@@ -133,6 +133,13 @@ func NewDefaultRegistry(opts Options) *Registry {
 	gitR := NewGit(opts.CacheDir)
 	gitR.SetAllowInsecureHTTP(opts.AllowInsecureHTTP)
 	r.Register(gitR)
+
+	// Phase 3 (Track 1 #9): hub + http direct resolvers ship by default
+	// and only dispatch when their name is in opts.Allow (the CLI default
+	// allow-list includes "hub" and "http"). Sibling phases register on
+	// the same hook (Phase 4: bundles + cluster).
+	r.Register(NewHubResolver(HubOptions{}))
+	r.Register(NewHTTPResolver(HTTPOptions{AllowInsecureHTTP: opts.AllowInsecureHTTP}))
 	return r
 }
 

@@ -154,18 +154,45 @@ func runFixtureCluster(t *testing.T, cb *clusterbe.Backend, cmStore, secStore *v
 		pmap["repoURL"] = tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: url}
 	}
 
+	// Resolver fixtures (Phase 3 of Track 1 #9): the cluster backend
+	// inlines resolver-backed taskRefs client-side before submitting
+	// the PipelineRun, so spinning up the same httptest.Server +
+	// Registry combo works on cluster mode the same way it does on
+	// docker. Resolver=="" returns a nil harness and the run is
+	// unaffected.
+	rh, rerr := fixtures.NewResolverHarness(filepath.Join("..", "..", "testdata", "e2e", f.Dir), f.Resolver)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if rh != nil {
+		defer rh.Close()
+		if rh.ExtraParamName != "" {
+			pmap[rh.ExtraParamName] = tektontypes.ParamValue{
+				Type:      tektontypes.ParamTypeString,
+				StringVal: rh.ExtraParamValue,
+			}
+		}
+	}
+
 	jsonRep := reporter.NewJSON(io.Discard)
 	cap := &captureSink{}
 	rep := reporter.NewTee(jsonRep, cap)
 	// Wire the default refresolver registry so resolver-backed
 	// fixtures (Track 1 #9) dispatch on the cluster path the same
 	// way they do under docker. The on-disk cache dir is a per-test
-	// tmpdir so subtests don't share resolved bytes.
-	reg := refresolver.NewDefaultRegistry(refresolver.Options{
-		Allow:    []string{"git", "hub", "http", "bundles"},
-		CacheDir: t.TempDir(),
-	})
-	res, err := engine.New(cb, rep, engine.Options{Refresolver: reg}).RunPipeline(ctx, engine.PipelineInput{
+	// tmpdir so subtests don't share resolved bytes. For Phase-3
+	// (hub/http) fixtures the harness builds its own Registry pointed
+	// at an httptest server, which takes precedence.
+	engOpts := engine.Options{}
+	if rh != nil {
+		engOpts.Refresolver = rh.Registry
+	} else {
+		engOpts.Refresolver = refresolver.NewDefaultRegistry(refresolver.Options{
+			Allow:    []string{"git", "hub", "http", "bundles"},
+			CacheDir: t.TempDir(),
+		})
+	}
+	res, err := engine.New(cb, rep, engOpts).RunPipeline(ctx, engine.PipelineInput{
 		Bundle: b, Name: f.Pipeline, Params: pmap,
 	})
 	if err != nil {

@@ -138,6 +138,20 @@ type Fixture struct {
 	// run-end always have exactly one; task-start / step-log are
 	// asserted on the first emission). Skipped if the map is nil.
 	WantEventFields map[string]map[string]string
+	// Resolver, when non-empty, signals the e2e harness to:
+	//   1. Spin up an httptest.Server before the run, serving files from
+	//      testdata/e2e/<Dir>/served/.
+	//   2. Configure engine.Options.Refresolver with a default registry
+	//      whose `hub` resolver's BaseURL is rewritten to the test
+	//      server (Resolver=="hub") or whose `http` resolver targets it
+	//      via the fixture-server-url Pipeline param (Resolver=="http").
+	//   3. Inject a fixture-server-url Pipeline param so the Pipeline's
+	//      $(params.fixture-server-url) resolves at run time.
+	// Phase 3 of Track 1 #9 wires these for cross-backend e2e coverage
+	// of the hub + http direct resolvers; the cluster harness produces
+	// the same inlined TaskSpec since resolution is client-side.
+	// Empty value: not a resolver fixture (the existing behavior).
+	Resolver string
 }
 
 // TestName returns the subtest name for this fixture: explicit Name when
@@ -266,6 +280,20 @@ func All() []Fixture {
 			// returned file:// URL is injected into Params["repoURL"]. See
 			// internal/e2e/fixtures/resolvergit.go.
 			Description: "direct git resolver via local bare repo (Track 1 #9 Phase 2)",
+		},
+		{
+			Dir: "resolver-http", Pipeline: "resolver-http", WantStatus: "succeeded",
+			Resolver: "http",
+			// The harness spins up httptest.Server serving served/task.yaml
+			// and substitutes its URL into $(params.fixture-server-url).
+		},
+		{
+			Dir: "resolver-hub", Pipeline: "resolver-hub", WantStatus: "succeeded",
+			Resolver: "hub",
+			// The harness spins up httptest.Server impersonating the
+			// Tekton Hub v1 endpoint
+			// /v1/resource/<catalog>/<kind>/<name>/<version>/yaml and
+			// configures the Registry's hub resolver BaseURL to it.
 		},
 		{
 			Dir: "matrix-include", Pipeline: "matrix-include", WantStatus: "succeeded",
