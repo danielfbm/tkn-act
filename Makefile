@@ -58,8 +58,7 @@ doctor: build
 	@echo ""
 	@./$(BINARY) doctor || { \
 	  echo ""; \
-	  echo "tkn-act doctor reports the environment is not ready."; \
-	  echo "If k3d / kubectl are missing, see the install hints above."; \
+	  echo "tkn-act doctor reports the environment is not ready (see lines above for the failing check)."; \
 	  exit 3; \
 	}
 
