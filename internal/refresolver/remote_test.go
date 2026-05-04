@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -563,6 +565,244 @@ func TestRegistryRemoteCachesPerRun(t *testing.T) {
 	}
 	if got := creates.Load(); got != 1 {
 		t.Errorf("create fired %d times for identical Request, want 1 (per-run cache)", got)
+	}
+}
+
+// TestNewRemoteResolverInjectedDynamicShortCircuitsKubeconfig: when
+// opts.Dynamic is non-nil, NewRemoteResolver does NOT touch
+// kubeconfig loading — the supplied client is used as-is.
+func TestNewRemoteResolverInjectedDynamicShortCircuitsKubeconfig(t *testing.T) {
+	dyn := newFakeRemoteDynamic()
+	r, err := refresolver.NewRemoteResolver(refresolver.RemoteResolverOptions{
+		Dynamic:    dyn,
+		Kubeconfig: "/no/such/kubeconfig", // would error if actually consulted
+		Context:    "no-such-context",
+		Namespace:  "ns1",
+	})
+	if err != nil {
+		t.Fatalf("constructor with injected dynamic should not error: %v", err)
+	}
+	if r == nil {
+		t.Fatal("expected non-nil RemoteResolver")
+	}
+	if r.Name() != "remote" {
+		t.Errorf("Name() = %q, want \"remote\"", r.Name())
+	}
+}
+
+// TestNewRemoteResolverFromKubeconfigFile: with no Dynamic supplied,
+// the constructor loads kubeconfig from the explicit Kubeconfig path.
+// We use a syntactically valid kubeconfig (the actual cluster need not
+// be reachable; Resolve is not called here).
+func TestNewRemoteResolverFromKubeconfigFile(t *testing.T) {
+	dir := t.TempDir()
+	kubeconfigPath := filepath.Join(dir, "config")
+	const kubeconfigYAML = `apiVersion: v1
+kind: Config
+current-context: t
+clusters:
+- name: c
+  cluster:
+    server: https://localhost:6443
+contexts:
+- name: t
+  context:
+    cluster: c
+    user: u
+- name: alt
+  context:
+    cluster: c
+    user: u
+users:
+- name: u
+  user:
+    token: tok
+`
+	if err := os.WriteFile(kubeconfigPath, []byte(kubeconfigYAML), 0o600); err != nil {
+		t.Fatalf("write kubeconfig: %v", err)
+	}
+	r, err := refresolver.NewRemoteResolver(refresolver.RemoteResolverOptions{
+		Kubeconfig: kubeconfigPath,
+		Context:    "alt",
+		Namespace:  "default",
+		Timeout:    5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("constructor: %v", err)
+	}
+	if r == nil || r.Name() != "remote" {
+		t.Fatalf("unexpected resolver: %#v", r)
+	}
+}
+
+// TestNewRemoteResolverInvalidKubeconfig: a kubeconfig path that
+// doesn't exist (and no $KUBECONFIG / ~/.kube/config to fall back to)
+// surfaces an error from the constructor.
+func TestNewRemoteResolverInvalidKubeconfig(t *testing.T) {
+	t.Setenv("KUBECONFIG", "/no/such/kubeconfig")
+	t.Setenv("HOME", "/no/such/home")
+	_, err := refresolver.NewRemoteResolver(refresolver.RemoteResolverOptions{
+		Kubeconfig: "/no/such/kubeconfig",
+		Context:    "no-such-context",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid kubeconfig path")
+	}
+}
+
+// TestRemoteResolverNilDynamicErrors: a RemoteResolver constructed
+// without a dynamic client (only reachable via the from-options
+// constructor with a zero-value Options) refuses to Resolve with a
+// clear error.
+func TestRemoteResolverNilDynamicErrors(t *testing.T) {
+	r := refresolver.NewRemoteResolverFromOptions(refresolver.RemoteResolverOptions{
+		Namespace: "default",
+		Timeout:   time.Second,
+	})
+	_, err := r.Resolve(context.Background(), refresolver.Request{
+		Resolver: "git",
+		Params:   map[string]string{"a": "1"},
+	})
+	if err == nil {
+		t.Fatal("expected nil-dynamic error")
+	}
+}
+
+// TestRemoteResolverV1Beta1FallbackOnSecondNoKindMatch: if both
+// v1beta1 AND v1alpha1 return NoKindMatchError (older / unreachable /
+// no Tekton Resolution at all), the Resolve surfaces the v1alpha1
+// fallback error.
+func TestRemoteResolverV1Beta1FallbackOnSecondNoKindMatch(t *testing.T) {
+	dyn := newFakeRemoteDynamic()
+	arrangeNoKindMatch(dyn, gvrV1Beta1)
+	arrangeNoKindMatch(dyn, gvrV1Alpha1)
+	r := newRemoteResolverWithDynamic(dyn, refresolver.RemoteResolverOptions{
+		Namespace: "default",
+		Timeout:   time.Second,
+	})
+	_, err := r.Resolve(context.Background(), refresolver.Request{
+		Resolver: "git",
+		Params:   map[string]string{"a": "1"},
+	})
+	if err == nil {
+		t.Fatal("expected error when neither version is served")
+	}
+	if !strings.Contains(err.Error(), "v1alpha1 fallback") {
+		t.Errorf("error %q does not mention v1alpha1 fallback", err)
+	}
+}
+
+// TestRemoteResolverDefaultsApplyWhenZero: opts.Namespace=="",
+// opts.Timeout==0, opts.PollInterval==0 fall back to the package
+// defaults. Pinned so a refactor can't drop the defaults to zero by
+// mistake.
+func TestRemoteResolverDefaultsApplyWhenZero(t *testing.T) {
+	dyn := newFakeRemoteDynamic()
+	arrangeSucceededOnCreate(t, dyn, gvrV1Beta1, []byte("kind: Task\nmetadata: {name: x}\nspec: {steps: [{name: s, image: alpine:3}]}\n"))
+	r := refresolver.NewRemoteResolverFromOptions(refresolver.RemoteResolverOptions{
+		Dynamic: dyn, // every other field zero
+	})
+	if _, err := r.Resolve(context.Background(), refresolver.Request{
+		Resolver: "git",
+		Params:   map[string]string{"a": "1"},
+	}); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+}
+
+// TestRemoteResolverFailedConditionNoReasonOrMessage: if the
+// controller writes Succeeded=False but no reason/message, the
+// resolver still surfaces a clear "no reason/message" error rather
+// than a confusing silence.
+func TestRemoteResolverFailedConditionNoReasonOrMessage(t *testing.T) {
+	dyn := newFakeRemoteDynamic()
+	dyn.PrependReactor("create", gvrV1Beta1.Resource, func(action clienttesting.Action) (bool, runtime.Object, error) {
+		ca, ok := action.(clienttesting.CreateAction)
+		if !ok {
+			return false, nil, nil
+		}
+		obj, ok := ca.GetObject().(*unstructured.Unstructured)
+		if !ok {
+			return false, nil, nil
+		}
+		obj.SetName("rr-bare-failed")
+		_ = unstructured.SetNestedSlice(obj.Object, []interface{}{
+			map[string]interface{}{"type": "Succeeded", "status": "False"},
+		}, "status", "conditions")
+		return false, obj, nil
+	})
+	r := newRemoteResolverWithDynamic(dyn, refresolver.RemoteResolverOptions{Namespace: "default", Timeout: 2 * time.Second})
+	_, err := r.Resolve(context.Background(), refresolver.Request{Resolver: "git", Params: map[string]string{"a": "1"}})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "ResolutionRequest failed") {
+		t.Errorf("error %q does not mention ResolutionRequest failed", err)
+	}
+}
+
+// TestRemoteResolverConditionStatusUnknown: a Succeeded=Unknown
+// condition is not terminal; the resolver keeps polling until the
+// status flips. We arrange Unknown on Create, then on the second Get
+// flip to True.
+func TestRemoteResolverConditionStatusUnknown(t *testing.T) {
+	dyn := newFakeRemoteDynamic()
+	var attempt atomic.Int32
+	dyn.PrependReactor("create", gvrV1Beta1.Resource, func(action clienttesting.Action) (bool, runtime.Object, error) {
+		ca, ok := action.(clienttesting.CreateAction)
+		if !ok {
+			return false, nil, nil
+		}
+		obj := ca.GetObject().(*unstructured.Unstructured)
+		obj.SetName("rr-unknown")
+		_ = unstructured.SetNestedSlice(obj.Object, []interface{}{
+			map[string]interface{}{"type": "Succeeded", "status": "Unknown"},
+		}, "status", "conditions")
+		return false, obj, nil
+	})
+	dyn.PrependReactor("get", gvrV1Beta1.Resource, func(action clienttesting.Action) (bool, runtime.Object, error) {
+		// Second and subsequent Gets flip status to True.
+		if attempt.Add(1) >= 2 {
+			obj := &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "resolution.tekton.dev/v1beta1",
+				"kind":       "ResolutionRequest",
+				"metadata":   map[string]interface{}{"name": "rr-unknown", "namespace": "default"},
+				"status": map[string]interface{}{
+					"conditions": []interface{}{
+						map[string]interface{}{"type": "Succeeded", "status": "True"},
+					},
+					"data": base64.StdEncoding.EncodeToString([]byte("kind: Task\nmetadata: {name: x}\nspec: {steps: [{name: s, image: alpine:3}]}\n")),
+				},
+			}}
+			return true, obj, nil
+		}
+		return false, nil, nil
+	})
+	r := newRemoteResolverWithDynamic(dyn, refresolver.RemoteResolverOptions{
+		Namespace:    "default",
+		Timeout:      5 * time.Second,
+		PollInterval: 25 * time.Millisecond,
+	})
+	if _, err := r.Resolve(context.Background(), refresolver.Request{Resolver: "git", Params: map[string]string{"a": "1"}}); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+}
+
+// TestRemoteResolverCreateError: a non-NoKindMatchError create error
+// (e.g. RBAC denial, network failure) is surfaced verbatim — not
+// silently retried as v1alpha1.
+func TestRemoteResolverCreateError(t *testing.T) {
+	dyn := newFakeRemoteDynamic()
+	dyn.PrependReactor("create", gvrV1Beta1.Resource, func(action clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("forbidden: user cannot create resolutionrequests")
+	})
+	r := newRemoteResolverWithDynamic(dyn, refresolver.RemoteResolverOptions{Namespace: "default", Timeout: time.Second})
+	_, err := r.Resolve(context.Background(), refresolver.Request{Resolver: "git", Params: map[string]string{"a": "1"}})
+	if err == nil {
+		t.Fatal("expected create error")
+	}
+	if !strings.Contains(err.Error(), "forbidden") {
+		t.Errorf("error %q does not surface the underlying create error", err)
 	}
 }
 
