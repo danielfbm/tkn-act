@@ -19,6 +19,7 @@ func TestLimitationsFixturesParse(t *testing.T) {
 		pipeline string
 	}{
 		{"step-state", "leaky"},
+		{"matrix-include-overlap", "matrix-include-overlap"},
 	}
 	for _, d := range dirs {
 		t.Run(d.name, func(t *testing.T) {

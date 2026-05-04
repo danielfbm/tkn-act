@@ -231,5 +231,29 @@ func All() []Fixture {
 		{Dir: "configmap-from-yaml", Pipeline: "configmap-from-yaml", WantStatus: "succeeded"},
 		{Dir: "secret-from-yaml", Pipeline: "secret-from-yaml", WantStatus: "succeeded"},
 		{Dir: "sidecars", Pipeline: "sidecars", WantStatus: "succeeded"},
+		{
+			Dir: "matrix", Pipeline: "matrix", WantStatus: "succeeded",
+			// 2x2 cross-product (os ∈ {linux, darwin} × goversion ∈ {1.21, 1.22}).
+			// Row order is outermost-iterates-slowest, so:
+			//   build-0 = (linux, 1.21), build-1 = (linux, 1.22),
+			//   build-2 = (darwin, 1.21), build-3 = (darwin, 1.22).
+			// The pipeline declares an array result `tags` value
+			// $(tasks.build.results.tag[*]) — the resolver splices the
+			// per-expansion strings in row order.
+			WantResults: map[string]any{
+				"tags": []any{"linux-1.21", "linux-1.22", "darwin-1.21", "darwin-1.22"},
+			},
+		},
+		{
+			Dir: "matrix-include", Pipeline: "matrix-include", WantStatus: "succeeded",
+			// 1 cross-product row (os=linux, arch=amd64 from Task default)
+			// + 2 include rows (arch=arm64 named arm-extra; arch=armv7
+			// unnamed). The include rows inherit `os` from the
+			// PipelineTask-level params=linux. Order: cross-product,
+			// then include in declaration order.
+			WantResults: map[string]any{
+				"tags": []any{"linux-amd64", "linux-arm64", "linux-armv7"},
+			},
+		},
 	}
 }

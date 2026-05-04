@@ -1,0 +1,47 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: emit
+spec:
+  params:
+    - name: os
+    - name: arch
+      default: amd64
+  results:
+    - name: tag
+  steps:
+    - name: emit
+      image: alpine:3
+      script: |
+        printf "$(params.os)-$(params.arch)" > $(results.tag.path)
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: matrix-include
+spec:
+  results:
+    - name: tags
+      type: array
+      value:
+        - "$(tasks.build.results.tag[*])"
+  tasks:
+    - name: build
+      taskRef: { name: emit }
+      params:
+        # PipelineTask-level os is inherited by include rows that don't
+        # override it. Include rows here introduce `arch` only — `os` is
+        # the cross-product param, and matrix.include cannot override it
+        # in v1 (validator rejects overlap; see
+        # testdata/limitations/matrix-include-overlap/).
+        - { name: os, value: linux }
+      matrix:
+        params:
+          - name: os
+            value: [linux]
+        include:
+          - name: arm-extra
+            params:
+              - { name: arch, value: arm64 }
+          - params:
+              - { name: arch, value: armv7 }

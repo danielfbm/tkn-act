@@ -13,6 +13,7 @@ features below.
 |--------------------------|-----------------------------------------------|----------------------------------------------------------------------------|
 | `step-state/`            | (none — illustrates step-isolation foot-gun)  | Each step is a fresh container; cwd / env / `/tmp` from prior steps gone.   |
 | `sidecars/`              | `Task.sidecars`                               | Field dropped at parse time; no shared network namespace.                   |
+| `matrix-include-overlap/`| `PipelineTask.matrix.include` overlap         | Validator REJECTS at exit 4; on cluster, real Tekton folds the include row. |
 
 This list is short by design — features documented here either are
 **fundamentally Kubernetes-shaped** (sidecars need a shared network
