@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/danielfbm/tkn-act/internal/backend"
+	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -220,3 +221,151 @@ func TestStepDisplayNameLookup(t *testing.T) {
 		}
 	})
 }
+
+// TestMatchMatrixRowFromTaskRunPrimaryParamHash: a faked TaskRun
+// whose spec.params record the matrix-row params is matched by
+// canonical-hash to the correct row index, regardless of the
+// TaskRun's order in the list. Specifically, simulate a TaskRun
+// for the (os=darwin, goversion=1.22) row of a 2×2 matrix and
+// assert MatrixInfo.Index == 3.
+func TestMatchMatrixRowFromTaskRunPrimaryParamHash(t *testing.T) {
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{
+			Name:    "build",
+			TaskRef: &tektontypes.TaskRef{Name: "t"},
+			Matrix: &tektontypes.Matrix{Params: []tektontypes.MatrixParam{
+				{Name: "os", Value: []string{"linux", "darwin"}},
+				{Name: "goversion", Value: []string{"1.21", "1.22"}},
+			}},
+		}},
+	}}
+	// Row 3 of expandMatrix's output is (os=darwin, goversion=1.22).
+	tr := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{
+			"name": "p-build-row3",
+		},
+		"spec": map[string]any{
+			"params": []any{
+				map[string]any{"name": "os", "value": "darwin"},
+				map[string]any{"name": "goversion", "value": "1.22"},
+			},
+		},
+	}}
+	fallbackSeq := map[string]int{}
+	mi := matchMatrixRowFromTaskRun(pl, "build", tr, -1, fallbackSeq, nil)
+	if mi == nil {
+		t.Fatalf("matchMatrixRowFromTaskRun returned nil; want index 3")
+	}
+	if mi.Parent != "build" || mi.Index != 3 || mi.Of != 4 {
+		t.Errorf("matrix info = %+v, want {Parent:build Index:3 Of:4}", *mi)
+	}
+	if mi.Params["os"] != "darwin" || mi.Params["goversion"] != "1.22" {
+		t.Errorf("matrix.Params = %+v", mi.Params)
+	}
+	// A second TaskRun for row 0 also matches by hash.
+	tr0 := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": "p-build-row0"},
+		"spec": map[string]any{
+			"params": []any{
+				map[string]any{"name": "os", "value": "linux"},
+				map[string]any{"name": "goversion", "value": "1.21"},
+			},
+		},
+	}}
+	mi0 := matchMatrixRowFromTaskRun(pl, "build", tr0, -1, fallbackSeq, nil)
+	if mi0 == nil || mi0.Index != 0 {
+		t.Fatalf("row 0 reconstruction = %+v, want Index=0", mi0)
+	}
+}
+
+// TestMatchMatrixRowFromTaskRunFallbackChildRefOrder: when the
+// TaskRun's spec.params don't hold matrix-row params (a
+// hypothetical future Tekton version), the reconstruction falls
+// back to per-parent ordering. The fallback path also emits one
+// EvtError warning per TaskRun.
+func TestMatchMatrixRowFromTaskRunFallbackChildRefOrder(t *testing.T) {
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{
+			Name:    "build",
+			TaskRef: &tektontypes.TaskRef{Name: "t"},
+			Matrix: &tektontypes.Matrix{Params: []tektontypes.MatrixParam{
+				{Name: "os", Value: []string{"linux", "darwin"}},
+			}},
+		}},
+	}}
+	type capture struct{ events []reporter.Event }
+	cap := &capture{}
+	// Stub Reporter capturing emitted events.
+	r := reporterFunc(func(e reporter.Event) { cap.events = append(cap.events, e) })
+	tr := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": "p-build-mystery"},
+		"spec":     map[string]any{}, // no params
+	}}
+	fallback := map[string]int{}
+	mi := matchMatrixRowFromTaskRun(pl, "build", tr, 0, fallback, r)
+	if mi == nil || mi.Index != 0 {
+		t.Fatalf("fallback row 0 = %+v, want Index=0", mi)
+	}
+	if len(cap.events) != 1 || cap.events[0].Kind != reporter.EvtError {
+		t.Errorf("expected one EvtError warning; got %v", cap.events)
+	}
+	tr2 := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": "p-build-mystery2"},
+		"spec":     map[string]any{},
+	}}
+	mi2 := matchMatrixRowFromTaskRun(pl, "build", tr2, 1, fallback, r)
+	if mi2 == nil || mi2.Index != 1 {
+		t.Fatalf("fallback row 1 = %+v, want Index=1", mi2)
+	}
+	if len(cap.events) != 2 {
+		t.Errorf("expected 2 EvtError warnings; got %d", len(cap.events))
+	}
+}
+
+// TestMatchMatrixRowFromTaskRunIncludeRow: the include row's
+// IncludeName is preserved on the reconstructed MatrixInfo so the
+// outcomes-map key uses the declared name (e.g. "arm-extra")
+// instead of "<parent>-<index>".
+func TestMatchMatrixRowFromTaskRunIncludeRow(t *testing.T) {
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{
+			Name:    "build",
+			TaskRef: &tektontypes.TaskRef{Name: "t"},
+			Matrix: &tektontypes.Matrix{
+				Params: []tektontypes.MatrixParam{
+					{Name: "os", Value: []string{"linux"}},
+				},
+				Include: []tektontypes.MatrixInclude{
+					{Name: "arm-extra", Params: []tektontypes.Param{
+						{Name: "arch", Value: tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: "arm64"}},
+					}},
+				},
+			},
+		}},
+	}}
+	tr := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": "p-build-arm"},
+		"spec": map[string]any{
+			"params": []any{
+				map[string]any{"name": "arch", "value": "arm64"},
+			},
+		},
+	}}
+	mi := matchMatrixRowFromTaskRun(pl, "build", tr, -1, map[string]int{}, nil)
+	if mi == nil {
+		t.Fatal("nil reconstruction")
+	}
+	if mi.IncludeName != "arm-extra" {
+		t.Errorf("IncludeName = %q, want arm-extra", mi.IncludeName)
+	}
+	if mi.Index != 1 || mi.Of != 2 {
+		t.Errorf("Index=%d Of=%d, want 1/2", mi.Index, mi.Of)
+	}
+}
+
+// reporterFunc adapts a function literal to the reporter.Reporter
+// interface for tests that just need to capture events.
+type reporterFunc func(e reporter.Event)
+
+func (f reporterFunc) Emit(e reporter.Event) { f(e) }
+func (f reporterFunc) Close() error          { return nil }

@@ -161,6 +161,12 @@ type TaskOutcomeOnCluster struct {
 	Results       map[string]string
 	Attempts      int
 	RetryAttempts []RetryAttempt
+	// Matrix, when non-nil, identifies which expansion of a
+	// matrix-fanned parent PipelineTask this outcome belongs to.
+	// The cluster backend reconstructs this from the TaskRun's
+	// labels and spec.params; the engine forwards it onto the
+	// synthesised reporter.Event.Matrix at task-start / task-end.
+	Matrix *tektontypes.MatrixInfo
 }
 
 type RetryAttempt struct {

@@ -269,7 +269,7 @@ func TestMaterializeMatrixRowsRoundTrip(t *testing.T) {
 			},
 		},
 	}
-	rows := MaterializeMatrixRows(pt)
+	rows := tektontypes.MaterializeMatrixRows(pt)
 	if len(rows) != 3 {
 		t.Fatalf("rows = %d, want 3 (2 cross + 1 include)", len(rows))
 	}

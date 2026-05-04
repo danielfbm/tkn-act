@@ -3,13 +3,18 @@ package cluster
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/danielfbm/tkn-act/internal/backend"
+	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -300,7 +305,7 @@ func (b *Backend) watchPipelineRun(ctx context.Context, in backend.PipelineRunIn
 			res.Reason = reason
 			res.Message = message
 			res.Ended = time.Now()
-			res.Tasks = b.collectTaskOutcomes(ctx, in, ns)
+			res.Tasks = b.collectTaskOutcomesWithSink(ctx, in, ns, matrixWarnSinkFor(in))
 			res.Results = extractPipelineResults(un)
 			// `spec.timeouts.{pipeline,tasks,finally}` exhaustion does
 			// NOT always set the PipelineRun condition reason to a
@@ -339,7 +344,28 @@ func (b *Backend) watchPipelineRun(ctx context.Context, in backend.PipelineRunIn
 // produces a per-pipeline-task summary the engine turns into task-end /
 // task-retry events. Best-effort: a list error returns an empty map (the
 // PipelineRun status alone still drives the run-level outcome).
+//
+// Matrix-fanned PipelineTasks produce N TaskRuns sharing the same
+// pipelineTask label; for each such TaskRun we reconstruct the
+// MatrixInfo triple (Parent, Index, Params) via param-hash matching
+// PRIMARY and childReferences ordering FALLBACK. The map key changes
+// from the parent name to <parent>-<index> (or the include row's
+// declared name) so the engine sees one outcome per expansion in the
+// same shape the docker backend produces.
 func (b *Backend) collectTaskOutcomes(ctx context.Context, in backend.PipelineRunInvocation, ns string) map[string]backend.TaskOutcomeOnCluster {
+	return b.collectTaskOutcomesWithSink(ctx, in, ns, nil)
+}
+
+// collectTaskOutcomesWithSink is the fallback-warning-aware variant.
+// `repSink` (when non-nil) receives one EvtError event per TaskRun
+// that fell through to the childReferences-ordering fallback. The
+// sink-less variant logs nothing — production callers always pass a
+// reporter.Sink.
+//
+// Read the PipelineRun once up-front so the FALLBACK strategy can
+// consult `pr.status.childReferences` for ordering when the
+// param-hash match misses.
+func (b *Backend) collectTaskOutcomesWithSink(ctx context.Context, in backend.PipelineRunInvocation, ns string, repSink reporter.Reporter) map[string]backend.TaskOutcomeOnCluster {
 	out := map[string]backend.TaskOutcomeOnCluster{}
 	list, err := b.client.Dynamic.Resource(gvrTaskRun).Namespace(ns).List(ctx, metav1.ListOptions{
 		LabelSelector: "tekton.dev/pipelineRun=" + in.PipelineRunName,
@@ -347,15 +373,256 @@ func (b *Backend) collectTaskOutcomes(ctx context.Context, in backend.PipelineRu
 	if err != nil {
 		return out
 	}
+	// childReferences map: TaskRun name → declaration index. Built once
+	// from the parent PR object so the fallback path is O(N) total, not
+	// O(N²) when N expansions are present.
+	childRefIdx := map[string]int{}
+	if pr, prerr := b.client.Dynamic.Resource(gvrPipelineRun).Namespace(ns).Get(ctx, in.PipelineRunName, metav1.GetOptions{}); prerr == nil {
+		refs, _, _ := unstructured.NestedSlice(pr.Object, "status", "childReferences")
+		for i, r := range refs {
+			rm, ok := r.(map[string]any)
+			if !ok {
+				continue
+			}
+			if name, _ := rm["name"].(string); name != "" {
+				childRefIdx[name] = i
+			}
+		}
+	}
+	// Per-parent counter for the FALLBACK childReferences ordering.
+	// Walking TaskRuns in childRefIdx order gives stable indices even
+	// when the List() returns them in arbitrary order.
+	type trWithIndex struct {
+		tr        *unstructured.Unstructured
+		childRef  int // -1 if absent
+		ptName    string
+		hasIndex  bool
+	}
+	scored := make([]trWithIndex, 0, len(list.Items))
 	for i := range list.Items {
 		tr := &list.Items[i]
 		ptName, _, _ := unstructured.NestedString(tr.Object, "metadata", "labels", "tekton.dev/pipelineTask")
 		if ptName == "" {
 			continue
 		}
-		out[ptName] = taskRunToOutcome(tr)
+		idx, hasIdx := childRefIdx[tr.GetName()]
+		if !hasIdx {
+			idx = -1
+		}
+		scored = append(scored, trWithIndex{tr: tr, childRef: idx, ptName: ptName, hasIndex: hasIdx})
+	}
+	sort.SliceStable(scored, func(i, j int) bool {
+		// Place items with childRef indices first (sorted ascending);
+		// items without childRef indices keep their listing order.
+		switch {
+		case scored[i].hasIndex && !scored[j].hasIndex:
+			return true
+		case !scored[i].hasIndex && scored[j].hasIndex:
+			return false
+		case scored[i].hasIndex && scored[j].hasIndex:
+			return scored[i].childRef < scored[j].childRef
+		default:
+			return false
+		}
+	})
+	// Per-parent counter for FALLBACK ordering.
+	fallbackSeq := map[string]int{}
+	for _, sc := range scored {
+		oc := taskRunToOutcome(sc.tr)
+		mi := matchMatrixRowFromTaskRun(in.Pipeline, sc.ptName, sc.tr, sc.childRef, fallbackSeq, repSink)
+		if mi != nil {
+			oc.Matrix = mi
+			key := sc.ptName + "-" + strconv.Itoa(mi.Index)
+			if mi.IncludeName != "" {
+				key = mi.IncludeName
+			}
+			out[key] = oc
+		} else {
+			out[sc.ptName] = oc
+		}
 	}
 	return out
+}
+
+// matchMatrixRowFromTaskRun reconstructs MatrixInfo for a TaskRun
+// belonging to a matrix-fanned parent. PRIMARY: hash the
+// matrix-row params extracted from TaskRun.spec.params and look up
+// against the parent's pre-computed row hashes. FALLBACK:
+// `pr.status.childReferences` ordering, with an EvtError warning.
+//
+// Returns nil when the parent isn't matrix-fanned (caller falls back
+// to the parent name as the outcomes-map key).
+func matchMatrixRowFromTaskRun(pl tektontypes.Pipeline, parent string, tr *unstructured.Unstructured, childRefIdx int, fallbackSeq map[string]int, rep reporter.Reporter) *tektontypes.MatrixInfo {
+	pt := findMatrixParent(pl, parent)
+	if pt == nil || pt.Matrix == nil {
+		return nil
+	}
+	rows := tektontypes.MaterializeMatrixRows(*pt)
+	if len(rows) == 0 {
+		return nil
+	}
+	matrixNames := matrixParamNamesFor(pt)
+	trParams := extractTaskRunParams(tr)
+	matrixOnly := filterToNames(trParams, matrixNames)
+
+	// PRIMARY: param-hash match.
+	if len(matrixOnly) > 0 {
+		target := canonicalMatrixHash(matrixOnly)
+		for i, row := range rows {
+			if canonicalMatrixHash(row.Params) == target {
+				return &tektontypes.MatrixInfo{
+					Parent:      parent,
+					Index:       i,
+					Of:          len(rows),
+					Params:      copyStringMap(row.Params),
+					IncludeName: row.IncludeName,
+				}
+			}
+		}
+	}
+	// FALLBACK: childReferences order. Use a per-parent monotonic
+	// counter (childReferences may interleave parents). When the
+	// TaskRun isn't in childReferences at all, use the per-parent
+	// fallback sequence directly; either way, log one EvtError so a
+	// silent regression on a future Tekton minor surfaces in CI.
+	idx := fallbackSeq[parent]
+	fallbackSeq[parent] = idx + 1
+	if idx >= len(rows) {
+		// More TaskRuns than expected rows — give up rather than
+		// alias multiple TaskRuns onto the same row.
+		return nil
+	}
+	if rep != nil {
+		rep.Emit(reporter.Event{
+			Kind:    reporter.EvtError,
+			Time:    time.Now(),
+			Message: fmt.Sprintf("matrix index reconstruction fell back to childReferences ordering for TaskRun %q (param-hash matching produced no hit; please file an issue with your Tekton version)", tr.GetName()),
+		})
+	}
+	row := rows[idx]
+	return &tektontypes.MatrixInfo{
+		Parent:      parent,
+		Index:       idx,
+		Of:          len(rows),
+		Params:      copyStringMap(row.Params),
+		IncludeName: row.IncludeName,
+	}
+}
+
+// findMatrixParent returns the PipelineTask in pl.Spec.Tasks ∪
+// pl.Spec.Finally whose Name matches `parent` AND whose Matrix !=
+// nil. Returns nil when not found or not matrix-fanned.
+func findMatrixParent(pl tektontypes.Pipeline, parent string) *tektontypes.PipelineTask {
+	for i := range pl.Spec.Tasks {
+		if pl.Spec.Tasks[i].Name == parent && pl.Spec.Tasks[i].Matrix != nil {
+			return &pl.Spec.Tasks[i]
+		}
+	}
+	for i := range pl.Spec.Finally {
+		if pl.Spec.Finally[i].Name == parent && pl.Spec.Finally[i].Matrix != nil {
+			return &pl.Spec.Finally[i]
+		}
+	}
+	return nil
+}
+
+// matrixParamNamesFor collects every param name that contributes to a
+// row of pt's matrix: every matrix.params[*].name plus every
+// matrix.include[*].params[*].name. The cluster backend filters
+// TaskRun.spec.params down to this set before hashing so non-matrix
+// PipelineTask.params don't perturb the match.
+func matrixParamNamesFor(pt *tektontypes.PipelineTask) map[string]bool {
+	names := map[string]bool{}
+	if pt.Matrix == nil {
+		return names
+	}
+	for _, mp := range pt.Matrix.Params {
+		names[mp.Name] = true
+	}
+	for _, inc := range pt.Matrix.Include {
+		for _, p := range inc.Params {
+			names[p.Name] = true
+		}
+	}
+	return names
+}
+
+// extractTaskRunParams reads spec.params off an unstructured TaskRun
+// into a flat string map. Tekton's controller copies the
+// PipelineTask's resolved params (post matrix-row substitution) onto
+// the TaskRun, so this is the version-stable carrier for the
+// matrix-row identity.
+func extractTaskRunParams(tr *unstructured.Unstructured) map[string]string {
+	out := map[string]string{}
+	params, _, _ := unstructured.NestedSlice(tr.Object, "spec", "params")
+	for _, p := range params {
+		pm, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := pm["name"].(string)
+		if name == "" {
+			continue
+		}
+		switch v := pm["value"].(type) {
+		case string:
+			out[name] = v
+		}
+	}
+	return out
+}
+
+func filterToNames(in map[string]string, names map[string]bool) map[string]string {
+	out := map[string]string{}
+	for k, v := range in {
+		if names[k] {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// canonicalMatrixHash JSON-encodes the input as a sorted [{K,V}]
+// list and hashes it. Stable regardless of map iteration order;
+// insensitive to whitespace.
+func canonicalMatrixHash(m map[string]string) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	type kv struct{ K, V string }
+	pairs := make([]kv, 0, len(keys))
+	for _, k := range keys {
+		pairs = append(pairs, kv{K: k, V: m[k]})
+	}
+	b, _ := json.Marshal(pairs)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+func copyStringMap(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+// matrixWarnSinkFor returns a reporter.Reporter to receive the
+// matrix-fallback EvtError warning, or nil when the LogSink doesn't
+// expose one. The production reporter.LogSink wraps a Reporter and
+// implements reporterAccessor — tests typically pass a LogSink that
+// doesn't, in which case the fallback warning is silently dropped.
+func matrixWarnSinkFor(in backend.PipelineRunInvocation) reporter.Reporter {
+	type reporterAccessor interface{ Reporter() reporter.Reporter }
+	if in.LogSink == nil {
+		return nil
+	}
+	if ra, ok := in.LogSink.(reporterAccessor); ok {
+		return ra.Reporter()
+	}
+	return nil
 }
 
 // taskRunCancelledByPipelineTimeoutMsg matches Tekton's

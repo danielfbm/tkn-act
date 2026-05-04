@@ -988,3 +988,47 @@ func flipStatusWithResultsUntilStop(t *testing.T, dyn *dynamicfake.FakeDynamicCl
 	}()
 	return stop
 }
+
+// TestBuildPipelineRunInlinesMatrix: a PipelineTask with matrix must
+// round-trip through BuildPipelineRunObject intact under
+// pipelineSpec.tasks[].matrix. Regression-locking — the round-trip
+// is "free" because the field has a JSON tag on PipelineTask, and a
+// future hand-rolled converter must not silently drop it.
+func TestBuildPipelineRunInlinesMatrix(t *testing.T) {
+	be, _, _, _, _ := fakeBackend(t)
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{
+			Name: "build", TaskRef: &tektontypes.TaskRef{Name: "t"},
+			Matrix: &tektontypes.Matrix{Params: []tektontypes.MatrixParam{
+				{Name: "os", Value: []string{"linux", "darwin"}},
+			}},
+		}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{
+		Steps: []tektontypes.Step{{Name: "s", Image: "alpine", Script: "true"}},
+	}}
+	tk.Metadata.Name = "t"
+
+	prObj, err := be.BuildPipelineRunObject(backend.PipelineRunInvocation{
+		RunID: "abc12345", PipelineRunName: "p-abc12345",
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"t": tk},
+	}, "tkn-act-abc12345")
+	if err != nil {
+		t.Fatal(err)
+	}
+	un := prObj.(*unstructured.Unstructured)
+	tasks, _, _ := unstructured.NestedSlice(un.Object, "spec", "pipelineSpec", "tasks")
+	if len(tasks) != 1 {
+		t.Fatalf("tasks = %d, want 1", len(tasks))
+	}
+	taskMap := tasks[0].(map[string]any)
+	matrix, ok := taskMap["matrix"].(map[string]any)
+	if !ok {
+		t.Fatalf("matrix not found on inlined task: %v", taskMap)
+	}
+	params, ok := matrix["params"].([]any)
+	if !ok || len(params) != 1 {
+		t.Fatalf("matrix.params len = %d (want 1), value = %v", len(params), matrix["params"])
+	}
+}

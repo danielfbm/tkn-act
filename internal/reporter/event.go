@@ -138,6 +138,13 @@ type LogSink struct {
 
 func NewLogSink(r Reporter) *LogSink { return &LogSink{r: r} }
 
+// Reporter exposes the wrapped reporter so callers that need to emit
+// non-log events (e.g. the cluster backend's matrix-fallback warning)
+// can do so without taking a separate dependency on the reporter
+// type. Returns nil when the LogSink was constructed without a
+// backing reporter.
+func (s *LogSink) Reporter() Reporter { return s.r }
+
 func (s *LogSink) StepLog(taskName, stepName, stepDisplayName, stream, line string) {
 	s.r.Emit(Event{
 		Kind:        EvtStepLog,

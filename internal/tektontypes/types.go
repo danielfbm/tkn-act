@@ -359,6 +359,73 @@ type MatrixInfo struct {
 	IncludeName string
 }
 
+// MatrixRow is the public shape of one materialized matrix row,
+// used by both the engine's expandMatrix pass (internally) and the
+// cluster backend's TaskRun-to-expansion matcher (which reads it
+// from MaterializeMatrixRows). Lives in tektontypes so the cluster
+// package can build the same row order the engine would, without an
+// engine→backend import cycle.
+type MatrixRow struct {
+	Params      map[string]string
+	IncludeName string
+}
+
+// MaterializeMatrixRows builds the same cross-product + include rows
+// the engine's expandMatrix produces, in the same order. Returns
+// nil for non-matrix tasks. Errors (cardinality cap, empty value
+// list) cause MaterializeMatrixRows to return nil — the validator
+// rejects those cases at validate time so they cannot reach the
+// cluster backend in practice.
+func MaterializeMatrixRows(pt PipelineTask) []MatrixRow {
+	if pt.Matrix == nil {
+		return nil
+	}
+	m := pt.Matrix
+	for _, mp := range m.Params {
+		if len(mp.Value) == 0 {
+			return nil
+		}
+	}
+	cross := 0
+	if len(m.Params) > 0 {
+		cross = 1
+		for _, mp := range m.Params {
+			cross *= len(mp.Value)
+		}
+	}
+	var rows []MatrixRow
+	if cross > 0 {
+		idxs := make([]int, len(m.Params))
+		for {
+			row := MatrixRow{Params: map[string]string{}}
+			for i, mp := range m.Params {
+				row.Params[mp.Name] = mp.Value[idxs[i]]
+			}
+			rows = append(rows, row)
+			done := true
+			for i := len(idxs) - 1; i >= 0; i-- {
+				idxs[i]++
+				if idxs[i] < len(m.Params[i].Value) {
+					done = false
+					break
+				}
+				idxs[i] = 0
+			}
+			if done {
+				break
+			}
+		}
+	}
+	for _, inc := range m.Include {
+		ps := map[string]string{}
+		for _, p := range inc.Params {
+			ps[p.Name] = p.Value.StringVal
+		}
+		rows = append(rows, MatrixRow{Params: ps, IncludeName: inc.Name})
+	}
+	return rows
+}
+
 type TaskRef struct {
 	Name string `json:"name,omitempty"`
 	Kind string `json:"kind,omitempty"` // Task|ClusterTask; default Task

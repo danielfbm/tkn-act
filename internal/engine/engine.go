@@ -6,6 +6,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -911,17 +912,14 @@ func (e *Engine) emitClusterTaskEvents(pl tektontypes.Pipeline, bundle *loader.B
 	// mirroring docker's interleaved order. Without this, ranging over
 	// the controller's per-task map gives Go's randomised iteration
 	// order — agents asserting on "first task-start" would flake.
-	emit := func(pt tektontypes.PipelineTask) {
-		oc, ok := tasks[pt.Name]
-		if !ok {
-			return
-		}
+	emitOne := func(pt tektontypes.PipelineTask, taskKey string, oc backend.TaskOutcomeOnCluster) {
 		spec, _ := lookupTaskSpec(bundle, pt)
 		now := time.Now()
 		e.rep.Emit(reporter.Event{
-			Kind: reporter.EvtTaskStart, Time: now, Task: pt.Name,
+			Kind: reporter.EvtTaskStart, Time: now, Task: taskKey,
 			DisplayName: pt.DisplayName,
 			Description: spec.Description,
+			Matrix:      matrixEventFromInfo(oc.Matrix),
 		})
 		for _, r := range oc.RetryAttempts {
 			t := r.Time
@@ -931,11 +929,12 @@ func (e *Engine) emitClusterTaskEvents(pl tektontypes.Pipeline, bundle *loader.B
 			e.rep.Emit(reporter.Event{
 				Kind:        reporter.EvtTaskRetry,
 				Time:        t,
-				Task:        pt.Name,
+				Task:        taskKey,
 				Status:      r.Status,
 				Message:     r.Message,
 				Attempt:     r.Attempt,
 				DisplayName: pt.DisplayName,
+				Matrix:      matrixEventFromInfo(oc.Matrix),
 			})
 		}
 		attempt := oc.Attempts
@@ -945,12 +944,42 @@ func (e *Engine) emitClusterTaskEvents(pl tektontypes.Pipeline, bundle *loader.B
 		e.rep.Emit(reporter.Event{
 			Kind:        reporter.EvtTaskEnd,
 			Time:        time.Now(),
-			Task:        pt.Name,
+			Task:        taskKey,
 			Status:      oc.Status,
 			Message:     oc.Message,
 			Attempt:     attempt,
 			DisplayName: pt.DisplayName,
+			Matrix:      matrixEventFromInfo(oc.Matrix),
 		})
+	}
+	emit := func(pt tektontypes.PipelineTask) {
+		// Non-matrix path: outcomes keyed by parent name.
+		if pt.Matrix == nil {
+			oc, ok := tasks[pt.Name]
+			if !ok {
+				return
+			}
+			emitOne(pt, pt.Name, oc)
+			return
+		}
+		// Matrix path: walk every outcome whose Matrix.Parent == pt.Name
+		// in row order so the JSON event sequence matches docker.
+		type kv struct {
+			name string
+			oc   backend.TaskOutcomeOnCluster
+		}
+		var matches []kv
+		for k, oc := range tasks {
+			if oc.Matrix != nil && oc.Matrix.Parent == pt.Name {
+				matches = append(matches, kv{name: k, oc: oc})
+			}
+		}
+		sort.Slice(matches, func(i, j int) bool {
+			return matches[i].oc.Matrix.Index < matches[j].oc.Matrix.Index
+		})
+		for _, m := range matches {
+			emitOne(pt, m.name, m.oc)
+		}
 	}
 	for _, pt := range pl.Spec.Tasks {
 		emit(pt)

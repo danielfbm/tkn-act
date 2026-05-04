@@ -358,34 +358,6 @@ func maybeAggregateMatrix(pt tektontypes.PipelineTask, pl tektontypes.Pipeline, 
 	aggregateMatrixResults(pt.MatrixInfo.Parent, expansionNamesOf(pt.MatrixInfo, all), results)
 }
 
-// MaterializeMatrixRows is the exported helper the cluster backend's
-// param-hash matcher uses to compute the same row order the engine
-// uses internally. Returns the per-row params as an
-// engine-package-private map[string]string slice the backend can
-// canonical-hash. Order matches expandMatrix's row iteration.
-func MaterializeMatrixRows(pt tektontypes.PipelineTask) []MatrixRow {
-	if pt.Matrix == nil {
-		return nil
-	}
-	rows, err := materializeRows(pt)
-	if err != nil {
-		return nil
-	}
-	out := make([]MatrixRow, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, MatrixRow{
-			Params:      rowParamMap(r.params),
-			IncludeName: r.includeName,
-		})
-	}
-	return out
-}
-
-// MatrixRow is the public shape of one matrix expansion's params,
-// used by the cluster backend to reconstruct MatrixInfo from a
-// TaskRun's spec.params. Mirrors the unexported matrixRow with
-// the Params type folded into a flat map for hashing.
-type MatrixRow struct {
-	Params      map[string]string
-	IncludeName string
-}
+// MaterializeMatrixRows is re-exported through tektontypes so the
+// cluster backend can use it without an engine import cycle. Use
+// tektontypes.MaterializeMatrixRows directly from non-engine packages.
