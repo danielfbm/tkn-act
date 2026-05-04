@@ -29,6 +29,8 @@ type globalFlags struct {
 	resolverConfig            string
 	offline                   bool
 	remoteResolverContext     string
+	remoteResolverNamespace   string
+	remoteResolverTimeout     time.Duration
 	resolverAllowInsecureHTTP bool
 	// Cluster resolver (Phase 4 of Track 1 #9). The resolver is OFF by
 	// default; setting either of the two flags below opts the user in.
@@ -94,6 +96,8 @@ Designed for both humans and AI agents:
 	cmd.PersistentFlags().StringVar(&gf.resolverConfig, "resolver-config", "", "path to a YAML/JSON file with per-resolver settings (auth tokens, mirror URLs, etc.)")
 	cmd.PersistentFlags().BoolVar(&gf.offline, "offline", false, "reject any resolver cache miss; useful for hermetic CI")
 	cmd.PersistentFlags().StringVar(&gf.remoteResolverContext, "remote-resolver-context", "", "kubeconfig context for Mode B (delegate resolution to a Tekton cluster); unset = direct mode")
+	cmd.PersistentFlags().StringVar(&gf.remoteResolverNamespace, "remote-resolver-namespace", "default", "namespace for Mode B ResolutionRequest submissions (only meaningful with --remote-resolver-context)")
+	cmd.PersistentFlags().DurationVar(&gf.remoteResolverTimeout, "remote-resolver-timeout", 60*time.Second, "per-request wait budget for Mode B ResolutionRequest reconcile (only meaningful with --remote-resolver-context)")
 	cmd.PersistentFlags().BoolVar(&gf.resolverAllowInsecureHTTP, "resolver-allow-insecure-http", false, "allow plain http:// for the http and bundles resolvers (CI-only escape hatch; loopback always permitted)")
 	cmd.PersistentFlags().StringVar(&gf.clusterResolverContext, "cluster-resolver-context", "", "kubeconfig context for the `cluster` resolver (off-by-default; setting this opts in)")
 	cmd.PersistentFlags().StringVar(&gf.clusterResolverKubeconfig, "cluster-resolver-kubeconfig", "", "explicit kubeconfig path for the cluster resolver (default: KUBECONFIG / ~/.kube/config)")

@@ -225,6 +225,19 @@ func runWith(rf runFlags) error {
 		ClusterResolverKubeconfig: gf.clusterResolverKubeconfig,
 	})
 
+	// Mode B: when --remote-resolver-context is set, every resolver
+	// dispatch goes through the remote driver instead of the direct
+	// allow-list. SECURITY: no credentials cross the tkn-act boundary
+	// — the user's kubeconfig identity is what the remote cluster
+	// sees. Construction failure is exit code 3 (environment).
+	remote, err := buildRemoteResolver()
+	if err != nil {
+		return exitcode.Wrap(exitcode.Env, fmt.Errorf("remote resolver: %w", err))
+	}
+	if remote != nil {
+		reg.SetRemote(remote)
+	}
+
 	res, err := engine.New(be, rep, engine.Options{
 		MaxParallel:    gf.maxParallel,
 		VolumeResolver: volResolver,
@@ -253,6 +266,21 @@ func runWith(rf runFlags) error {
 	default:
 		return exitcode.Wrap(exitcode.Pipeline, fmt.Errorf("pipeline %q %s", pipe, res.Status))
 	}
+}
+
+// buildRemoteResolver returns a configured Mode B resolver iff
+// --remote-resolver-context is non-empty; otherwise (nil, nil) so the
+// registry stays in direct mode. Failures (kubeconfig load, dynamic
+// client construction) translate to exit code 3 in the caller.
+func buildRemoteResolver() (*refresolver.RemoteResolver, error) {
+	if gf.remoteResolverContext == "" {
+		return nil, nil
+	}
+	return refresolver.NewRemoteResolver(refresolver.RemoteResolverOptions{
+		Context:   gf.remoteResolverContext,
+		Namespace: gf.remoteResolverNamespace,
+		Timeout:   gf.remoteResolverTimeout,
+	})
 }
 
 // resolveResolverCacheDir returns the on-disk cache dir for resolved

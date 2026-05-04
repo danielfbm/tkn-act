@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/danielfbm/tkn-act/internal/loader"
 )
@@ -160,6 +163,132 @@ func TestRunFlagsClusterResolverContextOptsIn(t *testing.T) {
 	}
 	if gf.clusterResolverContext != "ci-test" {
 		t.Errorf("clusterResolverContext = %q, want ci-test", gf.clusterResolverContext)
+	}
+}
+
+// TestRunFlagsRemoteResolverNamespaceAndTimeout: Phase 5 adds two new
+// flags that pair with --remote-resolver-context. They must exist with
+// the documented defaults (namespace=default, timeout=60s).
+func TestRunFlagsRemoteResolverNamespaceAndTimeout(t *testing.T) {
+	gf = globalFlags{}
+	cmd := newRootCmd()
+	if err := cmd.Flags().Parse(nil); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cmd.PersistentFlags().Lookup("remote-resolver-namespace") == nil {
+		t.Error("missing --remote-resolver-namespace flag")
+	}
+	if cmd.PersistentFlags().Lookup("remote-resolver-timeout") == nil {
+		t.Error("missing --remote-resolver-timeout flag")
+	}
+	if gf.remoteResolverNamespace != "default" {
+		t.Errorf("remoteResolverNamespace default = %q, want \"default\"", gf.remoteResolverNamespace)
+	}
+	if gf.remoteResolverTimeout != 60*time.Second {
+		t.Errorf("remoteResolverTimeout default = %v, want 60s", gf.remoteResolverTimeout)
+	}
+}
+
+// TestRunFlagsRemoteResolverParseOverrides: the namespace + timeout
+// flags accept overrides from the command line.
+func TestRunFlagsRemoteResolverParseOverrides(t *testing.T) {
+	gf = globalFlags{}
+	cmd := newRootCmd()
+	if err := cmd.PersistentFlags().Parse([]string{
+		"--remote-resolver-context", "prod",
+		"--remote-resolver-namespace", "tekton-pipelines",
+		"--remote-resolver-timeout", "5m",
+	}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if gf.remoteResolverContext != "prod" {
+		t.Errorf("remoteResolverContext = %q, want prod", gf.remoteResolverContext)
+	}
+	if gf.remoteResolverNamespace != "tekton-pipelines" {
+		t.Errorf("remoteResolverNamespace = %q, want tekton-pipelines", gf.remoteResolverNamespace)
+	}
+	if gf.remoteResolverTimeout != 5*time.Minute {
+		t.Errorf("remoteResolverTimeout = %v, want 5m", gf.remoteResolverTimeout)
+	}
+}
+
+// TestRunRemoteResolverContextLoadsKubeconfig: with a temp kubeconfig
+// pointing at a fake context, buildRemoteResolver constructs a
+// RemoteResolver against that context. We use a syntactically valid
+// kubeconfig (no real cluster reachable, but the client config layer
+// won't actually dial — Resolve is not called in this test).
+func TestRunRemoteResolverContextLoadsKubeconfig(t *testing.T) {
+	dir := t.TempDir()
+	kubeconfigPath := filepath.Join(dir, "config")
+	const kubeconfigYAML = `apiVersion: v1
+kind: Config
+current-context: test-context
+clusters:
+- name: test-cluster
+  cluster:
+    server: https://localhost:6443
+contexts:
+- name: test-context
+  context:
+    cluster: test-cluster
+    user: test-user
+- name: other-context
+  context:
+    cluster: test-cluster
+    user: test-user
+users:
+- name: test-user
+  user:
+    token: test-token
+`
+	if err := os.WriteFile(kubeconfigPath, []byte(kubeconfigYAML), 0o600); err != nil {
+		t.Fatalf("write kubeconfig: %v", err)
+	}
+
+	gf = globalFlags{
+		remoteResolverContext:   "test-context",
+		remoteResolverNamespace: "default",
+		remoteResolverTimeout:   30 * time.Second,
+	}
+	t.Setenv("KUBECONFIG", kubeconfigPath)
+
+	rr, err := buildRemoteResolver()
+	if err != nil {
+		t.Fatalf("buildRemoteResolver: %v", err)
+	}
+	if rr == nil {
+		t.Fatal("expected non-nil RemoteResolver")
+	}
+	if got := rr.Name(); got != "remote" {
+		t.Errorf("Name() = %q, want \"remote\"", got)
+	}
+}
+
+// TestRunRemoteResolverDisabledByDefault: with no
+// --remote-resolver-context, buildRemoteResolver returns (nil, nil) so
+// the registry stays in direct mode.
+func TestRunRemoteResolverDisabledByDefault(t *testing.T) {
+	gf = globalFlags{}
+	rr, err := buildRemoteResolver()
+	if err != nil {
+		t.Fatalf("buildRemoteResolver: %v", err)
+	}
+	if rr != nil {
+		t.Errorf("RemoteResolver = %v, want nil (no --remote-resolver-context)", rr)
+	}
+}
+
+// TestRunRemoteResolverInvalidKubeconfig: a bogus kubeconfig path
+// surfaces as an error from buildRemoteResolver, which the run
+// command translates to exit code 3 (environment).
+func TestRunRemoteResolverInvalidKubeconfig(t *testing.T) {
+	gf = globalFlags{
+		remoteResolverContext: "no-such",
+	}
+	t.Setenv("KUBECONFIG", "/no/such/kubeconfig")
+	_, err := buildRemoteResolver()
+	if err == nil {
+		t.Fatal("expected error from invalid kubeconfig path")
 	}
 }
 

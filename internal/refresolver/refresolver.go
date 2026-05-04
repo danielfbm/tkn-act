@@ -115,6 +115,10 @@ type Options struct {
 type Registry struct {
 	mu     sync.Mutex
 	direct map[string]Resolver
+	// remote is the Mode B driver. When non-nil, Resolve dispatches
+	// every Request through remote regardless of name (the validator
+	// already short-circuits the allow-list when remote is enabled).
+	remote *RemoteResolver
 	allow  map[string]struct{}
 	opts   Options
 	// PerRunCache is a small in-memory map[cacheKey]Resolved the engine
@@ -216,6 +220,25 @@ func (r *Registry) SetAllow(names []string) {
 	}
 }
 
+// SetRemote installs the Mode B remote-resolver driver. When non-nil,
+// every dispatch goes through remote (the validator's
+// RemoteResolverEnabled Option already short-circuits the allow-list
+// for any resolver name in this mode). Setting nil restores direct
+// dispatch.
+func (r *Registry) SetRemote(rr *RemoteResolver) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.remote = rr
+}
+
+// Remote returns the currently-configured remote driver, or nil if
+// Mode B is not active.
+func (r *Registry) Remote() *RemoteResolver {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.remote
+}
+
 // Inline returns the inline resolver registered with this Registry, or
 // nil if none was registered. Used by tests to feed bytes in.
 func (r *Registry) Inline() *InlineResolver {
@@ -230,6 +253,12 @@ func (r *Registry) Inline() *InlineResolver {
 // Resolve dispatches the Request to the appropriate Resolver. The
 // per-run cache short-circuits repeated identical requests within a
 // single run. Phase 1 does not yet consult the on-disk cache (Phase 6).
+//
+// Mode B (remote) routing: when SetRemote has installed a remote
+// driver, EVERY Resolve goes through it regardless of the Request's
+// Resolver name (custom names are the whole point of Mode B; the
+// validator's RemoteResolverEnabled Option has already cleared
+// arbitrary names). Direct registrations are bypassed in this mode.
 func (r *Registry) Resolve(ctx context.Context, req Request) (Resolved, error) {
 	if req.Resolver == "" {
 		return Resolved{}, fmt.Errorf("refresolver: empty Resolver name in Request")
@@ -243,6 +272,22 @@ func (r *Registry) Resolve(ctx context.Context, req Request) (Resolved, error) {
 		c.Cached = true
 		r.mu.Unlock()
 		return c, nil
+	}
+	// Mode B: remote takes precedence over direct + allow-list.
+	if r.remote != nil {
+		remote := r.remote
+		r.mu.Unlock()
+		out, err := remote.Resolve(ctx, req)
+		if err != nil {
+			return out, err
+		}
+		if out.SHA256 == "" {
+			out.SHA256 = sha256Bytes(out.Bytes)
+		}
+		r.mu.Lock()
+		r.perRun[key] = out
+		r.mu.Unlock()
+		return out, nil
 	}
 	if r.allow != nil {
 		if _, ok := r.allow[req.Resolver]; !ok {

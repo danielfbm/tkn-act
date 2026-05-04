@@ -7,12 +7,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/yaml"
 
 	"github.com/danielfbm/tkn-act/internal/backend"
 	clusterbe "github.com/danielfbm/tkn-act/internal/backend/cluster"
@@ -72,14 +82,14 @@ func TestClusterE2E(t *testing.T) {
 			continue
 		}
 		t.Run(f.TestName(), func(t *testing.T) {
-			runFixtureCluster(t, cb, cmStore, secStore, f)
+			runFixtureCluster(t, cb, cmStore, secStore, kubecfg, f)
 		})
 	}
 
 	_ = backend.Backend(cb) // compile-time check
 }
 
-func runFixtureCluster(t *testing.T, cb *clusterbe.Backend, cmStore, secStore *volumes.Store, f fixtures.Fixture) {
+func runFixtureCluster(t *testing.T, cb *clusterbe.Backend, cmStore, secStore *volumes.Store, kubecfgPath string, f fixtures.Fixture) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -174,6 +184,32 @@ func runFixtureCluster(t *testing.T, cb *clusterbe.Backend, cmStore, secStore *v
 		}
 	}
 
+	// resolver-remote (Track 1 #9 Phase 5, Mode B): pre-load a Task
+	// into a fresh namespace via the cluster's dynamic client, then
+	// build a RemoteResolver pointed at the same k3d. The Pipeline's
+	// taskRef.resolver: cluster gets dispatched through the remote
+	// driver; Tekton's built-in cluster resolver controller (shipped
+	// in release.yaml) reads the pre-loaded Task and writes it back
+	// on status.data. tkn-act decodes, validates, and inlines.
+	var remoteResolver *refresolver.RemoteResolver
+	if f.Dir == "resolver-remote" {
+		ns, dyn := preloadResolverRemoteTask(t, ctx, kubecfgPath)
+		pmap["targetNamespace"] = tektontypes.ParamValue{
+			Type:      tektontypes.ParamTypeString,
+			StringVal: ns,
+		}
+		// Build the remote resolver from the kubeconfig path the
+		// cluster harness already provisioned for k3d. The resolver's
+		// dynamic client is overridden directly to skip a second
+		// kubeconfig load — same wire effect as the CLI's
+		// --remote-resolver-context plumbing.
+		remoteResolver = refresolver.NewRemoteResolverFromOptions(refresolver.RemoteResolverOptions{
+			Dynamic:   dyn,
+			Namespace: "default", // ResolutionRequests live in any ns; default is fine.
+			Timeout:   2 * time.Minute,
+		})
+	}
+
 	jsonRep := reporter.NewJSON(io.Discard)
 	cap := &captureSink{}
 	rep := reporter.NewTee(jsonRep, cap)
@@ -191,6 +227,14 @@ func runFixtureCluster(t *testing.T, cb *clusterbe.Backend, cmStore, secStore *v
 			Allow:    []string{"git", "hub", "http", "bundles"},
 			CacheDir: t.TempDir(),
 		})
+	}
+	if remoteResolver != nil {
+		// Mode B routing: every dispatch goes through the remote
+		// driver, regardless of the resolver name in the Pipeline
+		// (cluster, in this fixture's case). The validator's
+		// RemoteResolverEnabled Option short-circuits the direct
+		// allow-list check; here we just install the driver.
+		engOpts.Refresolver.SetRemote(remoteResolver)
 	}
 	res, err := engine.New(cb, rep, engOpts).RunPipeline(ctx, engine.PipelineInput{
 		Bundle: b, Name: f.Pipeline, Params: pmap,
@@ -310,4 +354,71 @@ func assertEventShape(t *testing.T, f fixtures.Fixture, events []reporter.Event)
 			}
 		}
 	}
+}
+
+// preloadResolverRemoteTask creates an ephemeral namespace, applies
+// testdata/e2e/resolver-remote/seed/greet.yaml into it, and returns the
+// namespace name plus a dynamic.Interface pointed at the same kube the
+// cluster harness uses. The returned namespace is registered for
+// cleanup at end-of-test.
+//
+// Sequence (Track 1 #9 Phase 5 e2e):
+//
+//  1. Build a kube client + dynamic client from the harness's kubeconfig.
+//  2. Create namespace `tkn-act-rr-<random>`.
+//  3. Apply the seed Task into it via the dynamic Tasks GVR.
+//  4. Return (ns, dyn). Cleanup deletes the namespace at t.Cleanup time.
+//
+// The Pipeline's `taskRef.resolver: cluster` is then dispatched through
+// the Mode B remote driver: tkn-act submits a ResolutionRequest CRD to
+// the same k3d, and Tekton's built-in cluster resolver controller (in
+// release.yaml) reads the pre-loaded Task and writes it back on
+// status.data.
+func preloadResolverRemoteTask(t *testing.T, ctx context.Context, kubecfgPath string) (string, dynamic.Interface) {
+	t.Helper()
+	cfg, err := clientcmd.BuildConfigFromFlags("", kubecfgPath)
+	if err != nil {
+		t.Fatalf("build kubeconfig: %v", err)
+	}
+	kube, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		t.Fatalf("kube client: %v", err)
+	}
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		t.Fatalf("dynamic client: %v", err)
+	}
+
+	// Namespace name unique per test invocation. Use the timestamp so
+	// reruns within the same k3d cluster (uncommon but possible for
+	// debug loops) don't collide.
+	nsName := fmt.Sprintf("tkn-act-rr-%d", time.Now().UnixNano())
+	if _, err := kube.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: nsName},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create namespace: %v", err)
+	}
+	t.Cleanup(func() {
+		// Best-effort namespace cleanup; the k3d itself is also
+		// torn down at end-of-suite via the t.Cleanup on `cb`.
+		_ = kube.CoreV1().Namespaces().Delete(context.Background(), nsName, metav1.DeleteOptions{})
+	})
+
+	// Read the seed Task and apply it via the dynamic client.
+	seedPath := filepath.Join("..", "..", "testdata", "e2e", "resolver-remote", "seed", "greet.yaml")
+	seedBytes, err := os.ReadFile(seedPath)
+	if err != nil {
+		t.Fatalf("read seed: %v", err)
+	}
+	var taskObj map[string]interface{}
+	if err := yaml.Unmarshal(seedBytes, &taskObj); err != nil {
+		t.Fatalf("parse seed: %v", err)
+	}
+	taskUnstr := &unstructured.Unstructured{Object: taskObj}
+	taskUnstr.SetNamespace(nsName)
+	gvrTasks := schema.GroupVersionResource{Group: "tekton.dev", Version: "v1", Resource: "tasks"}
+	if _, err := dyn.Resource(gvrTasks).Namespace(nsName).Create(ctx, taskUnstr, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("apply seed Task into ns %s: %v", nsName, err)
+	}
+	return nsName, dyn
 }
