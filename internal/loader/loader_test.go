@@ -366,3 +366,59 @@ spec:
 		t.Errorf("expected empty PipelineTask for top-level ref, got %q", got[0].PipelineTask)
 	}
 }
+
+func TestLoadStepAction(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata: {name: greet}
+spec:
+  image: alpine:3
+  script: 'echo hi'
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := b.StepActions["greet"]
+	if !ok {
+		t.Fatalf("StepAction not loaded; bundle = %+v", b.StepActions)
+	}
+	if got.Spec.Image != "alpine:3" {
+		t.Errorf("image = %q", got.Spec.Image)
+	}
+}
+
+func TestLoadStepActionDuplicate(t *testing.T) {
+	_, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata: {name: greet}
+spec: {image: alpine:3, script: 'a'}
+---
+apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata: {name: greet}
+spec: {image: alpine:3, script: 'b'}
+`))
+	if err == nil {
+		t.Fatal("want duplicate error, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate StepAction") {
+		t.Errorf("err = %v, want duplicate-StepAction", err)
+	}
+}
+
+func TestLoadV1Beta1UnknownKind(t *testing.T) {
+	_, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1beta1
+kind: SomethingElse
+metadata: {name: x}
+spec: {}
+`))
+	if err == nil {
+		t.Fatal("want unsupported-kind error, got nil")
+	}
+	if !strings.Contains(err.Error(), "v1beta1") {
+		t.Errorf("err = %v, want unsupported-v1beta1", err)
+	}
+}
