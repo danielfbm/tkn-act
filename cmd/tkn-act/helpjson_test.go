@@ -28,6 +28,8 @@ func TestHelpJSONShape(t *testing.T) {
 		// Resolver scaffolding (Track 1 #9 Phase 1).
 		"resolver-cache-dir", "resolver-allow", "resolver-config",
 		"offline", "remote-resolver-context", "resolver-allow-insecure-http",
+		// Phase 5 (Mode B): namespace + timeout for ResolutionRequests.
+		"remote-resolver-namespace", "remote-resolver-timeout",
 		// Sidecar pacing.
 		"sidecar-start-grace", "sidecar-stop-grace",
 	} {
