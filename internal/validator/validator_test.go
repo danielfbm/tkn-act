@@ -682,3 +682,132 @@ spec:
 		t.Errorf("expected does-not-exist in error, got %v", errs)
 	}
 }
+
+// TestValidateTaskSpec covers the per-Task helper used by the engine's
+// lazy-dispatch path to validate resolver-returned bytes.
+func TestValidateTaskSpec(t *testing.T) {
+	tests := []struct {
+		name    string
+		spec    string
+		wantErr string // substring; empty means no error
+	}{
+		{
+			name: "valid",
+			spec: `
+steps:
+  - {name: s, image: alpine, script: 'true'}
+`,
+		},
+		{
+			name: "no steps",
+			spec: `{}
+`,
+			wantErr: "must have at least one step",
+		},
+		{
+			name: "bad timeout",
+			spec: `
+steps: [{name: s, image: alpine, script: 'true'}]
+timeout: not-a-duration
+`,
+			wantErr: "invalid timeout",
+		},
+		{
+			name: "bad onError",
+			spec: `
+steps:
+  - {name: s, image: alpine, script: 'true', onError: surrender}
+`,
+			wantErr: "unsupported onError",
+		},
+		{
+			name: "volume without source",
+			spec: `
+steps: [{name: s, image: alpine, script: 'true'}]
+volumes:
+  - {name: v}
+`,
+			wantErr: "unsupported volume kind",
+		},
+		{
+			name: "volume with two sources",
+			spec: `
+steps: [{name: s, image: alpine, script: 'true'}]
+volumes:
+  - {name: v, emptyDir: {}, hostPath: {path: /tmp}}
+`,
+			wantErr: "multiple sources set",
+		},
+		{
+			name: "hostPath missing path",
+			spec: `
+steps: [{name: s, image: alpine, script: 'true'}]
+volumes:
+  - {name: v, hostPath: {}}
+`,
+			wantErr: "hostPath.path is required",
+		},
+		{
+			name: "volumeMount references undeclared volume",
+			spec: `
+steps:
+  - {name: s, image: alpine, script: 'true', volumeMounts: [{name: ghost, mountPath: /a}]}
+`,
+			wantErr: "references undeclared volume",
+		},
+		{
+			name: "volumeMount with empty mountPath",
+			spec: `
+steps:
+  - {name: s, image: alpine, script: 'true', volumeMounts: [{name: v, mountPath: ""}]}
+volumes:
+  - {name: v, emptyDir: {}}
+`,
+			wantErr: "empty mountPath",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, err := loader.LoadBytes([]byte(`apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: x}
+spec:
+` + indent(tt.spec, "  ")))
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			task := b.Tasks["x"]
+			errs := validator.ValidateTaskSpec("x", task.Spec)
+			if tt.wantErr == "" {
+				if len(errs) != 0 {
+					t.Errorf("unexpected errors: %v", errs)
+				}
+				return
+			}
+			if len(errs) == 0 {
+				t.Fatal("expected error, got none")
+			}
+			found := false
+			for _, e := range errs {
+				if strings.Contains(e.Error(), tt.wantErr) {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("expected substring %q, got %v", tt.wantErr, errs)
+			}
+		})
+	}
+}
+
+func indent(s, prefix string) string {
+	out := ""
+	for _, line := range strings.Split(s, "\n") {
+		if line == "" {
+			out += "\n"
+			continue
+		}
+		out += prefix + line + "\n"
+	}
+	return out
+}
