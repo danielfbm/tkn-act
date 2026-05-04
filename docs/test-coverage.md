@@ -87,6 +87,8 @@ fixtures under `testdata/e2e/`:
 | `finally-timeout/`  | `finally` budget fires; `tasks` block already succeeded |
 | `step-template/`    | `Task.spec.stepTemplate` inheritance: image + env, with one Step overriding env |
 | `pipeline-results/` | `Pipeline.spec.results`: string + array result, one referencing finally output |
+| `configmap-from-yaml/` | `kind: ConfigMap` (apiVersion v1) embedded in `-f`; mounted as a volume |
+| `secret-from-yaml/`    | `kind: Secret` (apiVersion v1) embedded in `-f`; both `data` (base64) and `stringData` exercised |
 
 Plus `internal/backend/docker/docker_integration_test.go`.
 
@@ -123,9 +125,6 @@ In rough order of "you should be aware":
 - **Step-state isolation.** Each step is a separate container; cwd /
   env / `/tmp` from a prior step is gone. Documented as a foot-gun in
   `testdata/limitations/step-state/`.
-- **Loading `kind: ConfigMap` / `kind: Secret` manifests** via
-  `tkn-act -f`. Use `--configmap` / `--configmap-dir` (and the
-  `--secret` equivalents). Manifest support is deferred to v1.3.
 
 ### Plumbed but not covered by an automated test
 

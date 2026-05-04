@@ -201,6 +201,41 @@ spec:
 	}
 }
 
+// TestValidateCMReferenceWithoutSourceIsNotAnError locks in that the
+// validator does NOT statically check for "configMap volume references
+// a name that no source declares". The runtime volume materializer
+// reports the actual error post-merge across all three sources (inline
+// flag, --configmap-dir, and -f-loaded YAML), where the message is
+// useful and accurate; a static validator check would either duplicate
+// it or get the precedence wrong. This test guards against an
+// accidental future change to the validator that would tighten this.
+func TestValidateCMReferenceWithoutSourceIsNotAnError(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  volumes:
+    - name: v
+      configMap: {name: missing-cfg}
+  steps:
+    - name: s
+      image: alpine:3
+      volumeMounts: [{name: v, mountPath: /etc/x}]
+      script: 'true'
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - {name: a, taskRef: {name: t}}
+`)
+	if errs := validator.Validate(b, "p", nil); len(errs) != 0 {
+		t.Errorf("unexpected errors: %v (validator should not own this check)", errs)
+	}
+}
+
 func TestValidatePipelineResultsReferencesUnknownTask(t *testing.T) {
 	b := mustLoad(t, `
 apiVersion: tekton.dev/v1

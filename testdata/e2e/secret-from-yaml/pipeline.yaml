@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+type: Opaque
+data:
+  token: aGVsbG8=
+stringData:
+  raw-token: hello-plain
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: secret-eater
+spec:
+  volumes:
+    - name: app-secret
+      secret:
+        secretName: app-secret
+  steps:
+    - name: read
+      image: alpine:3
+      volumeMounts:
+        - { name: app-secret, mountPath: /etc/app-secret }
+      script: |
+        cat /etc/app-secret/token
+        test "$(cat /etc/app-secret/token)" = "hello"
+        cat /etc/app-secret/raw-token
+        test "$(cat /etc/app-secret/raw-token)" = "hello-plain"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: secret-from-yaml
+spec:
+  tasks:
+    - name: t
+      taskRef: { name: secret-eater }

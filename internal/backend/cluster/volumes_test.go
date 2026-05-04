@@ -301,6 +301,123 @@ func TestApplyVolumeSourcesFinallyTask(t *testing.T) {
 	}
 }
 
+// TestApplyVolumeSourcesBundleOnlyConfigMap locks the regression that
+// surfaced as `TestClusterE2E/configmap-from-yaml` (PR #16): a fixture
+// whose only source for a configMap volume is a `kind: ConfigMap`
+// document in the -f YAML stream — i.e. neither an inline override nor
+// an on-disk dir entry — must have its bytes flow through the cluster
+// projection seam unchanged. Without this, bundle-loaded layers wired
+// in at the CLI go untested at the cluster boundary.
+func TestApplyVolumeSourcesBundleOnlyConfigMap(t *testing.T) {
+	cmStore := volumes.NewStore("")
+	cmStore.LoadBytes("app-config", map[string][]byte{"greeting": []byte("hello-from-yaml")})
+	secStore := volumes.NewStore("")
+	kube := kubefake.NewSimpleClientset()
+	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	be := cluster.NewWithClientsAndStores(cluster.ClientBundle{Dynamic: dyn, Kube: kube}, cmStore, secStore)
+
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{Name: "a", TaskRef: &tektontypes.TaskRef{Name: "t"}}},
+	}}
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{
+		Steps:   []tektontypes.Step{{Name: "s", Image: "alpine:3", Script: "true"}},
+		Volumes: []tektontypes.Volume{{Name: "cfg", ConfigMap: &tektontypes.ConfigMapSource{Name: "app-config"}}},
+	}}
+	tk.Metadata.Name = "t"
+
+	ns := "tkn-act-bundleonly"
+	if _, err := kube.CoreV1().Namespaces().Create(context.Background(), corev1NS(ns), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := be.ApplyVolumeSourcesForTest(context.Background(), backend.PipelineRunInvocation{
+		RunID: "bundleonly", Pipeline: pl, Tasks: map[string]tektontypes.Task{"t": tk},
+	}, ns); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	cm, err := kube.CoreV1().ConfigMaps(ns).Get(context.Background(), "app-config", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get configmap: %v", err)
+	}
+	if cm.Data["greeting"] != "hello-from-yaml" {
+		t.Errorf("configmap.greeting = %q, want hello-from-yaml (bundle-loaded layer not reaching kube projection)", cm.Data["greeting"])
+	}
+}
+
+// TestApplyVolumeSourcesPerFixtureResetIsolatesInline is the regression
+// test for the cluster-e2e harness's actual failure mode in PR #16:
+// the harness shares one *volumes.Store across every subtest in the
+// fixture table, so an inline `--configmap`-style entry added by one
+// fixture (the `volumes` fixture) was still in Store.Inline when the
+// next fixture (`configmap-from-yaml`) ran, shadowing its bundle-loaded
+// `kind: ConfigMap` because Inline is the highest-precedence layer.
+//
+// The fix is per-fixture isolation: the harness must call Store.Reset
+// (or build a fresh Store) between subtests. This test demonstrates
+// both the failure mode (without Reset) and the fix (with Reset) at
+// the cluster projection seam, so a future change to the harness can't
+// silently re-introduce the leak.
+func TestApplyVolumeSourcesPerFixtureResetIsolatesInline(t *testing.T) {
+	cmStore := volumes.NewStore("")
+	secStore := volumes.NewStore("")
+	kube := kubefake.NewSimpleClientset()
+	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	be := cluster.NewWithClientsAndStores(cluster.ClientBundle{Dynamic: dyn, Kube: kube}, cmStore, secStore)
+
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{
+		Steps:   []tektontypes.Step{{Name: "s", Image: "alpine:3", Script: "true"}},
+		Volumes: []tektontypes.Volume{{Name: "cfg", ConfigMap: &tektontypes.ConfigMapSource{Name: "app-config"}}},
+	}}
+	tk.Metadata.Name = "t"
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{Name: "a", TaskRef: &tektontypes.TaskRef{Name: "t"}}},
+	}}
+	in := backend.PipelineRunInvocation{
+		RunID: "isolate", Pipeline: pl, Tasks: map[string]tektontypes.Task{"t": tk},
+	}
+
+	// Fixture A: simulates the `volumes` fixture's inline seeding.
+	nsA := "tkn-act-fxa"
+	if _, err := kube.CoreV1().Namespaces().Create(context.Background(), corev1NS(nsA), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	cmStore.Add("app-config", "greeting", "hello-from-cm")
+	if err := be.ApplyVolumeSourcesForTest(context.Background(), in, nsA); err != nil {
+		t.Fatalf("fixture A apply: %v", err)
+	}
+	cmA, err := kube.CoreV1().ConfigMaps(nsA).Get(context.Background(), "app-config", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get cm A: %v", err)
+	}
+	if cmA.Data["greeting"] != "hello-from-cm" {
+		t.Fatalf("fixture A: greeting = %q, want hello-from-cm", cmA.Data["greeting"])
+	}
+
+	// Fixture B: simulates the `configmap-from-yaml` fixture's bundle
+	// seeding, AFTER Reset() — which is what the harness must do
+	// between subtests. Without Reset(), the inline entry from A would
+	// still be at the highest precedence and shadow the bundle bytes
+	// here, projecting `hello-from-cm` into nsB and failing the
+	// fixture's `test "$..." = "hello-from-yaml"` script with exit 1.
+	cmStore.Reset()
+	secStore.Reset()
+	cmStore.LoadBytes("app-config", map[string][]byte{"greeting": []byte("hello-from-yaml")})
+
+	nsB := "tkn-act-fxb"
+	if _, err := kube.CoreV1().Namespaces().Create(context.Background(), corev1NS(nsB), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := be.ApplyVolumeSourcesForTest(context.Background(), in, nsB); err != nil {
+		t.Fatalf("fixture B apply: %v", err)
+	}
+	cmB, err := kube.CoreV1().ConfigMaps(nsB).Get(context.Background(), "app-config", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get cm B: %v", err)
+	}
+	if cmB.Data["greeting"] != "hello-from-yaml" {
+		t.Errorf("fixture B: greeting = %q, want hello-from-yaml (per-fixture Reset() did not clear inline shadow)", cmB.Data["greeting"])
+	}
+}
+
 // TestApplyVolumeSourcesUnknownConfigMap is the negative case — referencing
 // a configMap source the store can't resolve must fail before submit, the
 // same way the docker side would fail at MaterializeForTask.

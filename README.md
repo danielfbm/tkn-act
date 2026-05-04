@@ -88,7 +88,9 @@ are exercised by both backends in CI — divergences are explicit
   tasks, finally}` (whole-run / DAG / finally budgets)
 - `PipelineTask.retries`
 - Volumes: `emptyDir`, `hostPath`, `configMap`, `secret`
-  (inline via `--configmap`/`--secret` or directory layout)
+  (inline via `--configmap`/`--secret`, directory layout via
+  `--configmap-dir`/`--secret-dir`, or `kind: ConfigMap` /
+  `kind: Secret` resources embedded directly in the `-f` YAML stream)
 - `Task.spec.stepTemplate` — Steps inherit `image`, `command`, `args`,
   `env`, `workingDir`, `imagePullPolicy`, `resources` from a per-Task
   base template (`env` merged by name; Step values always win)

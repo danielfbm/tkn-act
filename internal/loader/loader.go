@@ -4,6 +4,7 @@ package loader
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"regexp"
@@ -18,14 +19,24 @@ type Bundle struct {
 	Pipelines    map[string]tektontypes.Pipeline
 	PipelineRuns []tektontypes.PipelineRun // ordered as found
 	TaskRuns     []tektontypes.TaskRun
+	// ConfigMaps and Secrets are bytes-by-key, populated from any
+	// `kind: ConfigMap` / `kind: Secret` (apiVersion: v1) doc found in
+	// the loaded YAML. They are intended to be poured into the
+	// volumes.Store at run time, where the precedence layering with
+	// inline (--configmap) and on-disk (--configmap-dir) overrides
+	// happens. Map shape: name -> key -> bytes.
+	ConfigMaps map[string]map[string][]byte
+	Secrets    map[string]map[string][]byte
 }
 
 // LoadFiles loads every resource from the given file paths, returning a merged
 // Bundle. Duplicate names within the same kind are an error.
 func LoadFiles(paths []string) (*Bundle, error) {
 	out := &Bundle{
-		Tasks:     map[string]tektontypes.Task{},
-		Pipelines: map[string]tektontypes.Pipeline{},
+		Tasks:      map[string]tektontypes.Task{},
+		Pipelines:  map[string]tektontypes.Pipeline{},
+		ConfigMaps: map[string]map[string][]byte{},
+		Secrets:    map[string]map[string][]byte{},
 	}
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
@@ -46,8 +57,10 @@ func LoadFiles(paths []string) (*Bundle, error) {
 // LoadBytes parses one byte slice (possibly multi-doc) into a Bundle.
 func LoadBytes(data []byte) (*Bundle, error) {
 	out := &Bundle{
-		Tasks:     map[string]tektontypes.Task{},
-		Pipelines: map[string]tektontypes.Pipeline{},
+		Tasks:      map[string]tektontypes.Task{},
+		Pipelines:  map[string]tektontypes.Pipeline{},
+		ConfigMaps: map[string]map[string][]byte{},
+		Secrets:    map[string]map[string][]byte{},
 	}
 
 	docs, err := splitYAMLDocs(data)
@@ -70,8 +83,21 @@ func loadOne(out *Bundle, data []byte) error {
 	if err := yaml.Unmarshal(data, &head); err != nil {
 		return fmt.Errorf("parse head: %w", err)
 	}
-	if head.APIVersion != "tekton.dev/v1" {
-		return fmt.Errorf("unsupported apiVersion %q (only tekton.dev/v1)", head.APIVersion)
+	switch head.APIVersion {
+	case "tekton.dev/v1":
+		// fall through to the Tekton-kind switch below
+	case "v1":
+		// Core Kubernetes kinds we accept: ConfigMap, Secret.
+		switch head.Kind {
+		case "ConfigMap":
+			return loadConfigMap(out, data)
+		case "Secret":
+			return loadSecret(out, data)
+		default:
+			return fmt.Errorf("unsupported v1 kind %q (only ConfigMap and Secret accepted at apiVersion v1)", head.Kind)
+		}
+	default:
+		return fmt.Errorf("unsupported apiVersion %q (only tekton.dev/v1, or v1 for ConfigMap/Secret)", head.APIVersion)
 	}
 	switch head.Kind {
 	case "Task":
@@ -110,6 +136,78 @@ func loadOne(out *Bundle, data []byte) error {
 	return nil
 }
 
+// configMapDoc is the shape we pull out of a `kind: ConfigMap` doc.
+// `binaryData` is parsed only so we can reject it explicitly.
+// `immutable` is parsed-and-ignored so the same YAML can apply against
+// a real cluster.
+type configMapDoc struct {
+	Metadata   tektontypes.Metadata `json:"metadata"`
+	Data       map[string]string    `json:"data,omitempty"`
+	BinaryData map[string]string    `json:"binaryData,omitempty"`
+	Immutable  *bool                `json:"immutable,omitempty"`
+}
+
+func loadConfigMap(out *Bundle, data []byte) error {
+	var cm configMapDoc
+	if err := yaml.Unmarshal(data, &cm); err != nil {
+		return fmt.Errorf("ConfigMap: %w", err)
+	}
+	if cm.Metadata.Name == "" {
+		return fmt.Errorf("ConfigMap: metadata.name is required")
+	}
+	if len(cm.BinaryData) > 0 {
+		return fmt.Errorf("ConfigMap %q: binaryData is not supported (out of scope for tkn-act; use data)", cm.Metadata.Name)
+	}
+	if _, dup := out.ConfigMaps[cm.Metadata.Name]; dup {
+		return fmt.Errorf("duplicate ConfigMap %q", cm.Metadata.Name)
+	}
+	bytesByKey := make(map[string][]byte, len(cm.Data))
+	for k, v := range cm.Data {
+		bytesByKey[k] = []byte(v)
+	}
+	out.ConfigMaps[cm.Metadata.Name] = bytesByKey
+	return nil
+}
+
+// secretDoc is the shape we pull out of a `kind: Secret` doc.
+// `type` is parsed-and-ignored (tkn-act always projects bytes opaquely).
+// `immutable` is parsed-and-ignored so the same YAML can apply against
+// a real cluster.
+type secretDoc struct {
+	Metadata   tektontypes.Metadata `json:"metadata"`
+	Type       string               `json:"type,omitempty"`
+	Data       map[string]string    `json:"data,omitempty"`
+	StringData map[string]string    `json:"stringData,omitempty"`
+	Immutable  *bool                `json:"immutable,omitempty"`
+}
+
+func loadSecret(out *Bundle, data []byte) error {
+	var s secretDoc
+	if err := yaml.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("Secret: %w", err)
+	}
+	if s.Metadata.Name == "" {
+		return fmt.Errorf("Secret: metadata.name is required")
+	}
+	if _, dup := out.Secrets[s.Metadata.Name]; dup {
+		return fmt.Errorf("duplicate Secret %q", s.Metadata.Name)
+	}
+	bytesByKey := make(map[string][]byte, len(s.Data)+len(s.StringData))
+	for k, v := range s.Data {
+		dec, err := base64.StdEncoding.DecodeString(v)
+		if err != nil {
+			return fmt.Errorf("Secret %q: data[%q] is not valid base64: %w", s.Metadata.Name, k, err)
+		}
+		bytesByKey[k] = dec
+	}
+	// stringData wins over data on the same key (kube projection rule).
+	for k, v := range s.StringData {
+		bytesByKey[k] = []byte(v)
+	}
+	out.Secrets[s.Metadata.Name] = bytesByKey
+	return nil
+}
+
 func merge(into, from *Bundle) error {
 	for k, v := range from.Tasks {
 		if _, dup := into.Tasks[k]; dup {
@@ -122,6 +220,18 @@ func merge(into, from *Bundle) error {
 			return fmt.Errorf("duplicate Pipeline %q across files", k)
 		}
 		into.Pipelines[k] = v
+	}
+	for k, v := range from.ConfigMaps {
+		if _, dup := into.ConfigMaps[k]; dup {
+			return fmt.Errorf("duplicate ConfigMap %q across files", k)
+		}
+		into.ConfigMaps[k] = v
+	}
+	for k, v := range from.Secrets {
+		if _, dup := into.Secrets[k]; dup {
+			return fmt.Errorf("duplicate Secret %q across files", k)
+		}
+		into.Secrets[k] = v
 	}
 	into.PipelineRuns = append(into.PipelineRuns, from.PipelineRuns...)
 	into.TaskRuns = append(into.TaskRuns, from.TaskRuns...)

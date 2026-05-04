@@ -157,8 +157,9 @@ func runWith(rf runFlags) error {
 		return mgr.ProvisionResultsDir(taskName)
 	})
 
-	// ConfigMap / Secret stores for volumes.
-	cmStore, secStore, err := buildVolumeStores(cacheRoot)
+	// ConfigMap / Secret stores for volumes. Layered precedence:
+	// inline flags > --*-dir > kind: ConfigMap/Secret loaded from -f.
+	cmStore, secStore, err := buildVolumeStores(cacheRoot, b)
 	if err != nil {
 		return exitcode.Wrap(exitcode.Usage, err)
 	}
@@ -275,10 +276,17 @@ func buildReporter(out *os.File) (reporter.Reporter, error) {
 	return reporter.NewPretty(out, reporter.PrettyOptions{Color: color, Verbosity: verb}), nil
 }
 
-// buildVolumeStores assembles the configMap / secret stores from the global
-// flags. --configmap-dir / --secret-dir default to subdirs of the cache.
-// --configmap / --secret entries (repeatable) override on a per-key basis.
-func buildVolumeStores(cacheRoot string) (cm *volumes.Store, sec *volumes.Store, err error) {
+// buildVolumeStores assembles the configMap / secret stores from the
+// global flags AND from any kind: ConfigMap / kind: Secret resources
+// loaded from the -f YAML stream (b may be nil).
+//
+// Layered precedence inside each Store (highest first):
+//  1. inline --configmap / --secret entries
+//  2. on-disk --configmap-dir / --secret-dir layout
+//  3. -f-loaded `kind: ConfigMap` / `kind: Secret` resources
+//
+// See internal/volumes/store.go for the layer mechanics.
+func buildVolumeStores(cacheRoot string, b *loader.Bundle) (cm *volumes.Store, sec *volumes.Store, err error) {
 	cmDir := gf.configMapDir
 	if cmDir == "" {
 		cmDir = filepath.Join(cacheRoot, "configmaps")
@@ -289,6 +297,19 @@ func buildVolumeStores(cacheRoot string) (cm *volumes.Store, sec *volumes.Store,
 	}
 	cm = volumes.NewStore(cmDir)
 	sec = volumes.NewStore(secDir)
+
+	// 3. Bundle-loaded resources first (lowest layer; they get shadowed
+	// by anything in dir or inline that names the same key).
+	if b != nil {
+		for name, bytesByKey := range b.ConfigMaps {
+			cm.LoadBytes(name, bytesByKey)
+		}
+		for name, bytesByKey := range b.Secrets {
+			sec.LoadBytes(name, bytesByKey)
+		}
+	}
+	// Order of Add vs LoadBytes calls here doesn't matter; Store.Resolve
+	// composes layers so Inline overwrites Dir overwrites Bundle.
 	if err := parseInlineFlags(cm, gf.configMaps, "configmap"); err != nil {
 		return nil, nil, err
 	}

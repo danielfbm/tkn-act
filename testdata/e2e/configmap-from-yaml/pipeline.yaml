@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  greeting: hello-from-yaml
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: cm-eater
+spec:
+  volumes:
+    - name: app-config
+      configMap:
+        name: app-config
+  steps:
+    - name: read
+      image: alpine:3
+      volumeMounts:
+        - { name: app-config, mountPath: /etc/app-config }
+      script: |
+        cat /etc/app-config/greeting
+        test "$(cat /etc/app-config/greeting)" = "hello-from-yaml"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: configmap-from-yaml
+spec:
+  tasks:
+    - name: t
+      taskRef: { name: cm-eater }
