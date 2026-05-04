@@ -201,6 +201,20 @@ func All() []Fixture {
 		},
 		{Dir: "step-results", Pipeline: "stepres", WantStatus: "succeeded"},
 		{
+			Dir:        "display-name-description",
+			Pipeline:   "display-name-description",
+			WantStatus: "succeeded",
+			// WantEventFields asserts that specific event kinds carry the
+			// documented display_name / description fields. Mirrors how
+			// pipeline-results checks Results, but at the event-stream
+			// layer.
+			WantEventFields: map[string]map[string]string{
+				"run-start":  {"display_name": "Build & test", "description": "Build then test."},
+				"task-start": {"display_name": "Compile binary", "description": "Runs `go test ./...`."},
+				"step-log":   {"display_name": "Compile"},
+			},
+		},
+		{
 			Dir: "volumes", Pipeline: "configmap-eater", WantStatus: "succeeded",
 			ConfigMaps: map[string]map[string]string{
 				"app-config": {"greeting": "hello-from-cm"},

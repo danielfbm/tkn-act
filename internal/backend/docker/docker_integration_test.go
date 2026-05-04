@@ -16,7 +16,7 @@ import (
 
 type captureLogs struct{ lines []string }
 
-func (c *captureLogs) StepLog(_, _, _, line string) { c.lines = append(c.lines, line) }
+func (c *captureLogs) StepLog(_, _, _, _, line string) { c.lines = append(c.lines, line) }
 
 func TestRunSingleStep(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
