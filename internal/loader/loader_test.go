@@ -36,6 +36,28 @@ metadata: {name: x}
 	}
 }
 
+// TestRejectsUnsupportedV1Kind covers the `default` branch in loadOne's
+// inner v1 switch: only ConfigMap and Secret are accepted at apiVersion
+// v1; any other core kind (Pod, Service, etc.) must be rejected with a
+// message that names the offending kind.
+func TestRejectsUnsupportedV1Kind(t *testing.T) {
+	yaml := []byte(`
+apiVersion: v1
+kind: Pod
+metadata: {name: p}
+spec:
+  containers:
+    - {name: c, image: busybox}
+`)
+	_, err := loader.LoadBytes(yaml)
+	if err == nil {
+		t.Fatal("expected error for apiVersion=v1 kind=Pod")
+	}
+	if !strings.Contains(err.Error(), "unsupported v1 kind") {
+		t.Errorf("err = %v, want it to mention 'unsupported v1 kind'", err)
+	}
+}
+
 func TestRejectsWrongAPIVersion(t *testing.T) {
 	yaml := []byte(`
 apiVersion: tekton.dev/v1beta1
