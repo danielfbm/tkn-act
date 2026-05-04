@@ -394,7 +394,7 @@ Lifecycle on `--docker` (per Task with at least one sidecar):
 
 1. Workspace prep (existing).
 2. Sidecar images are pre-pulled by the engine; the pause image
-   (`gcr.io/google-containers/pause:3.9`, ~700KB, cached forever
+   (`registry.k8s.io/pause:3.9`, ~700KB, cached forever
    after first pull) is pulled by the docker backend itself.
 3. A tiny **pause container** is started with normal Docker
    networking. It owns the netns and only exits on signal (mirrors

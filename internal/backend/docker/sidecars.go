@@ -22,7 +22,7 @@ import (
 // the design spec §3.1 for provenance and rationale (chosen over
 // "first-sidecar-as-netns-owner" so any sidecar can crash without
 // taking the netns down).
-const pauseImage = "gcr.io/google-containers/pause:3.9"
+const pauseImage = "registry.k8s.io/pause:3.9"
 
 // sidecarStdout / sidecarStderr are the fine-grained Stream values
 // emitted on EvtSidecarLog so consumers can filter sidecar logs
