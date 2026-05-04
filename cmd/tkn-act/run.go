@@ -17,6 +17,7 @@ import (
 	"github.com/danielfbm/tkn-act/internal/engine"
 	"github.com/danielfbm/tkn-act/internal/exitcode"
 	"github.com/danielfbm/tkn-act/internal/loader"
+	"github.com/danielfbm/tkn-act/internal/refresolver"
 	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	"github.com/danielfbm/tkn-act/internal/validator"
@@ -108,8 +109,13 @@ func runWith(rf runFlags) error {
 		}
 	}
 
-	// Validate.
-	if errs := validator.Validate(b, pipe, nil); len(errs) > 0 {
+	// Validate (resolver-aware).
+	vopts := validator.Options{
+		Offline:               gf.offline,
+		RegisteredResolvers:   gf.resolverAllow,
+		RemoteResolverEnabled: gf.remoteResolverContext != "",
+	}
+	if errs := validator.ValidateWithOptions(b, pipe, nil, vopts); len(errs) > 0 {
 		for _, e := range errs {
 			fmt.Fprintln(os.Stderr, "error:", e)
 		}
@@ -201,7 +207,22 @@ func runWith(rf runFlags) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	res, err := engine.New(be, rep, engine.Options{MaxParallel: gf.maxParallel, VolumeResolver: volResolver}).RunPipeline(ctx, engine.PipelineInput{
+	// Build the refresolver registry. Phase 1 only registers the inline
+	// stub; concrete resolvers land in Phase 2-4. The allow-list passes
+	// through; --offline / --resolver-cache-dir / --resolver-config are
+	// stored on the registry for later phases.
+	reg := refresolver.NewDefaultRegistry(refresolver.Options{
+		Allow:             gf.resolverAllow,
+		CacheDir:          resolveResolverCacheDir(gf.resolverCacheDir),
+		Offline:           gf.offline,
+		AllowInsecureHTTP: gf.resolverAllowInsecureHTTP,
+	})
+
+	res, err := engine.New(be, rep, engine.Options{
+		MaxParallel:    gf.maxParallel,
+		VolumeResolver: volResolver,
+		Refresolver:    reg,
+	}).RunPipeline(ctx, engine.PipelineInput{
 		Bundle:     b,
 		Name:       pipe,
 		Params:     paramsMap,
@@ -225,6 +246,18 @@ func runWith(rf runFlags) error {
 	default:
 		return exitcode.Wrap(exitcode.Pipeline, fmt.Errorf("pipeline %q %s", pipe, res.Status))
 	}
+}
+
+// resolveResolverCacheDir returns the on-disk cache dir for resolved
+// bytes. An explicit --resolver-cache-dir wins; otherwise we default
+// to $XDG_CACHE_HOME/tkn-act/resolved (or $HOME/.cache/tkn-act/resolved
+// when XDG_CACHE_HOME isn't set). Phase 1 doesn't yet read or write
+// from this dir; Phase 6 wires it.
+func resolveResolverCacheDir(explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	return filepath.Join(cacheDir(), "resolved")
 }
 
 func cacheDir() string {

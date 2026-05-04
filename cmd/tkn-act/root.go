@@ -16,6 +16,16 @@ type globalFlags struct {
 	secretDir    string
 	configMaps   []string // <name>=<k>=<v>[,<k>=<v>...]
 	secrets      []string
+	// Resolver scaffolding (Track 1 #9 Phase 1). Direct-mode resolver
+	// dispatch hooks land here; concrete resolvers (git/hub/http/...)
+	// land in Phase 2-4. Phase 1 only the inline+offline paths actually
+	// do anything.
+	resolverCacheDir          string
+	resolverAllow             []string
+	resolverConfig            string
+	offline                   bool
+	remoteResolverContext     string
+	resolverAllowInsecureHTTP bool
 }
 
 var gf globalFlags
@@ -63,6 +73,15 @@ Designed for both humans and AI agents:
 	cmd.PersistentFlags().StringVar(&gf.secretDir, "secret-dir", "", "directory to resolve secret volumes from (default $XDG_CACHE_HOME/tkn-act/secrets)")
 	cmd.PersistentFlags().StringArrayVar(&gf.configMaps, "configmap", nil, "inline configMap as <name>=<k>=<v>[,<k>=<v>...] (repeatable)")
 	cmd.PersistentFlags().StringArrayVar(&gf.secrets, "secret", nil, "inline secret as <name>=<k>=<v>[,<k>=<v>...] (repeatable)")
+	// Resolver scaffolding (Track 1 #9 Phase 1). Concrete resolvers
+	// land in Phase 2-4; in Phase 1 only the inline+offline paths
+	// actually do anything yet.
+	cmd.PersistentFlags().StringVar(&gf.resolverCacheDir, "resolver-cache-dir", "", "directory for cached resolver bytes (default $XDG_CACHE_HOME/tkn-act/resolved)")
+	cmd.PersistentFlags().StringSliceVar(&gf.resolverAllow, "resolver-allow", []string{"git", "hub", "http", "bundles"}, "comma-separated resolver names that may dispatch (security; cluster is opt-in)")
+	cmd.PersistentFlags().StringVar(&gf.resolverConfig, "resolver-config", "", "path to a YAML/JSON file with per-resolver settings (auth tokens, mirror URLs, etc.)")
+	cmd.PersistentFlags().BoolVar(&gf.offline, "offline", false, "reject any resolver cache miss; useful for hermetic CI")
+	cmd.PersistentFlags().StringVar(&gf.remoteResolverContext, "remote-resolver-context", "", "kubeconfig context for Mode B (delegate resolution to a Tekton cluster); unset = direct mode")
+	cmd.PersistentFlags().BoolVar(&gf.resolverAllowInsecureHTTP, "resolver-allow-insecure-http", false, "allow plain http:// for the http resolver (CI-only escape hatch)")
 
 	cmd.AddCommand(newRunCmd())
 	cmd.AddCommand(newListCmd())

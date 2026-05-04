@@ -25,6 +25,9 @@ func TestHelpJSONShape(t *testing.T) {
 		"output", "debug", "cleanup", "max-parallel", "cluster",
 		"no-color", "color", "quiet", "verbose",
 		"configmap-dir", "secret-dir", "configmap", "secret",
+		// Resolver scaffolding (Track 1 #9 Phase 1).
+		"resolver-cache-dir", "resolver-allow", "resolver-config",
+		"offline", "remote-resolver-context", "resolver-allow-insecure-http",
 	} {
 		if !got[want] {
 			t.Errorf("missing global flag %q", want)

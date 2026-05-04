@@ -72,3 +72,66 @@ func TestBuildVolumeStoresNilBundleIsBackwardCompatible(t *testing.T) {
 		t.Fatal("expected non-nil stores")
 	}
 }
+
+// TestRunFlagsResolverDefaults asserts that the resolver flags wire
+// into globalFlags and that the default cache dir, allow-list, and
+// offline mode are sane out of the box.
+func TestRunFlagsResolverDefaults(t *testing.T) {
+	// Reset
+	gf = globalFlags{}
+	cmd := newRootCmd()
+	if err := cmd.Flags().Parse(nil); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// The flags must exist (this is the scaffolding promise).
+	if cmd.PersistentFlags().Lookup("resolver-cache-dir") == nil {
+		t.Error("missing --resolver-cache-dir flag")
+	}
+	if cmd.PersistentFlags().Lookup("offline") == nil {
+		t.Error("missing --offline flag")
+	}
+	if cmd.PersistentFlags().Lookup("resolver-allow") == nil {
+		t.Error("missing --resolver-allow flag")
+	}
+	if cmd.PersistentFlags().Lookup("remote-resolver-context") == nil {
+		t.Error("missing --remote-resolver-context flag")
+	}
+	if cmd.PersistentFlags().Lookup("resolver-config") == nil {
+		t.Error("missing --resolver-config flag")
+	}
+	if cmd.PersistentFlags().Lookup("resolver-allow-insecure-http") == nil {
+		t.Error("missing --resolver-allow-insecure-http flag")
+	}
+
+	// Default allow-list MUST match docs/AGENTS.md (Phase 1: git, hub,
+	// http, bundles — cluster is opt-in).
+	want := []string{"git", "hub", "http", "bundles"}
+	if len(gf.resolverAllow) != len(want) {
+		t.Errorf("resolverAllow = %v, want %v", gf.resolverAllow, want)
+	}
+	for i, n := range want {
+		if i < len(gf.resolverAllow) && gf.resolverAllow[i] != n {
+			t.Errorf("resolverAllow[%d] = %q, want %q", i, gf.resolverAllow[i], n)
+		}
+	}
+	if gf.offline {
+		t.Error("--offline default = true, want false")
+	}
+}
+
+// TestResolverCacheDirDefault: when --resolver-cache-dir is empty, the
+// CLI's helper resolves to $XDG_CACHE_HOME/tkn-act/resolved.
+func TestResolverCacheDirDefault(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", "/tmp/xdg-test")
+	got := resolveResolverCacheDir("")
+	want := "/tmp/xdg-test/tkn-act/resolved"
+	if got != want {
+		t.Errorf("resolverCacheDir = %q, want %q", got, want)
+	}
+
+	// Explicit override wins.
+	got = resolveResolverCacheDir("/explicit/path")
+	if got != "/explicit/path" {
+		t.Errorf("explicit = %q, want /explicit/path", got)
+	}
+}
