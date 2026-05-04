@@ -98,10 +98,9 @@ func TestRegistryEmptyResolverNameRejected(t *testing.T) {
 // TestInlineResolverRegistered: NewDefaultRegistry pre-registers the
 // "inline" stub resolver. The inline resolver is the magic name the
 // test harness uses to feed bytes into the engine without touching the
-// network. Other resolvers (git/hub/http/bundles/cluster) are NOT
-// registered by Phase 1; calls to them must return
-// ErrResolverNotRegistered with a message including "not yet
-// implemented in this release".
+// network. Phase 2 adds the git resolver; the remaining direct
+// resolvers (hub/http/bundles/cluster) still return
+// ErrResolverNotRegistered until their respective phases land.
 func TestInlineResolverRegistered(t *testing.T) {
 	reg := refresolver.NewDefaultRegistry(refresolver.Options{})
 	if reg == nil {
@@ -117,13 +116,14 @@ func TestInlineResolverRegistered(t *testing.T) {
 		t.Errorf("err = %v, want wrapping ErrInlineNoData", err)
 	}
 
-	// Other names must be rejected with a "not yet implemented" hint.
-	_, err = reg.Resolve(context.Background(), refresolver.Request{Resolver: "git"})
+	// Phase-3+ resolvers must still be rejected with a "not yet
+	// implemented" hint until their phase ships.
+	_, err = reg.Resolve(context.Background(), refresolver.Request{Resolver: "hub"})
 	if err == nil {
-		t.Fatal("expected error for git in Phase 1")
+		t.Fatal("expected error for hub (not yet implemented)")
 	}
 	if !errors.Is(err, refresolver.ErrResolverNotRegistered) {
-		t.Errorf("err = %v, want ErrResolverNotRegistered for git in Phase 1", err)
+		t.Errorf("err = %v, want ErrResolverNotRegistered for hub", err)
 	}
 }
 
