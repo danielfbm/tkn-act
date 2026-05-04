@@ -103,11 +103,54 @@ type StepTemplate struct {
 	ImagePullPolicy string         `json:"imagePullPolicy,omitempty"`
 }
 
-type Step struct {
-	Name            string         `json:"name"`
-	DisplayName     string         `json:"displayName,omitempty"`
+// StepAction is a referenceable Step shape (apiVersion tekton.dev/v1beta1).
+// Lives in the loader bundle alongside Tasks and Pipelines; resolved into
+// concrete Steps by the engine before stepTemplate merge / substitution.
+type StepAction struct {
+	Object `json:",inline"`
+	Spec   StepActionSpec `json:"spec"`
+}
+
+// StepActionSpec is the body of a StepAction. It overlaps with Step but
+// is intentionally a separate type so that fields that don't make sense
+// on a referenceable shape (Name, Ref, OnError) are absent. In particular
+// StepActionSpec deliberately has NO Ref field — nested StepAction refs
+// are forbidden by construction (validator rule 15).
+type StepActionSpec struct {
 	Description     string         `json:"description,omitempty"`
+	Params          []ParamSpec    `json:"params,omitempty"`
+	Results         []ResultSpec   `json:"results,omitempty"`
 	Image           string         `json:"image"`
+	Command         []string       `json:"command,omitempty"`
+	Args            []string       `json:"args,omitempty"`
+	Script          string         `json:"script,omitempty"`
+	Env             []EnvVar       `json:"env,omitempty"`
+	WorkingDir      string         `json:"workingDir,omitempty"`
+	ImagePullPolicy string         `json:"imagePullPolicy,omitempty"`
+	Resources       *StepResources `json:"resources,omitempty"`
+	VolumeMounts    []VolumeMount  `json:"volumeMounts,omitempty"`
+}
+
+// StepActionRef is the reference written under Step.ref. Only `name`
+// is honored in v1; resolver-based forms (hub / git / cluster /
+// bundles) are deferred to Track 1 #9.
+type StepActionRef struct {
+	Name string `json:"name"`
+}
+
+type Step struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName,omitempty"`
+	Description string `json:"description,omitempty"`
+	// Ref, when set, points to a StepAction whose body is inlined into
+	// this Step before substitution. Mutually exclusive with Image /
+	// Command / Args / Script / Env / Results: a Step is either inline
+	// or a reference. See docs/superpowers/specs/2026-05-04-step-actions-design.md.
+	Ref *StepActionRef `json:"ref,omitempty"`
+	// Params is the list of values bound into the referenced StepAction's
+	// declared params. Ignored when Ref is nil.
+	Params          []Param        `json:"params,omitempty"`
+	Image           string         `json:"image,omitempty"`
 	Command         []string       `json:"command,omitempty"`
 	Args            []string       `json:"args,omitempty"`
 	Script          string         `json:"script,omitempty"`

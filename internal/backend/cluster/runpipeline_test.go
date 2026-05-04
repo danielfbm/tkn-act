@@ -610,6 +610,66 @@ func TestBuildPipelineRunInlinesSidecars(t *testing.T) {
 	}
 }
 
+// TestBuildPipelineRunInlinesStepActionRefs: when the engine expanded
+// a Step.Ref into an inlined Step, the cluster backend must serialise
+// the resulting Step without `ref:` under
+// pipelineSpec.tasks[].taskSpec.steps[<i>], with image / script /
+// results carried through. (taskSpecToMap is a json.Marshal round-
+// trip; this test guards that property after StepAction expansion.)
+//
+// The test simulates what resolveStepActions produces just before the
+// engine hands the spec to the cluster backend — a Task whose Steps
+// have no Ref field but full body. If a future refactor lets a Step
+// with Ref reach the cluster backend, the test catches it: the json
+// `ref,omitempty` tag would serialise the field and break this
+// invariant.
+func TestBuildPipelineRunInlinesStepActionRefs(t *testing.T) {
+	be, _, _, _, _ := fakeBackend(t)
+
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{Name: "a", TaskRef: &tektontypes.TaskRef{Name: "t"}}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{
+		Steps: []tektontypes.Step{{
+			Name:    "g",
+			Image:   "alpine:3",
+			Script:  "echo hello tekton",
+			Results: []tektontypes.ResultSpec{{Name: "greeting"}},
+		}},
+	}}
+	tk.Metadata.Name = "t"
+
+	prObj, err := be.BuildPipelineRunObject(backend.PipelineRunInvocation{
+		RunID: "12345678", PipelineRunName: "p-12345678",
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"t": tk},
+	}, "tkn-act-12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	un := prObj.(*unstructured.Unstructured)
+	tasks, _, _ := unstructured.NestedSlice(un.Object, "spec", "pipelineSpec", "tasks")
+	if len(tasks) != 1 {
+		t.Fatalf("tasks slice = %d, want 1", len(tasks))
+	}
+	taskMap := tasks[0].(map[string]any)
+	taskSpec := taskMap["taskSpec"].(map[string]any)
+	steps, ok := taskSpec["steps"].([]any)
+	if !ok || len(steps) != 1 {
+		t.Fatalf("taskSpec.steps = %v", taskSpec["steps"])
+	}
+	step := steps[0].(map[string]any)
+	if _, hasRef := step["ref"]; hasRef {
+		t.Errorf("inlined step still has `ref:` field; engine expansion lost: %+v", step)
+	}
+	if step["image"] != "alpine:3" {
+		t.Errorf("step.image = %v, want alpine:3", step["image"])
+	}
+	if step["script"] != "echo hello tekton" {
+		t.Errorf("step.script = %v, want echo hello tekton", step["script"])
+	}
+}
+
 // TestCollectTaskOutcomesIgnoresUnlabelled: a TaskRun without the
 // tekton.dev/pipelineTask label must be skipped — we don't know which
 // pipeline task it belongs to, so it can't appear in res.Tasks.

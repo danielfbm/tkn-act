@@ -19,6 +19,16 @@ type Bundle struct {
 	Pipelines    map[string]tektontypes.Pipeline
 	PipelineRuns []tektontypes.PipelineRun // ordered as found
 	TaskRuns     []tektontypes.TaskRun
+	// StepActions are referenceable Step shapes (apiVersion
+	// tekton.dev/v1beta1, kind StepAction). The engine inlines them
+	// into Steps that carry `ref:` before stepTemplate / substitution.
+	StepActions map[string]tektontypes.StepAction
+	// RawTasks holds the original YAML bytes for each Task by name.
+	// The validator uses this to inspect raw map shapes for fields
+	// that sigs.k8s.io/yaml drops during typed unmarshaling
+	// (e.g. unknown keys under Step.ref like resolver/params/bundle —
+	// see validator rule 17).
+	RawTasks map[string][]byte
 	// ConfigMaps and Secrets are bytes-by-key, populated from any
 	// `kind: ConfigMap` / `kind: Secret` (apiVersion: v1) doc found in
 	// the loaded YAML. They are intended to be poured into the
@@ -33,10 +43,12 @@ type Bundle struct {
 // Bundle. Duplicate names within the same kind are an error.
 func LoadFiles(paths []string) (*Bundle, error) {
 	out := &Bundle{
-		Tasks:      map[string]tektontypes.Task{},
-		Pipelines:  map[string]tektontypes.Pipeline{},
-		ConfigMaps: map[string]map[string][]byte{},
-		Secrets:    map[string]map[string][]byte{},
+		Tasks:       map[string]tektontypes.Task{},
+		Pipelines:   map[string]tektontypes.Pipeline{},
+		StepActions: map[string]tektontypes.StepAction{},
+		RawTasks:    map[string][]byte{},
+		ConfigMaps:  map[string]map[string][]byte{},
+		Secrets:     map[string]map[string][]byte{},
 	}
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
@@ -57,10 +69,12 @@ func LoadFiles(paths []string) (*Bundle, error) {
 // LoadBytes parses one byte slice (possibly multi-doc) into a Bundle.
 func LoadBytes(data []byte) (*Bundle, error) {
 	out := &Bundle{
-		Tasks:      map[string]tektontypes.Task{},
-		Pipelines:  map[string]tektontypes.Pipeline{},
-		ConfigMaps: map[string]map[string][]byte{},
-		Secrets:    map[string]map[string][]byte{},
+		Tasks:       map[string]tektontypes.Task{},
+		Pipelines:   map[string]tektontypes.Pipeline{},
+		StepActions: map[string]tektontypes.StepAction{},
+		RawTasks:    map[string][]byte{},
+		ConfigMaps:  map[string]map[string][]byte{},
+		Secrets:     map[string]map[string][]byte{},
 	}
 
 	docs, err := splitYAMLDocs(data)
@@ -85,7 +99,18 @@ func loadOne(out *Bundle, data []byte) error {
 	}
 	switch head.APIVersion {
 	case "tekton.dev/v1":
-		// fall through to the Tekton-kind switch below
+		// fall through to the Tekton-kind switch below (handles Task,
+		// Pipeline, PipelineRun, TaskRun)
+	case "tekton.dev/v1beta1":
+		// v1beta1 is StepAction-only in this release. Returns directly:
+		// the second switch below is skipped because Go's switch does
+		// not fall through.
+		switch head.Kind {
+		case "StepAction":
+			return loadStepAction(out, data)
+		default:
+			return fmt.Errorf("unsupported tekton.dev/v1beta1 kind %q (only StepAction)", head.Kind)
+		}
 	case "v1":
 		// Core Kubernetes kinds we accept: ConfigMap, Secret.
 		switch head.Kind {
@@ -97,7 +122,7 @@ func loadOne(out *Bundle, data []byte) error {
 			return fmt.Errorf("unsupported v1 kind %q (only ConfigMap and Secret accepted at apiVersion v1)", head.Kind)
 		}
 	default:
-		return fmt.Errorf("unsupported apiVersion %q (only tekton.dev/v1, or v1 for ConfigMap/Secret)", head.APIVersion)
+		return fmt.Errorf("unsupported apiVersion %q (only tekton.dev/v1, tekton.dev/v1beta1 for StepAction, or v1 for ConfigMap/Secret)", head.APIVersion)
 	}
 	switch head.Kind {
 	case "Task":
@@ -109,6 +134,13 @@ func loadOne(out *Bundle, data []byte) error {
 			return fmt.Errorf("duplicate Task %q", t.Metadata.Name)
 		}
 		out.Tasks[t.Metadata.Name] = t
+		// Stash raw bytes for the validator's rule 17 (resolver-form
+		// Step.ref) which needs to inspect keys that typed unmarshaling
+		// silently drops.
+		if out.RawTasks == nil {
+			out.RawTasks = map[string][]byte{}
+		}
+		out.RawTasks[t.Metadata.Name] = append([]byte(nil), data...)
 	case "Pipeline":
 		var p tektontypes.Pipeline
 		if err := yaml.Unmarshal(data, &p); err != nil {
@@ -133,6 +165,26 @@ func loadOne(out *Bundle, data []byte) error {
 	default:
 		return fmt.Errorf("unsupported kind %q", head.Kind)
 	}
+	return nil
+}
+
+// loadStepAction parses a `kind: StepAction` (apiVersion tekton.dev/v1beta1)
+// doc into the bundle. Duplicate names within a single bundle are an error.
+func loadStepAction(out *Bundle, data []byte) error {
+	var sa tektontypes.StepAction
+	if err := yaml.Unmarshal(data, &sa); err != nil {
+		return fmt.Errorf("StepAction: %w", err)
+	}
+	if sa.Metadata.Name == "" {
+		return fmt.Errorf("StepAction: metadata.name is required")
+	}
+	if _, dup := out.StepActions[sa.Metadata.Name]; dup {
+		return fmt.Errorf("duplicate StepAction %q", sa.Metadata.Name)
+	}
+	if out.StepActions == nil {
+		out.StepActions = map[string]tektontypes.StepAction{}
+	}
+	out.StepActions[sa.Metadata.Name] = sa
 	return nil
 }
 
@@ -215,11 +267,26 @@ func merge(into, from *Bundle) error {
 		}
 		into.Tasks[k] = v
 	}
+	for k, v := range from.RawTasks {
+		if into.RawTasks == nil {
+			into.RawTasks = map[string][]byte{}
+		}
+		into.RawTasks[k] = v
+	}
 	for k, v := range from.Pipelines {
 		if _, dup := into.Pipelines[k]; dup {
 			return fmt.Errorf("duplicate Pipeline %q across files", k)
 		}
 		into.Pipelines[k] = v
+	}
+	for k, v := range from.StepActions {
+		if _, dup := into.StepActions[k]; dup {
+			return fmt.Errorf("duplicate StepAction %q across files", k)
+		}
+		if into.StepActions == nil {
+			into.StepActions = map[string]tektontypes.StepAction{}
+		}
+		into.StepActions[k] = v
 	}
 	for k, v := range from.ConfigMaps {
 		if _, dup := into.ConfigMaps[k]; dup {
