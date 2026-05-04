@@ -64,12 +64,17 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 	results := map[string]map[string]string{} // task → result name → value
 	outcomes := map[string]TaskOutcome{}      // task → outcome
 
-	e.rep.Emit(reporter.Event{Kind: reporter.EvtRunStart, Time: time.Now(), RunID: runID, Pipeline: pl.Metadata.Name})
+	e.rep.Emit(reporter.Event{
+		Kind: reporter.EvtRunStart, Time: time.Now(),
+		RunID: runID, Pipeline: pl.Metadata.Name,
+		DisplayName: pl.Spec.DisplayName,
+		Description: pl.Spec.Description,
+	})
 
 	// Pre-pull images.
 	images := uniqueImages(in.Bundle, pl)
 	if err := e.be.Prepare(ctx, backend.RunSpec{RunID: runID, Pipeline: pl.Metadata.Name, Images: images, Workspaces: in.Workspaces}); err != nil {
-		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Message: err.Error()})
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Message: err.Error(), DisplayName: pl.Spec.DisplayName})
 		return RunResult{Status: "failed"}, err
 	}
 	defer func() { _ = e.be.Cleanup(context.Background()) }()
@@ -88,7 +93,7 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 	}
 	levels, err := g.Levels()
 	if err != nil {
-		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Message: err.Error()})
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Message: err.Error(), DisplayName: pl.Spec.DisplayName})
 		return RunResult{Status: "failed"}, err
 	}
 
@@ -97,7 +102,7 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 
 	timeouts, err := parsePipelineTimeouts(pl.Spec.Timeouts)
 	if err != nil {
-		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Message: err.Error()})
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Message: err.Error(), DisplayName: pl.Spec.DisplayName})
 		return RunResult{Status: "failed"}, err
 	}
 	pipeCtx, pipeCancel := withMaybeBudget(ctx, timeouts.Pipeline)
@@ -116,7 +121,7 @@ levelLoop:
 					continue
 				}
 				outcomes[taskName] = TaskOutcome{Status: "not-run"}
-				e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: taskName, Message: "tasks timeout fired"})
+				e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: taskName, Message: "tasks timeout fired", DisplayName: main[taskName].DisplayName})
 			}
 			continue
 		}
@@ -141,16 +146,26 @@ levelLoop:
 				mu.Lock()
 				outcomes[tname] = TaskOutcome{Status: "not-run"}
 				mu.Unlock()
-				e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: tname, Message: "upstream failure"})
+				e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: tname, Message: "upstream failure", DisplayName: pt.DisplayName})
 				continue
 			}
 
+			// Resolve the Task spec (best-effort) so we can carry its
+			// description on task-start. Any lookup error is handled by
+			// runOne; it's safe to ignore here.
+			taskSpec, _ := lookupTaskSpec(in.Bundle, pt)
+
 			eg.Go(func() error {
-				e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskStart, Time: time.Now(), Task: tname})
+				e.rep.Emit(reporter.Event{
+					Kind: reporter.EvtTaskStart, Time: time.Now(), Task: tname,
+					DisplayName: pt.DisplayName,
+					Description: taskSpec.Description,
+				})
 				oc := e.runOneWithPolicy(gctx, in, pl, pt, params, results, runID, pipelineRunName)
 				e.rep.Emit(reporter.Event{
 					Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: tname,
 					Status: oc.Status, Duration: oc.Duration, Message: oc.Message, Attempt: oc.Attempt,
+					DisplayName: pt.DisplayName,
 				})
 				mu.Lock()
 				outcomes[tname] = oc
@@ -185,10 +200,15 @@ levelLoop:
 	for _, pt := range pl.Spec.Finally {
 		if finallyCtx.Err() != nil {
 			outcomes[pt.Name] = TaskOutcome{Status: "not-run"}
-			e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: pt.Name, Message: "finally timeout fired"})
+			e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: pt.Name, Message: "finally timeout fired", DisplayName: pt.DisplayName})
 			continue
 		}
-		e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskStart, Time: time.Now(), Task: pt.Name})
+		finallyTaskSpec, _ := lookupTaskSpec(in.Bundle, pt)
+		e.rep.Emit(reporter.Event{
+			Kind: reporter.EvtTaskStart, Time: time.Now(), Task: pt.Name,
+			DisplayName: pt.DisplayName,
+			Description: finallyTaskSpec.Description,
+		})
 		oc := e.runOneWithPolicy(finallyCtx, in, pl, pt, params, results, runID, pipelineRunName)
 		// If the finally (or pipeline) budget fired during this task, the
 		// backend returned a cancellation-class outcome ("infrafailed" /
@@ -203,6 +223,7 @@ levelLoop:
 		e.rep.Emit(reporter.Event{
 			Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: pt.Name,
 			Status: oc.Status, Duration: oc.Duration, Message: oc.Message, Attempt: oc.Attempt,
+			DisplayName: pt.DisplayName,
 		})
 		outcomes[pt.Name] = oc
 		// Finally-task results must enter the same `results` map the
@@ -242,7 +263,8 @@ levelLoop:
 	e.rep.Emit(reporter.Event{
 		Kind: reporter.EvtRunEnd, Time: time.Now(),
 		Status: overall, Duration: time.Since(overallStart),
-		Results: pipelineResults,
+		Results:     pipelineResults,
+		DisplayName: pl.Spec.DisplayName,
 	})
 
 	return RunResult{Status: overall, Tasks: outcomes, Results: pipelineResults}, nil
@@ -268,7 +290,7 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		return TaskOutcome{Status: "failed", Message: err.Error()}
 	}
 	if !pass {
-		e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: pt.Name, Message: reason})
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: pt.Name, Message: reason, DisplayName: pt.DisplayName})
 		return TaskOutcome{Status: "skipped", Message: reason}
 	}
 
@@ -494,11 +516,16 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 
 	images := uniqueImages(in.Bundle, pl)
 	if err := pb.Prepare(ctx, backend.RunSpec{RunID: runID, Pipeline: pl.Metadata.Name, Images: images, Workspaces: in.Workspaces}); err != nil {
-		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Message: err.Error()})
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Message: err.Error(), DisplayName: pl.Spec.DisplayName})
 		return RunResult{Status: "failed"}, err
 	}
 
-	e.rep.Emit(reporter.Event{Kind: reporter.EvtRunStart, Time: time.Now(), RunID: runID, Pipeline: pl.Metadata.Name})
+	e.rep.Emit(reporter.Event{
+		Kind: reporter.EvtRunStart, Time: time.Now(),
+		RunID: runID, Pipeline: pl.Metadata.Name,
+		DisplayName: pl.Spec.DisplayName,
+		Description: pl.Spec.Description,
+	})
 
 	var paramList []tektontypes.Param
 	for k, v := range params {
@@ -522,10 +549,10 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 	})
 	dur := time.Since(start)
 	if err != nil {
-		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Duration: dur, Message: err.Error()})
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Duration: dur, Message: err.Error(), DisplayName: pl.Spec.DisplayName})
 		return RunResult{Status: "failed"}, err
 	}
-	e.emitClusterTaskEvents(res.Tasks)
+	e.emitClusterTaskEvents(pl, in.Bundle, res.Tasks)
 	// Cross-backend EvtError parity for dropped pipeline results: the
 	// docker engine emits one EvtError per declared spec.results name
 	// the engine couldn't resolve. The cluster backend reads
@@ -553,7 +580,7 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 			endMsg = res.Reason
 		}
 	}
-	e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: res.Status, Duration: dur, Message: endMsg, Results: res.Results})
+	e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: res.Status, Duration: dur, Message: endMsg, Results: res.Results, DisplayName: pl.Spec.DisplayName})
 	out := RunResult{
 		Status:  res.Status,
 		Reason:  res.Reason,
@@ -573,22 +600,41 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 // arrive at the end of the run rather than interleaved with execution,
 // but their *shape* matches docker so an agent listening to --output json
 // doesn't have to special-case the backend.
-func (e *Engine) emitClusterTaskEvents(tasks map[string]backend.TaskOutcomeOnCluster) {
+//
+// pl + bundle are the input source-of-truth for displayName /
+// description on synthesised events: we read them from the YAML the user
+// submitted, not from the controller verdict, so cluster mode mirrors
+// docker mode for these UX fields.
+func (e *Engine) emitClusterTaskEvents(pl tektontypes.Pipeline, bundle *loader.Bundle, tasks map[string]backend.TaskOutcomeOnCluster) {
+	ptByName := map[string]tektontypes.PipelineTask{}
+	for _, pt := range pl.Spec.Tasks {
+		ptByName[pt.Name] = pt
+	}
+	for _, pt := range pl.Spec.Finally {
+		ptByName[pt.Name] = pt
+	}
 	for n, oc := range tasks {
+		pt := ptByName[n]
+		spec, _ := lookupTaskSpec(bundle, pt)
 		now := time.Now()
-		e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskStart, Time: now, Task: n})
+		e.rep.Emit(reporter.Event{
+			Kind: reporter.EvtTaskStart, Time: now, Task: n,
+			DisplayName: pt.DisplayName,
+			Description: spec.Description,
+		})
 		for _, r := range oc.RetryAttempts {
 			t := r.Time
 			if t.IsZero() {
 				t = now
 			}
 			e.rep.Emit(reporter.Event{
-				Kind:    reporter.EvtTaskRetry,
-				Time:    t,
-				Task:    n,
-				Status:  r.Status,
-				Message: r.Message,
-				Attempt: r.Attempt,
+				Kind:        reporter.EvtTaskRetry,
+				Time:        t,
+				Task:        n,
+				Status:      r.Status,
+				Message:     r.Message,
+				Attempt:     r.Attempt,
+				DisplayName: pt.DisplayName,
 			})
 		}
 		attempt := oc.Attempts
@@ -596,12 +642,13 @@ func (e *Engine) emitClusterTaskEvents(tasks map[string]backend.TaskOutcomeOnClu
 			attempt = 1
 		}
 		e.rep.Emit(reporter.Event{
-			Kind:    reporter.EvtTaskEnd,
-			Time:    time.Now(),
-			Task:    n,
-			Status:  oc.Status,
-			Message: oc.Message,
-			Attempt: attempt,
+			Kind:        reporter.EvtTaskEnd,
+			Time:        time.Now(),
+			Task:        n,
+			Status:      oc.Status,
+			Message:     oc.Message,
+			Attempt:     attempt,
+			DisplayName: pt.DisplayName,
 		})
 	}
 }

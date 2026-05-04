@@ -66,12 +66,13 @@ func (e *Engine) runOneWithPolicy(
 		// Failure-class outcomes ("failed", "infrafailed") are retryable.
 		if attempt < maxAttempts {
 			e.rep.Emit(reporter.Event{
-				Kind:    reporter.EvtTaskRetry,
-				Time:    time.Now(),
-				Task:    pt.Name,
-				Status:  oc.Status,
-				Message: oc.Message,
-				Attempt: attempt,
+				Kind:        reporter.EvtTaskRetry,
+				Time:        time.Now(),
+				Task:        pt.Name,
+				Status:      oc.Status,
+				Message:     oc.Message,
+				Attempt:     attempt,
+				DisplayName: pt.DisplayName,
 			})
 			continue
 		}
