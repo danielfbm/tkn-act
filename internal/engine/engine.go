@@ -593,6 +593,28 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 		return RunResult{}, err
 	}
 
+	// Cluster-backend lazy-resolve. Local k3d's Tekton has no
+	// resolver credentials and no access to --resolver-cache-dir, so
+	// we resolve in tkn-act and inline the resulting TaskSpec into
+	// the Pipeline before submission. Phase 1 handles resolver.params
+	// that reference run-scope only (params, context); upstream-result
+	// deps within a single submission are deferred to a Phase 2+
+	// extension that submits one PipelineRun per dispatch level.
+	rctx := resolver.Context{
+		Params:       flattenStringParams(params),
+		ArrayParams:  arrayParams(params),
+		ObjectParams: objectParams(params),
+		Results:      map[string]map[string]string{},
+		ContextVars: map[string]string{
+			"pipelineRun.name": pipelineRunName,
+			"pipeline.name":    pl.Metadata.Name,
+		},
+	}
+	if rerr := inlineResolverBackedTasks(ctx, &pl, rctx, e.opts.Refresolver, e.rep); rerr != nil {
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Message: rerr.Error()})
+		return RunResult{Status: "failed"}, rerr
+	}
+
 	images := uniqueImages(in.Bundle, pl)
 	if err := pb.Prepare(ctx, backend.RunSpec{RunID: runID, Pipeline: pl.Metadata.Name, Images: images, Workspaces: in.Workspaces}); err != nil {
 		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Message: err.Error(), DisplayName: pl.Spec.DisplayName})
