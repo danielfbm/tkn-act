@@ -1,0 +1,40 @@
+# Demonstrates: Task.spec.sidecars on both backends.
+#
+# A redis sidecar starts before the steps; the write step pings until
+# redis is reachable on localhost:6379 (shared netns via the per-Task
+# pause container on docker; native pod-shared netns on cluster), sets
+# a key, the read step verifies the value. Both backends share the
+# same expected outcome.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: with-redis
+spec:
+  sidecars:
+    - name: redis
+      image: redis:7-alpine
+  steps:
+    - name: write
+      image: redis:7-alpine
+      script: |
+        # tkn-act default start-grace is 2s; this loop tolerates slow
+        # cold starts on shared CI runners.
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          redis-cli -h 127.0.0.1 -p 6379 PING && break
+          sleep 1
+        done
+        redis-cli -h 127.0.0.1 -p 6379 SET hello world
+    - name: read
+      image: redis:7-alpine
+      script: |
+        v=$(redis-cli -h 127.0.0.1 -p 6379 GET hello)
+        test "$v" = "world"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: sidecars
+spec:
+  tasks:
+    - name: t
+      taskRef: { name: with-redis }
