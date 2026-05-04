@@ -12,6 +12,7 @@ import (
 	"github.com/danielfbm/tkn-act/internal/backend"
 	"github.com/danielfbm/tkn-act/internal/engine/dag"
 	"github.com/danielfbm/tkn-act/internal/loader"
+	"github.com/danielfbm/tkn-act/internal/refresolver"
 	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/resolver"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
@@ -24,6 +25,12 @@ type Options struct {
 	// before the task runs. The CLI sets this; tests may leave it nil
 	// (volumes are then unsupported in that test).
 	VolumeResolver VolumeResolver
+	// Refresolver dispatches resolver-backed taskRefs at task-dispatch
+	// time. nil-safe: when nil, any PipelineTask whose taskRef.resolver
+	// is non-empty will fail with a clear error from lookupTaskSpecLazy.
+	// The CLI builds this from --resolver-allow / --resolver-cache-dir /
+	// --offline; tests inject a Registry with an inline stub resolver.
+	Refresolver *refresolver.Registry
 }
 
 // VolumeResolver is the engine's hook for the volumes package. Returns
@@ -311,10 +318,23 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 	}
 
 	// Resolve task spec, then merge StepTemplate into each Step
-	// before any further substitution / validation runs.
-	spec, err := lookupTaskSpec(in.Bundle, pt)
-	if err != nil {
-		return TaskOutcome{Status: "failed", Message: err.Error()}
+	// before any further substitution / validation runs. If the
+	// PipelineTask uses a resolver-backed taskRef, lazy-dispatch
+	// kicks in: substitute resolver.params against rctx, call the
+	// registry, validate the bytes, and return the inlined TaskSpec.
+	var spec tektontypes.TaskSpec
+	if pt.TaskRef != nil && pt.TaskRef.Resolver != "" {
+		var lerr error
+		spec, _, lerr = lookupTaskSpecLazy(ctx, pt, rctx, e.opts.Refresolver, e.rep)
+		if lerr != nil {
+			return TaskOutcome{Status: "failed", Message: lerr.Error()}
+		}
+	} else {
+		var lerr error
+		spec, lerr = lookupTaskSpec(in.Bundle, pt)
+		if lerr != nil {
+			return TaskOutcome{Status: "failed", Message: lerr.Error()}
+		}
 	}
 	spec = applyStepTemplate(spec)
 
@@ -485,6 +505,13 @@ func uniqueImages(b *loader.Bundle, pl tektontypes.Pipeline) []string {
 	seen := map[string]struct{}{}
 	for _, pt := range append(append([]tektontypes.PipelineTask{}, pl.Spec.Tasks...), pl.Spec.Finally...) {
 		var spec tektontypes.TaskSpec
+		if pt.TaskRef != nil && pt.TaskRef.Resolver != "" {
+			// Resolver-backed taskRef: bytes aren't available at
+			// pre-pull time; the runtime image pull falls back to
+			// per-step IfNotPresent semantics. Skip silently here
+			// (resolver-end events surface what was fetched).
+			continue
+		}
 		if pt.TaskRef != nil {
 			if t, ok := b.Tasks[pt.TaskRef.Name]; ok {
 				spec = t.Spec

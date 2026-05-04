@@ -269,6 +269,73 @@ func Validate(b *loader.Bundle, pipelineName string, providedParams map[string]b
 	return errs
 }
 
+// ValidateTaskSpec runs the per-Task semantic checks the engine needs
+// after a resolver returns bytes (or after stepTemplate merge). It is a
+// subset of the full Validate: only invariants that are intrinsic to a
+// single TaskSpec (steps non-empty, timeout parses, onError values
+// allowed, volumes well-formed). Pipeline-level checks (workspaces
+// bound, params bound) are NOT here — those belong to Validate.
+//
+// This mirrors what the v1 admission webhook would reject. Phase 1 of
+// resolvers calls this on resolver outputs to reject bytes that wouldn't
+// pass a real Tekton install.
+func ValidateTaskSpec(taskName string, spec tektontypes.TaskSpec) []error {
+	var errs []error
+	if len(spec.Steps) == 0 {
+		errs = append(errs, fmt.Errorf("task %q: spec.steps: must have at least one step", taskName))
+	}
+	if spec.Timeout != "" {
+		if _, err := time.ParseDuration(spec.Timeout); err != nil {
+			errs = append(errs, fmt.Errorf("task %q: invalid timeout %q: %v", taskName, spec.Timeout, err))
+		}
+	}
+	for _, st := range spec.Steps {
+		switch st.OnError {
+		case "", "continue", "stopAndFail":
+		default:
+			errs = append(errs, fmt.Errorf("task %q step %q: unsupported onError %q (allowed: continue | stopAndFail)", taskName, st.Name, st.OnError))
+		}
+	}
+	volNames := map[string]bool{}
+	for _, v := range spec.Volumes {
+		volNames[v.Name] = true
+		n := 0
+		if v.EmptyDir != nil {
+			n++
+		}
+		if v.HostPath != nil {
+			n++
+		}
+		if v.ConfigMap != nil {
+			n++
+		}
+		if v.Secret != nil {
+			n++
+		}
+		switch n {
+		case 0:
+			errs = append(errs, fmt.Errorf("task %q volume %q: unsupported volume kind (only emptyDir, hostPath, configMap, secret)", taskName, v.Name))
+		case 1:
+		default:
+			errs = append(errs, fmt.Errorf("task %q volume %q: multiple sources set on a single volume", taskName, v.Name))
+		}
+		if v.HostPath != nil && v.HostPath.Path == "" {
+			errs = append(errs, fmt.Errorf("task %q volume %q: hostPath.path is required", taskName, v.Name))
+		}
+	}
+	for _, st := range spec.Steps {
+		for _, vm := range st.VolumeMounts {
+			if !volNames[vm.Name] {
+				errs = append(errs, fmt.Errorf("task %q step %q: volumeMount %q references undeclared volume", taskName, st.Name, vm.Name))
+			}
+			if vm.MountPath == "" {
+				errs = append(errs, fmt.Errorf("task %q step %q: volumeMount %q has empty mountPath", taskName, st.Name, vm.Name))
+			}
+		}
+	}
+	return errs
+}
+
 // parseTimeout parses a Tekton-style duration string and returns a
 // non-zero positive duration. Empty strings should not reach this
 // function. The error message includes the field name so users see
