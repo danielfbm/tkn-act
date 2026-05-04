@@ -114,6 +114,13 @@ are exercised by both backends in CI — divergences are explicit
   upstream Tekton's `terminationGracePeriodSeconds`). Cluster
   pass-through forwards the full Tekton schema; `sidecar-start` /
   `sidecar-end` events fire on both backends.
+- `StepAction` (`apiVersion: tekton.dev/v1beta1`, `kind: StepAction`)
+  — referenceable Step shapes inlined client-side into Steps that
+  carry `ref: {name: ...}`. Caller `params:` bind to the StepAction's
+  declared params (defaults applied for omitted bindings); the
+  StepAction's `results:` flow through to the per-step results dir
+  unchanged. Local-files-only resolution: resolver-form refs
+  (`hub`, `git`, `cluster`, `bundles`) are tracked under Track 1 #9.
 
 The single source of truth, with one row per Tekton field and links to
 fixtures, plans, and PRs, is
@@ -122,7 +129,7 @@ job enforces that the table doesn't drift from the tree.
 
 ## Not yet supported
 
-StepActions, Resolvers (git/hub/cluster/bundles),
+Resolvers (git/hub/cluster/bundles),
 `PipelineTask.matrix`, custom tasks, signed pipelines, tekton-results,
 Windows.
 

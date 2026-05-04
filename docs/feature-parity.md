@@ -149,7 +149,7 @@ The columns:
 | Feature | Spec field | Status | Backends | e2e fixture | Limitations fixture | Plan / Spec / PR |
 |---|---|---|---|---|---|---|
 | `taskRef.name` (in-bundle reference) | `PipelineTask.taskRef` | shipped | both | hello | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
-| `StepActions` (`tekton.dev/v1beta1` referenceable steps) | `Step.ref` | gap | both | none | none | docs/short-term-goals.md (Track 1 #8) |
+| `StepActions` (`tekton.dev/v1beta1` referenceable steps) | `Step.ref` | shipped | both | step-actions | none | docs/superpowers/plans/2026-05-04-step-actions.md (Track 1 #8) |
 | Resolvers — git / hub / cluster / bundles | `taskRef.resolver` | in-progress | both | none | none | docs/superpowers/plans/2026-05-04-resolvers.md (Track 1 #9) — Phase 1 (types + lazy-dispatch + cluster inline + validator + events + CLI flags) shipped; concrete resolvers (Phase 2-4), remote ResolutionRequest driver (Phase 5), and offline cache polish (Phase 6) tracked in the plan |
 | Custom Tasks (`taskRef.apiVersion != tekton.dev/v1`) | `PipelineTask.taskRef.apiVersion` | out-of-scope | n/a | none | none | v1 spec non-goal. |
 | Tekton Chains (signing) | n/a | out-of-scope | n/a | none | none | v1 spec non-goal. |
