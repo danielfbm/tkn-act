@@ -151,7 +151,7 @@ The columns:
 |---|---|---|---|---|---|---|
 | `taskRef.name` (in-bundle reference) | `PipelineTask.taskRef` | shipped | both | hello | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
 | `StepActions` (`tekton.dev/v1beta1` referenceable steps) | `Step.ref` | shipped | both | step-actions | none | docs/superpowers/plans/2026-05-04-step-actions.md (Track 1 #8) |
-| Resolvers — git / hub / cluster / bundles | `taskRef.resolver` | in-progress | both | resolver-git | none | docs/superpowers/plans/2026-05-04-resolvers.md (Track 1 #9) — Phase 1 (types + lazy-dispatch + cluster inline + validator + events + CLI flags) and Phase 2 (direct `git` resolver via go-git/v5) shipped; remaining direct resolvers `hub`/`http`/`bundles`/`cluster` (Phase 3-4), remote ResolutionRequest driver (Phase 5), and offline cache polish (Phase 6) tracked in the plan |
+| Resolvers — git / hub / cluster / bundles | `taskRef.resolver` | in-progress | both | resolver-git, resolver-http, resolver-hub | none | docs/superpowers/plans/2026-05-04-resolvers.md (Track 1 #9) — Phase 1 (types + lazy-dispatch + cluster inline + validator + events + CLI flags), Phase 2 (direct `git` resolver via go-git/v5), and Phase 3 (`hub` + `http` direct resolvers) shipped with cross-backend e2e fixtures; remaining direct resolvers `bundles`/`cluster` (Phase 4), remote ResolutionRequest driver (Phase 5), and offline cache polish (Phase 6) tracked in the plan |
 | Custom Tasks (`taskRef.apiVersion != tekton.dev/v1`) | `PipelineTask.taskRef.apiVersion` | out-of-scope | n/a | none | none | v1 spec non-goal. |
 | Tekton Chains (signing) | n/a | out-of-scope | n/a | none | none | v1 spec non-goal. |
 | Tekton Results (long-term storage) | n/a | out-of-scope | n/a | none | none | v1 spec non-goal. |

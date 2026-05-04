@@ -97,7 +97,7 @@ are exercised by both backends in CI — divergences are explicit
 - `displayName` / `description` on Task / Pipeline / PipelineTask / Step
   — surfaced on the JSON event stream as `display_name` / `description`,
   preferred over `name` in pretty output
-- `taskRef.resolver` / `pipelineRef.resolver` — **partly supported in
+- `taskRef.resolver` / `pipelineRef.resolver` — **partly shipped in
   v1.6.x**: scaffolding (types, lazy dispatch at task-dispatch time,
   eager top-level pipelineRef resolution at load time, cluster-backend
   inline-before-submit, validator pre-flight, two new event kinds —
@@ -105,8 +105,11 @@ are exercised by both backends in CI — divergences are explicit
   **direct `git` resolver** (Phase 2): shallow clones a repo via
   `go-git/v5` and reads `pathInRepo` at the requested revision; HTTPS
   / file:// / ssh:// honored, plain http:// refused unless
-  `--resolver-allow-insecure-http` is set. The remaining direct
-  resolvers (`hub`, `http`, `bundles`, `cluster`) and the remote
+  `--resolver-allow-insecure-http` is set. **`hub` and `http` direct
+  resolvers ship in Phase 3** (HTTPS-only by default; loopback http
+  exempt; bearer-token via `HubOptions.Token` / `HTTPOptions.Token` /
+  env `TKNACT_HTTP_RESOLVER_TOKEN`; 5xx single-retry budget). The
+  remaining direct resolvers (`bundles`, `cluster`) and the remote
   `ResolutionRequest` driver land in subsequent phases — see
   [`docs/superpowers/plans/2026-05-04-resolvers.md`](docs/superpowers/plans/2026-05-04-resolvers.md)
 - `PipelineTask.matrix` — Cartesian-product fan-out across named
