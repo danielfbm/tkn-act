@@ -428,3 +428,63 @@ spec:
 		t.Errorf("params[3] = %+v", got.Spec.PipelineRef.ResolverParams[3])
 	}
 }
+
+func TestUnmarshalStepActionDoc(t *testing.T) {
+	in := []byte(`
+apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata: {name: greet}
+spec:
+  params:
+    - name: who
+      default: world
+  results:
+    - name: greeting
+  image: alpine:3
+  script: 'echo hello $(params.who)'
+`)
+	var got StepAction
+	if err := yaml.Unmarshal(in, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != "StepAction" || got.APIVersion != "tekton.dev/v1beta1" {
+		t.Errorf("envelope = %+v", got.Object)
+	}
+	if got.Spec.Image != "alpine:3" {
+		t.Errorf("image = %q", got.Spec.Image)
+	}
+	if len(got.Spec.Params) != 1 || got.Spec.Params[0].Name != "who" {
+		t.Errorf("params = %+v", got.Spec.Params)
+	}
+	if len(got.Spec.Results) != 1 || got.Spec.Results[0].Name != "greeting" {
+		t.Errorf("results = %+v", got.Spec.Results)
+	}
+}
+
+func TestUnmarshalStepWithRef(t *testing.T) {
+	in := []byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps:
+    - name: clone
+      ref: {name: git-clone}
+      params:
+        - name: url
+          value: https://example.com/repo
+`)
+	var got Task
+	if err := yaml.Unmarshal(in, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.Steps[0].Ref == nil || got.Spec.Steps[0].Ref.Name != "git-clone" {
+		t.Errorf("ref = %+v", got.Spec.Steps[0].Ref)
+	}
+	if got.Spec.Steps[0].Image != "" {
+		t.Errorf("image = %q (want empty when ref is set)", got.Spec.Steps[0].Image)
+	}
+	if len(got.Spec.Steps[0].Params) != 1 || got.Spec.Steps[0].Params[0].Name != "url" {
+		t.Errorf("params = %+v", got.Spec.Steps[0].Params)
+	}
+}
