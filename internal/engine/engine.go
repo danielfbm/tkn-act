@@ -384,6 +384,16 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 			return TaskOutcome{Status: "failed", Message: lerr.Error()}
 		}
 	}
+	// Expand any Step.Ref → StepAction body BEFORE stepTemplate
+	// inheritance and before substitution. After this point every
+	// downstream pass sees a TaskSpec where every Step has a body.
+	{
+		var lerr error
+		spec, lerr = resolveStepActions(spec, in.Bundle)
+		if lerr != nil {
+			return TaskOutcome{Status: "failed", Message: lerr.Error()}
+		}
+	}
 	spec = applyStepTemplate(spec)
 
 	// Resolve task-level params (PipelineTask params override Task defaults).
@@ -591,11 +601,20 @@ func uniqueImages(b *loader.Bundle, pl tektontypes.Pipeline) []string {
 		} else if pt.TaskSpec != nil {
 			spec = *pt.TaskSpec
 		}
-		// Merge so that steps inheriting an image from stepTemplate
-		// are pre-pulled too.
+		// Expand StepAction refs first so referenced StepAction images
+		// are pre-pulled, then merge stepTemplate so inherited images
+		// count too. Errors here are silently skipped (the validator
+		// catches missing-ref / ref+inline issues at exit 4 before
+		// pre-pull runs); a Step with Ref pointing to a missing
+		// StepAction would otherwise contribute the empty string.
+		if expanded, err := resolveStepActions(spec, b); err == nil {
+			spec = expanded
+		}
 		spec = applyStepTemplate(spec)
 		for _, s := range spec.Steps {
-			seen[s.Image] = struct{}{}
+			if s.Image != "" {
+				seen[s.Image] = struct{}{}
+			}
 		}
 		for _, sc := range spec.Sidecars {
 			if sc.Image != "" {
