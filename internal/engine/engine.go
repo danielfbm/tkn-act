@@ -90,6 +90,22 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 		for _, dep := range pt.RunAfter {
 			g.AddEdge(dep, pt.Name)
 		}
+		// Implicit edges from $(tasks.X.results.Y) references in
+		// pt.Params and pt.TaskRef.ResolverParams. Mirrors upstream
+		// Tekton; lazy-resolved taskRefs depend on this so a
+		// resolver.params reference to an upstream result schedules
+		// after the upstream task. Refs to tasks not in the main
+		// DAG are silently dropped here (the validator catches
+		// dangling refs separately).
+		for _, dep := range implicitParamEdges(pt) {
+			if _, ok := main[dep]; !ok {
+				continue
+			}
+			if dep == pt.Name {
+				continue
+			}
+			g.AddEdge(dep, pt.Name)
+		}
 	}
 	levels, err := g.Levels()
 	if err != nil {
