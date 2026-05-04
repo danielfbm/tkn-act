@@ -209,16 +209,20 @@ func or(a, b string) string {
 }
 
 // formatResultValue renders a Pipeline.spec.results value for pretty
-// output. Strings are passed through (truncated to 80 chars with an
+// output. Strings are passed through (truncated to 80 runes with an
 // ellipsis if longer); arrays render as `[a, b, c]`; objects as
 // `{k1: v1, k2: v2}`. Stable key order on objects.
+//
+// Truncation works on runes, not bytes — slicing a UTF-8 string at a
+// byte index can land mid-codepoint and emit a malformed sequence.
 func formatResultValue(v any) string {
 	const max = 80
 	truncate := func(s string) string {
-		if len(s) <= max {
+		rs := []rune(s)
+		if len(rs) <= max {
 			return s
 		}
-		return s[:max-1] + "…"
+		return string(rs[:max-1]) + "…"
 	}
 	switch t := v.(type) {
 	case string:
