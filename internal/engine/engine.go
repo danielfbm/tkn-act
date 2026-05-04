@@ -214,13 +214,25 @@ levelLoop:
 			// runOne; it's safe to ignore here.
 			taskSpec, _ := lookupTaskSpec(in.Bundle, pt)
 
+			// Snapshot the results map under the mutex so the
+			// per-task substitution sees a stable view. Concurrent
+			// tasks at the same level write to `results` after their
+			// runs end; without a snapshot a goroutine reading
+			// resolver.Context.Results races with those writes.
+			mu.Lock()
+			resultsSnap := make(map[string]map[string]string, len(results))
+			for k, v := range results {
+				resultsSnap[k] = v
+			}
+			mu.Unlock()
+
 			eg.Go(func() error {
 				e.rep.Emit(reporter.Event{
 					Kind: reporter.EvtTaskStart, Time: time.Now(), Task: tname,
 					DisplayName: pt.DisplayName,
 					Description: taskSpec.Description,
 				})
-				oc := e.runOneWithPolicy(gctx, in, pl, pt, params, results, runID, pipelineRunName)
+				oc := e.runOneWithPolicy(gctx, in, pl, pt, params, resultsSnap, runID, pipelineRunName)
 				e.rep.Emit(reporter.Event{
 					Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: tname,
 					Status: oc.Status, Duration: oc.Duration, Message: oc.Message, Attempt: oc.Attempt,
