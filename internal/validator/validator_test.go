@@ -1217,3 +1217,270 @@ spec:
 		t.Errorf("want default-type error, got %v", errs)
 	}
 }
+
+// ---- Matrix validator rules (Track 1 #3) ----
+
+func TestValidateMatrixEmptyValueList(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  params: [{name: os}]
+  steps: [{name: s, image: alpine, script: 'true'}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef: {name: t}
+      matrix:
+        params:
+          - {name: os, value: []}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) == 0 {
+		t.Fatal("want error for empty matrix value list, got none")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "non-empty string list") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("errors = %v, want one mentioning 'non-empty string list'", errs)
+	}
+}
+
+func TestValidateMatrixDuplicateParamName(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  params: [{name: os}]
+  steps: [{name: s, image: alpine, script: 'true'}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef: {name: t}
+      matrix:
+        params:
+          - {name: os, value: [linux]}
+          - {name: os, value: [darwin]}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := validator.Validate(b, "p", nil)
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "twice") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("errors = %v, want one mentioning 'twice'", errs)
+	}
+}
+
+func TestValidateMatrixCardinalityCap(t *testing.T) {
+	// Build 17 × 17 matrix programmatically — 289 > 256.
+	bigList := strings.Repeat("v, ", 16) + "v"
+	yaml := `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  params: [{name: a}, {name: b}]
+  steps: [{name: s, image: alpine, script: 'true'}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef: {name: t}
+      matrix:
+        params:
+          - {name: a, value: [` + bigList + `]}
+          - {name: b, value: [` + bigList + `]}
+`
+	b, err := loader.LoadBytes([]byte(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := validator.Validate(b, "p", nil)
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "exceeding the cap") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("errors = %v, want one mentioning 'exceeding the cap'", errs)
+	}
+}
+
+func TestValidateMatrixIncludeNonStringRejected(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  params: [{name: os}, {name: archs}]
+  steps: [{name: s, image: alpine, script: 'true'}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef: {name: t}
+      matrix:
+        params:
+          - {name: os, value: [linux]}
+        include:
+          - name: arm-extra
+            params:
+              - {name: archs, value: [arm64, armv7]}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := validator.Validate(b, "p", nil)
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "must be a string") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("errors = %v, want one mentioning 'must be a string'", errs)
+	}
+}
+
+func TestValidateMatrixIncludeOverlapsCrossProductRejected(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  params: [{name: os}, {name: goversion}, {name: arch}]
+  steps: [{name: s, image: alpine, script: 'true'}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef: {name: t}
+      matrix:
+        params:
+          - {name: os, value: [linux, darwin]}
+          - {name: goversion, value: ["1.21"]}
+        include:
+          - name: arm-extra
+            params:
+              - {name: os, value: linux}
+              - {name: arch, value: arm64}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) == 0 {
+		t.Fatal("want overlap-rejection error, got none")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "overlaps a cross-product param") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("errors = %v, want one mentioning 'overlaps a cross-product param'", errs)
+	}
+}
+
+func TestValidateMatrixFannedTaskArrayResultRejected(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  params: [{name: os}]
+  results:
+    - {name: tags, type: array}
+  steps: [{name: s, image: alpine, script: 'true'}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef: {name: t}
+      matrix:
+        params:
+          - {name: os, value: [linux, darwin]}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := validator.Validate(b, "p", nil)
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "may only emit string results") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("errors = %v, want one mentioning 'may only emit string results'", errs)
+	}
+}
+
+func TestValidateMatrixHappyPath(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  params: [{name: os}, {name: goversion}]
+  results:
+    - {name: tag}
+  steps: [{name: s, image: alpine, script: 'true'}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef: {name: t}
+      matrix:
+        params:
+          - {name: os, value: [linux, darwin]}
+          - {name: goversion, value: ["1.21", "1.22"]}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) != 0 {
+		t.Errorf("happy path got errors: %v", errs)
+	}
+}
