@@ -201,9 +201,7 @@ func All() []Fixture {
 		},
 		{Dir: "step-results", Pipeline: "stepres", WantStatus: "succeeded"},
 		{
-			Dir:        "display-name-description",
-			Pipeline:   "display-name-description",
-			WantStatus: "succeeded",
+			Dir: "display-name-description", Pipeline: "display-name-description", WantStatus: "succeeded",
 			// WantEventFields asserts that specific event kinds carry the
 			// documented display_name / description fields. Mirrors how
 			// pipeline-results checks Results, but at the event-stream

@@ -119,6 +119,7 @@ fixtures under `testdata/e2e/`:
 | `finally-timeout/`  | `finally` budget fires; `tasks` block already succeeded |
 | `step-template/`    | `Task.spec.stepTemplate` inheritance: image + env, with one Step overriding env |
 | `pipeline-results/` | `Pipeline.spec.results`: string + array result, one referencing finally output |
+| `display-name-description/` | `displayName` + `description` on Pipeline / PipelineTask / Task / Step; asserts JSON event fields |
 | `configmap-from-yaml/` | `kind: ConfigMap` (apiVersion v1) embedded in `-f`; mounted as a volume |
 | `secret-from-yaml/`    | `kind: Secret` (apiVersion v1) embedded in `-f`; both `data` (base64) and `stringData` exercised |
 

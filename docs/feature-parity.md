@@ -142,7 +142,7 @@ The columns:
 | Step state isolation (cwd / env / `/tmp`) | n/a — fundamental | by-design | both | none | step-state | This is correct Tekton behavior; the limitations example documents the foot-gun. |
 | `Task.stepTemplate` | `TaskSpec.stepTemplate` | shipped | both | step-template | none | docs/superpowers/plans/2026-05-03-step-template.md (Track 1 #4) |
 | `Task.sidecars` (long-lived helper containers) | `Task.spec.sidecars` | gap | cluster-only | none | sidecars | docs/short-term-goals.md (Track 1 #1) — needs design for docker (per-Task network + shared netns) |
-| `displayName` / `description` on Task / Pipeline / Step | various | gap | both | none | none | docs/short-term-goals.md (Track 1 #7) |
+| `displayName` / `description` on Task / Pipeline / Step | various | shipped | both | display-name-description | none | docs/superpowers/plans/2026-05-04-display-name-description.md (Track 1 #7) |
 
 ### Resolution & catalogs
 
