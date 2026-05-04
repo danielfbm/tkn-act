@@ -340,6 +340,56 @@ func TestJSONRunEndIncludesResults(t *testing.T) {
 	}
 }
 
+func TestPrettyPrefersDisplayNameOverName(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewPretty(&buf, reporter.PrettyOptions{Color: false, Verbosity: reporter.Normal})
+
+	r.Emit(reporter.Event{Kind: reporter.EvtRunStart, Pipeline: "p-raw", DisplayName: "Build & test"})
+	r.Emit(reporter.Event{Kind: reporter.EvtTaskEnd, Task: "t-raw", DisplayName: "Compile binary", Status: "succeeded"})
+	r.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Status: "succeeded"})
+
+	out := buf.String()
+	if !strings.Contains(out, "Build & test") {
+		t.Errorf("missing pipeline displayName in pretty output:\n%s", out)
+	}
+	if !strings.Contains(out, "Compile binary") {
+		t.Errorf("missing task displayName in pretty output:\n%s", out)
+	}
+	// Structured assertion: when displayName is set, the raw name MUST
+	// NOT appear anywhere in the pretty output.
+	if strings.Contains(out, "p-raw") {
+		t.Errorf("pretty output leaked raw pipeline name 'p-raw' even though displayName is set; got:\n%s", out)
+	}
+	if strings.Contains(out, "t-raw") {
+		t.Errorf("pretty output leaked raw task name 't-raw' even though displayName is set; got:\n%s", out)
+	}
+}
+
+// Fallback: empty displayName MUST use the raw name. One assertion per
+// label site so a future refactor can't drop labelOf at one site silently.
+func TestPrettyFallsBackToNameWhenDisplayNameEmpty(t *testing.T) {
+	cases := []struct {
+		name string
+		evt  reporter.Event
+		want string
+	}{
+		{"run-start", reporter.Event{Kind: reporter.EvtRunStart, Pipeline: "p-only"}, "p-only"},
+		{"task-start", reporter.Event{Kind: reporter.EvtTaskStart, Task: "t-only"}, "t-only"},
+		{"task-end", reporter.Event{Kind: reporter.EvtTaskEnd, Task: "t-end-only", Status: "succeeded"}, "t-end-only"},
+		{"task-skip", reporter.Event{Kind: reporter.EvtTaskSkip, Task: "t-skip-only", Message: "when=false"}, "t-skip-only"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			r := reporter.NewPretty(&buf, reporter.PrettyOptions{Color: false, Verbosity: reporter.Verbose})
+			r.Emit(tc.evt)
+			if !strings.Contains(buf.String(), tc.want) {
+				t.Errorf("expected raw name %q in pretty output (no displayName); got:\n%s", tc.want, buf.String())
+			}
+		})
+	}
+}
+
 func TestJSONEventCarriesDisplayNameAndDescription(t *testing.T) {
 	var buf bytes.Buffer
 	r := reporter.NewJSON(&buf)

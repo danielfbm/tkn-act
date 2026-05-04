@@ -57,7 +57,7 @@ func (p *prettySink) Emit(e Event) {
 		if p.verb >= Normal {
 			fmt.Fprintf(p.w, "%s %s\n",
 				p.pal.wrap(p.pal.cyan, "▶"),
-				p.pal.wrap(p.pal.bold, or(e.Pipeline, "pipeline")),
+				p.pal.wrap(p.pal.bold, labelOf(or(e.Pipeline, "pipeline"), e.DisplayName)),
 			)
 		}
 
@@ -65,7 +65,7 @@ func (p *prettySink) Emit(e Event) {
 		if p.verb >= Verbose {
 			fmt.Fprintf(p.w, "%s %s\n",
 				p.pal.wrap(p.pal.cyan, "▸"),
-				e.Task,
+				labelOf(e.Task, e.DisplayName),
 			)
 		}
 
@@ -73,7 +73,7 @@ func (p *prettySink) Emit(e Event) {
 		if p.verb >= Verbose {
 			fmt.Fprintf(p.w, "  %s %s started\n",
 				p.pal.wrap(p.pal.dim, "·"),
-				p.pal.wrap(p.pal.dim, prefixOf(e.Task, e.Step)),
+				p.pal.wrap(p.pal.dim, prefixOf(e.Task, labelOf(e.Step, e.DisplayName))),
 			)
 		}
 
@@ -81,7 +81,7 @@ func (p *prettySink) Emit(e Event) {
 		if p.verb >= Verbose {
 			fmt.Fprintf(p.w, "  %s %s finished (exit %d)\n",
 				p.pal.wrap(p.pal.dim, "·"),
-				p.pal.wrap(p.pal.dim, prefixOf(e.Task, e.Step)),
+				p.pal.wrap(p.pal.dim, prefixOf(e.Task, labelOf(e.Step, e.DisplayName))),
 				e.ExitCode,
 			)
 		}
@@ -93,7 +93,7 @@ func (p *prettySink) Emit(e Event) {
 		// Stream every log line in arrival order. The task/step prefix lets the
 		// user disambiguate parallel tasks; the bar separator keeps the line
 		// itself unindented so copy-paste of error messages is clean.
-		prefix := prefixOf(e.Task, e.Step)
+		prefix := prefixOf(e.Task, labelOf(e.Step, e.DisplayName))
 		stream := ""
 		if e.Stream == "stderr" {
 			stream = p.pal.wrap(p.pal.yellow, "!")
@@ -110,7 +110,7 @@ func (p *prettySink) Emit(e Event) {
 	case EvtTaskSkip:
 		fmt.Fprintf(p.w, "%s %s  skipped (%s)\n",
 			glyph("skipped", p.pal),
-			e.Task,
+			labelOf(e.Task, e.DisplayName),
 			e.Message,
 		)
 
@@ -118,7 +118,7 @@ func (p *prettySink) Emit(e Event) {
 		dur := e.Duration.Round(time.Millisecond)
 		fmt.Fprintf(p.w, "%s %s  %s",
 			glyph(e.Status, p.pal),
-			e.Task,
+			labelOf(e.Task, e.DisplayName),
 			p.pal.wrap(p.pal.dim, fmt.Sprintf("(%s)", dur)),
 		)
 		if e.Message != "" {
@@ -206,6 +206,17 @@ func or(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// labelOf returns displayName when non-empty, otherwise name. Used
+// everywhere the pretty renderer prints a Pipeline / Task / Step
+// identifier; agents reading -o json get both the raw name and the
+// displayName separately.
+func labelOf(name, displayName string) string {
+	if displayName != "" {
+		return displayName
+	}
+	return name
 }
 
 // formatResultValue renders a Pipeline.spec.results value for pretty
