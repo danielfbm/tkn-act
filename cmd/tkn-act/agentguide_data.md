@@ -360,9 +360,9 @@ Resolution semantics tkn-act follows:
 |---|---|
 | When | After the entire run completes (tasks + finally), regardless of overall status. |
 | Source | The same accumulated task-result map that powers `$(tasks.X.results.Y)` in PipelineTask params. Finally tasks contribute. |
-| Failure handling | If a referenced task didn't succeed, or the result name wasn't produced, the pipeline result is **dropped** (omitted from the output). One `error` event per dropped result is emitted; the run's status and exit code are NOT changed. |
+| Failure handling | If a referenced task didn't succeed, or the result name wasn't produced, the pipeline result is **dropped** (omitted from the output). One `error` event per dropped result is emitted on **both** the docker and the cluster backend; the run's status and exit code are NOT changed. |
 | Types | string / array / object (mirrors `ParamValue`). JSON-encoded as the matching shape. |
-| Cluster mode | tkn-act reads `pr.status.results` from the Tekton controller's verdict — it does not re-resolve locally. |
+| Cluster mode | tkn-act reads `pr.status.results` from the Tekton controller's verdict — it does not re-resolve locally. Drops surface as `error` events on declared names absent from the verdict. |
 
 Where they show up:
 

@@ -517,6 +517,21 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 		return RunResult{Status: "failed"}, err
 	}
 	e.emitClusterTaskEvents(res.Tasks)
+	// Cross-backend EvtError parity for dropped pipeline results: the
+	// docker engine emits one EvtError per declared spec.results name
+	// the engine couldn't resolve. The cluster backend reads
+	// pr.status.results post-hoc, so missing entries surface here as
+	// "declared by the Pipeline but absent from the backend's verdict."
+	// Emit one EvtError per such drop, in stable name order, so a
+	// silent regression on the cluster path can't slip past CI.
+	for _, name := range droppedClusterResultNames(pl, res.Results) {
+		e.rep.Emit(reporter.Event{
+			Kind: reporter.EvtError, Time: time.Now(),
+			Message: fmt.Sprintf(
+				"pipeline result %q dropped: not produced by Tekton (referenced task may have failed or skipped the result)",
+				name),
+		})
+	}
 	// Surface the backend's terminal Reason/Message on the run-end
 	// event so a misclassification (status doesn't match what the test
 	// expected) can be attributed to a specific backend code path

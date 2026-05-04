@@ -90,3 +90,29 @@ func resolvePipelineResults(pl tektontypes.Pipeline, results map[string]map[stri
 	}
 	return out, errs
 }
+
+// droppedClusterResultNames returns the names declared in
+// pl.Spec.Results that are NOT present in produced. The cluster
+// backend reads pr.status.results from the Tekton controller's
+// verdict; any declared result Tekton didn't emit is "dropped" from
+// the engine's perspective. The slice is sorted for stable EvtError
+// ordering — log diffs and test assertions stay deterministic.
+//
+// Returns nil when nothing was declared, or when produced covers every
+// declared name.
+func droppedClusterResultNames(pl tektontypes.Pipeline, produced map[string]any) []string {
+	if len(pl.Spec.Results) == 0 {
+		return nil
+	}
+	var dropped []string
+	for _, spec := range pl.Spec.Results {
+		if _, ok := produced[spec.Name]; !ok {
+			dropped = append(dropped, spec.Name)
+		}
+	}
+	if len(dropped) == 0 {
+		return nil
+	}
+	sort.Strings(dropped)
+	return dropped
+}
