@@ -131,6 +131,69 @@ spec:
 	}
 }
 
+// Regression: Pipeline.spec.results entries that reference a finally
+// task's result must resolve. The engine previously populated `results`
+// (the resolver's input map) only inside the main task loop — finally
+// tasks set `outcomes[name]` but never `results[name]`, so any
+// spec.results entry referencing a finally task was silently dropped.
+// This was caught by the cross-backend `pipeline-results` fixture
+// (PR #18 follow-up) — it exists at the unit level too.
+func TestPipelineResultsResolveFromFinallyTask(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: emit-commit}
+spec:
+  results: [{name: commit}]
+  steps: [{name: s, image: alpine, script: 'true'}]
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: emit-id}
+spec:
+  results: [{name: id}]
+  steps: [{name: s, image: alpine, script: 'true'}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  results:
+    - name: revision
+      value: $(tasks.checkout.results.commit)
+    - name: report
+      value:
+        - $(tasks.checkout.results.commit)
+        - $(tasks.notify.results.id)
+  tasks:
+    - {name: checkout, taskRef: {name: emit-commit}}
+  finally:
+    - {name: notify,   taskRef: {name: emit-id}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	be := &resultsBackend{results: map[string]map[string]string{
+		"checkout": {"commit": "abc123"},
+		"notify":   {"id": "notify-42"},
+	}}
+	sink := &sliceSink{}
+	res, err := engine.New(be, sink, engine.Options{}).RunPipeline(context.Background(), engine.PipelineInput{Bundle: b, Name: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Results["revision"]; got != "abc123" {
+		t.Errorf("Results[revision] = %v, want abc123", got)
+	}
+	gotReport, ok := res.Results["report"].([]string)
+	if !ok {
+		t.Fatalf("Results[report] type = %T, want []string (was the finally-task ref dropped?)", res.Results["report"])
+	}
+	if !reflect.DeepEqual(gotReport, []string{"abc123", "notify-42"}) {
+		t.Errorf("Results[report] = %v, want [abc123 notify-42]", gotReport)
+	}
+}
+
 func TestPipelineResultsArrayAndObject(t *testing.T) {
 	b, err := loader.LoadBytes([]byte(`
 apiVersion: tekton.dev/v1

@@ -205,6 +205,15 @@ levelLoop:
 			Status: oc.Status, Duration: oc.Duration, Message: oc.Message, Attempt: oc.Attempt,
 		})
 		outcomes[pt.Name] = oc
+		// Finally-task results must enter the same `results` map the
+		// main loop populates: Pipeline.spec.results may reference
+		// $(tasks.<finally>.results.<name>) and the resolver only
+		// reads from this map. Before, finally results were absent
+		// from the map and any spec.results entry that referenced
+		// them was silently dropped.
+		if oc.Results != nil {
+			results[pt.Name] = oc.Results
+		}
 		switch oc.Status {
 		case "failed", "infrafailed":
 			if overall != "timeout" {
