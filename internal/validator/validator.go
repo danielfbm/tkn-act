@@ -392,6 +392,45 @@ func validateCore(b *loader.Bundle, pipelineName string, providedParams map[stri
 		}
 	}
 
+	// 12. Sidecars: name uniqueness within the Task (and against Step
+	// names), image required, and every volumeMount must reference a
+	// declared Task-level volume.
+	for ptName, spec := range resolvedTasks {
+		if len(spec.Sidecars) == 0 {
+			continue
+		}
+		volumeNames := map[string]bool{}
+		for _, v := range spec.Volumes {
+			volumeNames[v.Name] = true
+		}
+		stepNames := map[string]bool{}
+		for _, st := range spec.Steps {
+			stepNames[st.Name] = true
+		}
+		seen := map[string]bool{}
+		for _, sc := range spec.Sidecars {
+			if sc.Name == "" {
+				errs = append(errs, fmt.Errorf("pipeline task %q sidecar has empty name", ptName))
+				continue
+			}
+			if sc.Image == "" {
+				errs = append(errs, fmt.Errorf("pipeline task %q sidecar %q: image is required", ptName, sc.Name))
+			}
+			if seen[sc.Name] {
+				errs = append(errs, fmt.Errorf("pipeline task %q has duplicate sidecar name %q", ptName, sc.Name))
+			}
+			seen[sc.Name] = true
+			if stepNames[sc.Name] {
+				errs = append(errs, fmt.Errorf("pipeline task %q sidecar %q collides with a step of the same name", ptName, sc.Name))
+			}
+			for _, vm := range sc.VolumeMounts {
+				if !volumeNames[vm.Name] {
+					errs = append(errs, fmt.Errorf("pipeline task %q sidecar %q volumeMount %q references undeclared Task volume", ptName, sc.Name, vm.Name))
+				}
+			}
+		}
+	}
+
 	return errs
 }
 

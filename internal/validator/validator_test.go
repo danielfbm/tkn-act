@@ -811,3 +811,125 @@ func indent(s, prefix string) string {
 	}
 	return out
 }
+func TestValidateSidecarRequiresImage(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  sidecars:
+    - {name: redis, image: ""}
+  steps:
+    - {name: s, image: alpine:3, script: 'true'}
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks: [{name: a, taskRef: {name: t}}]
+`)
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) == 0 {
+		t.Fatalf("expected error for empty sidecar image")
+	}
+}
+
+func TestValidateSidecarNameUnique(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  sidecars:
+    - {name: redis, image: redis:7-alpine}
+    - {name: redis, image: redis:7-alpine}
+  steps:
+    - {name: s, image: alpine:3, script: 'true'}
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks: [{name: a, taskRef: {name: t}}]
+`)
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) == 0 {
+		t.Fatalf("expected error for duplicate sidecar name")
+	}
+}
+
+func TestValidateSidecarNameCollidesWithStep(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  sidecars:
+    - {name: shared, image: redis:7-alpine}
+  steps:
+    - {name: shared, image: alpine:3, script: 'true'}
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks: [{name: a, taskRef: {name: t}}]
+`)
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) == 0 {
+		t.Fatalf("expected error for sidecar name colliding with step name")
+	}
+}
+
+func TestValidateSidecarVolumeMountResolves(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  sidecars:
+    - name: redis
+      image: redis:7-alpine
+      volumeMounts:
+        - {name: undeclared, mountPath: /data}
+  steps:
+    - {name: s, image: alpine:3, script: 'true'}
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks: [{name: a, taskRef: {name: t}}]
+`)
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) == 0 {
+		t.Fatalf("expected error for sidecar volumeMount referencing undeclared volume")
+	}
+}
+
+func TestValidateSidecarsValid(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  volumes:
+    - {name: shared, emptyDir: {}}
+  sidecars:
+    - name: redis
+      image: redis:7-alpine
+      volumeMounts:
+        - {name: shared, mountPath: /data}
+  steps:
+    - {name: s, image: alpine:3, script: 'true'}
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks: [{name: a, taskRef: {name: t}}]
+`)
+	if errs := validator.Validate(b, "p", nil); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+}
