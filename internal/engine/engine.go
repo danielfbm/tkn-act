@@ -606,19 +606,19 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 // submitted, not from the controller verdict, so cluster mode mirrors
 // docker mode for these UX fields.
 func (e *Engine) emitClusterTaskEvents(pl tektontypes.Pipeline, bundle *loader.Bundle, tasks map[string]backend.TaskOutcomeOnCluster) {
-	ptByName := map[string]tektontypes.PipelineTask{}
-	for _, pt := range pl.Spec.Tasks {
-		ptByName[pt.Name] = pt
-	}
-	for _, pt := range pl.Spec.Finally {
-		ptByName[pt.Name] = pt
-	}
-	for n, oc := range tasks {
-		pt := ptByName[n]
+	// Emit in pipeline-declared order (main tasks first, then finally),
+	// mirroring docker's interleaved order. Without this, ranging over
+	// the controller's per-task map gives Go's randomised iteration
+	// order — agents asserting on "first task-start" would flake.
+	emit := func(pt tektontypes.PipelineTask) {
+		oc, ok := tasks[pt.Name]
+		if !ok {
+			return
+		}
 		spec, _ := lookupTaskSpec(bundle, pt)
 		now := time.Now()
 		e.rep.Emit(reporter.Event{
-			Kind: reporter.EvtTaskStart, Time: now, Task: n,
+			Kind: reporter.EvtTaskStart, Time: now, Task: pt.Name,
 			DisplayName: pt.DisplayName,
 			Description: spec.Description,
 		})
@@ -630,7 +630,7 @@ func (e *Engine) emitClusterTaskEvents(pl tektontypes.Pipeline, bundle *loader.B
 			e.rep.Emit(reporter.Event{
 				Kind:        reporter.EvtTaskRetry,
 				Time:        t,
-				Task:        n,
+				Task:        pt.Name,
 				Status:      r.Status,
 				Message:     r.Message,
 				Attempt:     r.Attempt,
@@ -644,11 +644,17 @@ func (e *Engine) emitClusterTaskEvents(pl tektontypes.Pipeline, bundle *loader.B
 		e.rep.Emit(reporter.Event{
 			Kind:        reporter.EvtTaskEnd,
 			Time:        time.Now(),
-			Task:        n,
+			Task:        pt.Name,
 			Status:      oc.Status,
 			Message:     oc.Message,
 			Attempt:     attempt,
 			DisplayName: pt.DisplayName,
 		})
+	}
+	for _, pt := range pl.Spec.Tasks {
+		emit(pt)
+	}
+	for _, pt := range pl.Spec.Finally {
+		emit(pt)
 	}
 }

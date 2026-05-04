@@ -11,6 +11,10 @@ spec:
       description: "Compile the test binary."
       image: alpine:3
       script: |
+        # Sleep first so the cluster backend's log-streaming goroutine
+        # (which sleeps 500ms before opening a log stream) has time to
+        # attach before the pod terminates.
+        sleep 2
         echo "compiling"
 ---
 apiVersion: tekton.dev/v1
