@@ -3,10 +3,10 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -89,9 +89,18 @@ func runFixtureDocker(t *testing.T, f fixtures.Fixture) {
 		t.Skipf("docker: %v", err)
 	}
 
-	jsonRep := reporter.NewJSON(io.Discard)
+	// Capture every event to a buffer so a failing fixture's logs
+	// surface in the test output (CI failures otherwise lose the
+	// step output and the only signal is "status = failed").
+	var eventBuf bytes.Buffer
+	jsonRep := reporter.NewJSON(&eventBuf)
 	cap := &captureSink{}
 	rep := reporter.NewTee(jsonRep, cap)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("event stream:\n%s", eventBuf.String())
+		}
+	})
 	pmap := map[string]tektontypes.ParamValue{}
 	for k, v := range f.Params {
 		pmap[k] = tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: v}

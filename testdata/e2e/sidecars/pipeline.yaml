@@ -18,15 +18,24 @@ spec:
       image: redis:7-alpine
       script: |
         # tkn-act default start-grace is 2s; this loop tolerates slow
-        # cold starts on shared CI runners.
-        for i in 1 2 3 4 5 6 7 8 9 10; do
-          redis-cli -h 127.0.0.1 -p 6379 PING && break
+        # cold starts on shared CI runners. Print diagnostic info on
+        # each retry so a CI failure is debuggable from the JSON event
+        # stream alone.
+        set -x
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+          if redis-cli -h 127.0.0.1 -p 6379 PING; then
+            break
+          fi
+          echo "PING attempt $i failed, sleeping 1s"
           sleep 1
         done
         redis-cli -h 127.0.0.1 -p 6379 SET hello world
+        # Confirm the SET landed before handing off to the read step.
+        redis-cli -h 127.0.0.1 -p 6379 GET hello
     - name: read
       image: redis:7-alpine
       script: |
+        set -x
         v=$(redis-cli -h 127.0.0.1 -p 6379 GET hello)
         test "$v" = "world"
 ---
