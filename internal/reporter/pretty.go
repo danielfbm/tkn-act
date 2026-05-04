@@ -155,6 +155,57 @@ func (p *prettySink) Emit(e Event) {
 			)
 		}
 
+	case EvtResolverStart:
+		// resolver-start is mostly noise on the pretty stream — the
+		// matching resolver-end carries the load-bearing info (status,
+		// duration, source, cached). We only surface starts in Verbose.
+		if p.verb >= Verbose {
+			label := e.Task
+			if label == "" {
+				label = "(pipeline)"
+			}
+			fmt.Fprintf(p.w, "  %s %s resolver %s starting\n",
+				p.pal.wrap(p.pal.dim, "↳"),
+				p.pal.wrap(p.pal.dim, label),
+				p.pal.wrap(p.pal.cyan, e.Resolver),
+			)
+		}
+
+	case EvtResolverEnd:
+		if p.verb < Normal {
+			return
+		}
+		// One indented line under the parent task name, per spec §13.
+		// Format:
+		//   ↳ resolver <name> <source> (<duration>|cached|<message>)
+		// Top-level pipelineRef.resolver: e.Task is empty; render
+		// without a task prefix.
+		var taskPrefix string
+		if e.Task != "" {
+			taskPrefix = p.pal.wrap(p.pal.dim, e.Task) + " "
+		}
+		var trail string
+		switch {
+		case e.Status == StatusFailed:
+			trail = p.pal.wrap(p.pal.red, e.Message)
+		case e.Cached:
+			trail = p.pal.wrap(p.pal.dim, "(cached)")
+		default:
+			dur := e.Duration.Round(time.Millisecond)
+			trail = p.pal.wrap(p.pal.dim, fmt.Sprintf("(%s)", dur))
+		}
+		src := e.Source
+		if src == "" {
+			src = "(no source reported)"
+		}
+		fmt.Fprintf(p.w, "  %s %sresolver %s %s %s\n",
+			p.pal.wrap(p.pal.dim, "↳"),
+			taskPrefix,
+			p.pal.wrap(p.pal.cyan, e.Resolver),
+			src,
+			trail,
+		)
+
 	case EvtTaskSkip:
 		fmt.Fprintf(p.w, "%s %s  skipped (%s)\n",
 			glyph("skipped", p.pal),
