@@ -97,6 +97,14 @@ are exercised by both backends in CI — divergences are explicit
 - `displayName` / `description` on Task / Pipeline / PipelineTask / Step
   — surfaced on the JSON event stream as `display_name` / `description`,
   preferred over `name` in pretty output
+- `taskRef.resolver` / `pipelineRef.resolver` — **scaffolding only in
+  v1.6.x**: types, lazy dispatch at task-dispatch time, eager top-level
+  pipelineRef resolution at load time, cluster-backend inline-before-submit,
+  validator pre-flight, two new event kinds (`resolver-start` /
+  `resolver-end`), and CLI flags. Concrete resolvers (`git`, `hub`,
+  `http`, `bundles`, `cluster`) and the remote `ResolutionRequest`
+  driver land in subsequent phases — see
+  [`docs/superpowers/plans/2026-05-04-resolvers.md`](docs/superpowers/plans/2026-05-04-resolvers.md)
 
 The single source of truth, with one row per Tekton field and links to
 fixtures, plans, and PRs, is

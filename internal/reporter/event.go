@@ -9,16 +9,18 @@ import (
 type EventKind string
 
 const (
-	EvtRunStart  EventKind = "run-start"
-	EvtRunEnd    EventKind = "run-end"
-	EvtTaskStart EventKind = "task-start"
-	EvtTaskEnd   EventKind = "task-end"
-	EvtTaskSkip  EventKind = "task-skip"
-	EvtTaskRetry EventKind = "task-retry"
-	EvtStepStart EventKind = "step-start"
-	EvtStepEnd   EventKind = "step-end"
-	EvtStepLog   EventKind = "step-log"
-	EvtError     EventKind = "error"
+	EvtRunStart       EventKind = "run-start"
+	EvtRunEnd         EventKind = "run-end"
+	EvtTaskStart      EventKind = "task-start"
+	EvtTaskEnd        EventKind = "task-end"
+	EvtTaskSkip       EventKind = "task-skip"
+	EvtTaskRetry      EventKind = "task-retry"
+	EvtStepStart      EventKind = "step-start"
+	EvtStepEnd        EventKind = "step-end"
+	EvtStepLog        EventKind = "step-log"
+	EvtError          EventKind = "error"
+	EvtResolverStart  EventKind = "resolver-start"
+	EvtResolverEnd    EventKind = "resolver-end"
 )
 
 // Status values that can appear on task-end. Existing values are unchanged;
@@ -73,6 +75,25 @@ type Event struct {
 	// event already carried it. Also omitted from step-log to avoid
 	// ballooning every line of streamed output.
 	Description string `json:"description,omitempty"`
+
+	// Resolver fields populate resolver-start / resolver-end events
+	// emitted by the engine's lazy-dispatch path. All four are tagged
+	// `omitempty` so non-resolver events don't carry empty keys; this
+	// matches the convention every other optional Event field uses.
+
+	// Resolver names the resolver protocol (git | hub | http | bundles |
+	// cluster | <custom-in-remote-mode>).
+	Resolver string `json:"resolver,omitempty"`
+	// Cached is true when resolver-end fires for a per-run cache hit
+	// (no fresh fetch happened). Surfaces in pretty output as "(cached)".
+	Cached bool `json:"cached,omitempty"`
+	// SHA256 is the hex digest of the resolved bytes. Used by the
+	// on-disk cache invalidation diagnostics; agents can compare across
+	// runs to detect upstream drift.
+	SHA256 string `json:"sha256,omitempty"`
+	// Source is a human-readable origin string for the resolver (e.g.
+	// "git: github.com/tektoncd/catalog@abc123 -> task/...").
+	Source string `json:"source,omitempty"`
 }
 
 // Reporter consumes events.

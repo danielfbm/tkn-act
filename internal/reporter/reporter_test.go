@@ -490,3 +490,76 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// TestJSONResolverEvents covers the resolver-start / resolver-end JSON
+// shape from spec §12. Both events appear with their fields populated.
+func TestJSONResolverEvents(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewJSON(&buf)
+	r.Emit(reporter.Event{
+		Kind: reporter.EvtResolverStart, Time: time.Unix(1, 0),
+		Task: "build", Resolver: "git",
+	})
+	r.Emit(reporter.Event{
+		Kind: reporter.EvtResolverEnd, Time: time.Unix(2, 0),
+		Task: "build", Resolver: "git", Status: "succeeded",
+		Duration: time.Second, SHA256: "abc", Source: "git: foo",
+	})
+	out := buf.String()
+	if !strings.Contains(out, `"kind":"resolver-start"`) {
+		t.Errorf("missing resolver-start: %s", out)
+	}
+	if !strings.Contains(out, `"kind":"resolver-end"`) {
+		t.Errorf("missing resolver-end: %s", out)
+	}
+	if !strings.Contains(out, `"resolver":"git"`) {
+		t.Errorf("missing resolver field: %s", out)
+	}
+	if !strings.Contains(out, `"sha256":"abc"`) {
+		t.Errorf("missing sha256 field: %s", out)
+	}
+	if !strings.Contains(out, `"source":"git: foo"`) {
+		t.Errorf("missing source field: %s", out)
+	}
+}
+
+// TestJSONResolverEventOmitsZeroValues: a resolver-end Event whose
+// Resolver/Cached/SHA256/Source are all zero must NOT serialize those
+// keys. Mirrors the omitempty convention every other optional Event
+// field uses.
+func TestJSONResolverEventOmitsZeroValues(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewJSON(&buf)
+	r.Emit(reporter.Event{
+		Kind: reporter.EvtRunEnd, Time: time.Unix(1, 0),
+		Status: "succeeded",
+	})
+	out := buf.String()
+	for _, key := range []string{`"resolver"`, `"cached"`, `"sha256"`, `"source"`} {
+		if strings.Contains(out, key) {
+			t.Errorf("expected %s to be omitted via omitempty, got %s", key, out)
+		}
+	}
+}
+
+// TestJSONResolverEventEmptyTaskForTopLevelPipelineRef: emitting a
+// resolver-end without a Task field (top-level pipelineRef path)
+// must omit the "task" key entirely. The consumer disambiguates the
+// top-level resolution from per-task resolution via the absence of
+// the field.
+func TestJSONResolverEventEmptyTaskForTopLevelPipelineRef(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewJSON(&buf)
+	r.Emit(reporter.Event{
+		Kind: reporter.EvtResolverEnd, Time: time.Unix(1, 0),
+		Resolver: "git", Status: "succeeded",
+	})
+	out := buf.String()
+	if strings.Contains(out, `"task"`) {
+		t.Errorf("expected no task key for top-level pipelineRef resolution: %s", out)
+	}
+	// Sanity: the resolver field IS present.
+	if !strings.Contains(out, `"resolver":"git"`) {
+		t.Errorf("missing resolver field: %s", out)
+	}
+}

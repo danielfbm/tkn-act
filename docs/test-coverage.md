@@ -85,12 +85,13 @@ total locally). Covers:
 | `internal/cluster/tekton/` | YAML-apply readiness using a fake kube client |
 | `internal/cmdrunner/` | exec wrapper |
 | `internal/discovery/` | `pipeline.yaml` / `.tekton/` discovery |
-| `internal/engine/` | DAG ordering, failure propagation, when-skip; **policy loop** (retries to success, retries-all-fail, task timeout, timeout-not-retried) |
+| `internal/engine/` | DAG ordering, failure propagation, when-skip; **policy loop** (retries to success, retries-all-fail, task timeout, timeout-not-retried); **implicit DAG edges** from `$(tasks.X.results.Y)` references in `pt.Params` and `pt.TaskRef.ResolverParams`; **lazy resolution** via `lookupTaskSpecLazy` (per-run cache hits, distinct cache keys for different substituted params, resolver-failure surfaces, finally tasks with resolver refs); **eager top-level pipelineRef.resolver** resolution; **cluster-backend inline-before-submission** for resolver-backed taskRefs (Track 1 #9 Phase 1) |
 | `internal/engine/dag/` | cycle detection, level computation |
 | `internal/exitcode/` | stable code numbers (incl. exit 6 = timeout); `Wrap`/`From` |
 | `internal/loader/` | YAML parsing; **limitations fixtures parse cleanly** so dropped fields don't silently break the docs |
 | `internal/reporter/` | JSON one-event-per-line; pretty live-ordering across parallel tasks; quiet/verbose; color on/off; `ParseColorMode`; `ResolveColor` (`NO_COLOR`/`FORCE_COLOR`/`CLICOLOR_FORCE` precedence) |
 | `internal/resolver/` | `$(params.x)`, `$(tasks.X.results.Y)`, `$(context.*)`, `$(results.X.path)`, `$(workspaces.X.path)`, array `[*]` expansion, `$$` escape; **per-step**: `$(step.results.X.path)`, `$(steps.X.results.Y)`; `SubstituteAllowStepRefs` deferral semantics |
+| `internal/refresolver/` | Registry dispatch + allow-list + per-run cache; `CacheKey` post-substitution invariant; inline stub resolver; sentinel errors `ErrResolverNotRegistered` / `ErrResolverNotAllowed` / `ErrInlineNoData` (Track 1 #9 Phase 1 — concrete resolvers land in Phase 2-4) |
 | `internal/tektontypes/` | `ParamValue` JSON round-trip across string/array/object |
 | `internal/validator/` | task ref / DAG / when-operator checks; **policy: negative retries, malformed timeout, unknown onError**; volume-kind plumbing (rejects unknown kinds, multiple sources, undeclared volumeMounts) |
 | `internal/volumes/` | `Store` inline-vs-dir precedence; emptyDir/hostPath/configMap/secret materialization; items-projection; rejects `..` traversal |

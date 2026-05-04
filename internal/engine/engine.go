@@ -12,6 +12,7 @@ import (
 	"github.com/danielfbm/tkn-act/internal/backend"
 	"github.com/danielfbm/tkn-act/internal/engine/dag"
 	"github.com/danielfbm/tkn-act/internal/loader"
+	"github.com/danielfbm/tkn-act/internal/refresolver"
 	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/resolver"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
@@ -24,6 +25,12 @@ type Options struct {
 	// before the task runs. The CLI sets this; tests may leave it nil
 	// (volumes are then unsupported in that test).
 	VolumeResolver VolumeResolver
+	// Refresolver dispatches resolver-backed taskRefs at task-dispatch
+	// time. nil-safe: when nil, any PipelineTask whose taskRef.resolver
+	// is non-empty will fail with a clear error from lookupTaskSpecLazy.
+	// The CLI builds this from --resolver-allow / --resolver-cache-dir /
+	// --offline; tests inject a Registry with an inline stub resolver.
+	Refresolver *refresolver.Registry
 }
 
 // VolumeResolver is the engine's hook for the volumes package. Returns
@@ -44,8 +51,44 @@ func New(be backend.Backend, rep reporter.Reporter, opts Options) *Engine {
 }
 
 func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, error) {
+	// Eager top-level pipelineRef.resolver resolution. A PipelineRun
+	// whose spec.pipelineRef carries a resolver block is resolved
+	// SYNCHRONOUSLY at load time (spec §7) — the resolved Pipeline
+	// replaces in.Name and gets injected into the bundle before DAG
+	// build. Top-level resolution emits resolver-start / resolver-end
+	// with an empty Task field; the consumer disambiguates "this is a
+	// top-level pipelineRef resolution" from "this is a per-task
+	// resolution" via the absence of the task field.
+	if pl, ok := maybeResolveTopLevelPipelineRef(ctx, in, e.opts.Refresolver, e.rep); ok {
+		// Inject a synthetic name if the PipelineRun didn't carry one,
+		// or the resolved Pipeline's metadata.name differs.
+		name := pl.Metadata.Name
+		if name == "" {
+			name = "resolved"
+			pl.Metadata.Name = name
+		}
+		if in.Bundle.Pipelines == nil {
+			in.Bundle.Pipelines = map[string]tektontypes.Pipeline{}
+		}
+		in.Bundle.Pipelines[name] = pl
+		in.Name = name
+	} else if in.Name == "" {
+		// No top-level resolver and no name — surface the failure if
+		// maybeResolveTopLevelPipelineRef reported one (it emitted a
+		// run-end already), else fall through to the not-found branch.
+		// We don't synthesize a "best guess" pipeline name here; the
+		// caller (CLI) disambiguates that.
+	}
 	pl, ok := in.Bundle.Pipelines[in.Name]
 	if !ok {
+		// If the engine emitted a top-level resolver-end with status
+		// failed, treat the run as already-terminated. Detect that by
+		// checking whether maybeResolveTopLevelPipelineRef saw a
+		// resolver block; if it did, we already emitted run-start /
+		// run-end ourselves and can return cleanly.
+		if hasTopLevelPipelineRefResolver(in.Bundle) {
+			return RunResult{Status: "failed"}, nil
+		}
 		return RunResult{}, fmt.Errorf("pipeline %q not found", in.Name)
 	}
 	if pb, ok := e.be.(backend.PipelineBackend); ok {
@@ -88,6 +131,22 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 	}
 	for _, pt := range pl.Spec.Tasks {
 		for _, dep := range pt.RunAfter {
+			g.AddEdge(dep, pt.Name)
+		}
+		// Implicit edges from $(tasks.X.results.Y) references in
+		// pt.Params and pt.TaskRef.ResolverParams. Mirrors upstream
+		// Tekton; lazy-resolved taskRefs depend on this so a
+		// resolver.params reference to an upstream result schedules
+		// after the upstream task. Refs to tasks not in the main
+		// DAG are silently dropped here (the validator catches
+		// dangling refs separately).
+		for _, dep := range implicitParamEdges(pt) {
+			if _, ok := main[dep]; !ok {
+				continue
+			}
+			if dep == pt.Name {
+				continue
+			}
 			g.AddEdge(dep, pt.Name)
 		}
 	}
@@ -155,13 +214,25 @@ levelLoop:
 			// runOne; it's safe to ignore here.
 			taskSpec, _ := lookupTaskSpec(in.Bundle, pt)
 
+			// Snapshot the results map under the mutex so the
+			// per-task substitution sees a stable view. Concurrent
+			// tasks at the same level write to `results` after their
+			// runs end; without a snapshot a goroutine reading
+			// resolver.Context.Results races with those writes.
+			mu.Lock()
+			resultsSnap := make(map[string]map[string]string, len(results))
+			for k, v := range results {
+				resultsSnap[k] = v
+			}
+			mu.Unlock()
+
 			eg.Go(func() error {
 				e.rep.Emit(reporter.Event{
 					Kind: reporter.EvtTaskStart, Time: time.Now(), Task: tname,
 					DisplayName: pt.DisplayName,
 					Description: taskSpec.Description,
 				})
-				oc := e.runOneWithPolicy(gctx, in, pl, pt, params, results, runID, pipelineRunName)
+				oc := e.runOneWithPolicy(gctx, in, pl, pt, params, resultsSnap, runID, pipelineRunName)
 				e.rep.Emit(reporter.Event{
 					Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: tname,
 					Status: oc.Status, Duration: oc.Duration, Message: oc.Message, Attempt: oc.Attempt,
@@ -295,10 +366,23 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 	}
 
 	// Resolve task spec, then merge StepTemplate into each Step
-	// before any further substitution / validation runs.
-	spec, err := lookupTaskSpec(in.Bundle, pt)
-	if err != nil {
-		return TaskOutcome{Status: "failed", Message: err.Error()}
+	// before any further substitution / validation runs. If the
+	// PipelineTask uses a resolver-backed taskRef, lazy-dispatch
+	// kicks in: substitute resolver.params against rctx, call the
+	// registry, validate the bytes, and return the inlined TaskSpec.
+	var spec tektontypes.TaskSpec
+	if pt.TaskRef != nil && pt.TaskRef.Resolver != "" {
+		var lerr error
+		spec, _, lerr = lookupTaskSpecLazy(ctx, pt, rctx, e.opts.Refresolver, e.rep)
+		if lerr != nil {
+			return TaskOutcome{Status: "failed", Message: lerr.Error()}
+		}
+	} else {
+		var lerr error
+		spec, lerr = lookupTaskSpec(in.Bundle, pt)
+		if lerr != nil {
+			return TaskOutcome{Status: "failed", Message: lerr.Error()}
+		}
 	}
 	spec = applyStepTemplate(spec)
 
@@ -469,6 +553,13 @@ func uniqueImages(b *loader.Bundle, pl tektontypes.Pipeline) []string {
 	seen := map[string]struct{}{}
 	for _, pt := range append(append([]tektontypes.PipelineTask{}, pl.Spec.Tasks...), pl.Spec.Finally...) {
 		var spec tektontypes.TaskSpec
+		if pt.TaskRef != nil && pt.TaskRef.Resolver != "" {
+			// Resolver-backed taskRef: bytes aren't available at
+			// pre-pull time; the runtime image pull falls back to
+			// per-step IfNotPresent semantics. Skip silently here
+			// (resolver-end events surface what was fetched).
+			continue
+		}
 		if pt.TaskRef != nil {
 			if t, ok := b.Tasks[pt.TaskRef.Name]; ok {
 				spec = t.Spec
@@ -512,6 +603,28 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 	params, err := applyDefaults(pl.Spec.Params, in.Params)
 	if err != nil {
 		return RunResult{}, err
+	}
+
+	// Cluster-backend lazy-resolve. Local k3d's Tekton has no
+	// resolver credentials and no access to --resolver-cache-dir, so
+	// we resolve in tkn-act and inline the resulting TaskSpec into
+	// the Pipeline before submission. Phase 1 handles resolver.params
+	// that reference run-scope only (params, context); upstream-result
+	// deps within a single submission are deferred to a Phase 2+
+	// extension that submits one PipelineRun per dispatch level.
+	rctx := resolver.Context{
+		Params:       flattenStringParams(params),
+		ArrayParams:  arrayParams(params),
+		ObjectParams: objectParams(params),
+		Results:      map[string]map[string]string{},
+		ContextVars: map[string]string{
+			"pipelineRun.name": pipelineRunName,
+			"pipeline.name":    pl.Metadata.Name,
+		},
+	}
+	if rerr := inlineResolverBackedTasks(ctx, &pl, rctx, e.opts.Refresolver, e.rep); rerr != nil {
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Message: rerr.Error()})
+		return RunResult{Status: "failed"}, rerr
 	}
 
 	images := uniqueImages(in.Bundle, pl)

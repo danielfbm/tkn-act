@@ -284,3 +284,89 @@ func TestParamValueScalarAndArray(t *testing.T) {
 		t.Errorf("object = %+v", got[2].Value)
 	}
 }
+
+// TestUnmarshalTaskRefWithResolver pins the YAML round-trip for a
+// resolver-backed taskRef. The Phase 1 spec adds Resolver+ResolverParams
+// as optional fields on TaskRef; agents should be able to load a
+// PipelineTask whose taskRef references a `git` resolver with the
+// usual `params: [{name, value}]` block nested inside.
+func TestUnmarshalTaskRefWithResolver(t *testing.T) {
+	in := []byte(`
+name: build
+taskRef:
+  resolver: git
+  params:
+    - name: url
+      value: https://github.com/tektoncd/catalog
+    - name: revision
+      value: main
+    - name: pathInRepo
+      value: task/golang-build/0.4/golang-build.yaml
+`)
+	var got PipelineTask
+	if err := yaml.Unmarshal(in, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.TaskRef == nil {
+		t.Fatal("TaskRef nil")
+	}
+	if got.TaskRef.Resolver != "git" {
+		t.Errorf("resolver = %q, want git", got.TaskRef.Resolver)
+	}
+	if got.TaskRef.Name != "" {
+		t.Errorf("expected empty Name with resolver set, got %q", got.TaskRef.Name)
+	}
+	if len(got.TaskRef.ResolverParams) != 3 {
+		t.Fatalf("resolver params = %d, want 3", len(got.TaskRef.ResolverParams))
+	}
+	if got.TaskRef.ResolverParams[0].Name != "url" ||
+		got.TaskRef.ResolverParams[0].Value.StringVal != "https://github.com/tektoncd/catalog" {
+		t.Errorf("params[0] = %+v", got.TaskRef.ResolverParams[0])
+	}
+	if got.TaskRef.ResolverParams[2].Name != "pathInRepo" {
+		t.Errorf("params[2].name = %q", got.TaskRef.ResolverParams[2].Name)
+	}
+}
+
+// TestUnmarshalPipelineRefWithResolver pins the round-trip for a
+// resolver-backed pipelineRef on a PipelineRun.
+func TestUnmarshalPipelineRefWithResolver(t *testing.T) {
+	in := []byte(`
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: my-run
+spec:
+  pipelineRef:
+    resolver: hub
+    params:
+      - name: catalog
+        value: tekton
+      - name: kind
+        value: pipeline
+      - name: name
+        value: ci
+      - name: version
+        value: "0.4"
+`)
+	var got PipelineRun
+	if err := yaml.Unmarshal(in, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Spec.PipelineRef == nil {
+		t.Fatal("PipelineRef nil")
+	}
+	if got.Spec.PipelineRef.Resolver != "hub" {
+		t.Errorf("resolver = %q, want hub", got.Spec.PipelineRef.Resolver)
+	}
+	if got.Spec.PipelineRef.Name != "" {
+		t.Errorf("expected empty Name, got %q", got.Spec.PipelineRef.Name)
+	}
+	if len(got.Spec.PipelineRef.ResolverParams) != 4 {
+		t.Fatalf("resolver params = %d, want 4", len(got.Spec.PipelineRef.ResolverParams))
+	}
+	if got.Spec.PipelineRef.ResolverParams[3].Name != "version" ||
+		got.Spec.PipelineRef.ResolverParams[3].Value.StringVal != "0.4" {
+		t.Errorf("params[3] = %+v", got.Spec.PipelineRef.ResolverParams[3])
+	}
+}

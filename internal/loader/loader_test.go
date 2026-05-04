@@ -246,3 +246,123 @@ func TestLoadConfigMapAndSecretFromFile(t *testing.T) {
 		t.Errorf("raw-token = %q, want hello-plain", sec["raw-token"])
 	}
 }
+
+// TestLoadPipelineWithResolverTaskRef confirms the loader populates
+// the new TaskRef.Resolver / TaskRef.ResolverParams fields for a
+// pipelineTask whose taskRef carries a resolver block.
+func TestLoadPipelineWithResolverTaskRef(t *testing.T) {
+	yaml := []byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef:
+        resolver: git
+        params:
+          - {name: url, value: https://github.com/x/y}
+          - {name: revision, value: main}
+          - {name: pathInRepo, value: task.yaml}
+`)
+	b, err := loader.LoadBytes(yaml)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	pl, ok := b.Pipelines["p"]
+	if !ok {
+		t.Fatal("pipeline p not loaded")
+	}
+	if len(pl.Spec.Tasks) != 1 {
+		t.Fatalf("tasks = %d, want 1", len(pl.Spec.Tasks))
+	}
+	pt := pl.Spec.Tasks[0]
+	if pt.TaskRef == nil {
+		t.Fatal("taskRef nil")
+	}
+	if pt.TaskRef.Resolver != "git" {
+		t.Errorf("resolver = %q, want git", pt.TaskRef.Resolver)
+	}
+	if len(pt.TaskRef.ResolverParams) != 3 {
+		t.Errorf("resolver params = %d, want 3", len(pt.TaskRef.ResolverParams))
+	}
+}
+
+// TestHasUnresolvedRefs lists the resolver-backed taskRefs for diagnostic
+// surfacing (used by validate -o json and --offline pre-flight).
+func TestHasUnresolvedRefs(t *testing.T) {
+	yaml := []byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef: {resolver: git, params: [{name: url, value: u}]}
+    - name: lint
+      taskRef: {name: lint-task}
+  finally:
+    - name: notify
+      taskRef: {resolver: hub, params: [{name: name, value: notify}]}
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: lint-task}
+spec:
+  steps:
+    - {name: s, image: alpine, script: echo}
+`)
+	b, err := loader.LoadBytes(yaml)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	got := loader.HasUnresolvedRefs(b)
+	if len(got) != 2 {
+		t.Fatalf("unresolved = %d, want 2 (got %+v)", len(got), got)
+	}
+	// We don't pin order; just assert the two expected entries are present.
+	resolvers := map[string]string{}
+	for _, u := range got {
+		resolvers[u.PipelineTask] = u.Resolver
+	}
+	if resolvers["build"] != "git" {
+		t.Errorf("build resolver = %q, want git", resolvers["build"])
+	}
+	if resolvers["notify"] != "hub" {
+		t.Errorf("notify resolver = %q, want hub", resolvers["notify"])
+	}
+}
+
+// TestHasUnresolvedRefsTopLevelPipelineRef covers a PipelineRun whose
+// top-level pipelineRef carries a resolver block. The diagnostic uses
+// PipelineTask = "" to indicate "the top-level Pipeline reference".
+func TestHasUnresolvedRefsTopLevelPipelineRef(t *testing.T) {
+	yaml := []byte(`
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata: {name: my-run}
+spec:
+  pipelineRef:
+    resolver: git
+    params:
+      - {name: url, value: u}
+      - {name: pathInRepo, value: pipeline.yaml}
+`)
+	b, err := loader.LoadBytes(yaml)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	got := loader.HasUnresolvedRefs(b)
+	if len(got) != 1 {
+		t.Fatalf("unresolved = %d, want 1 (got %+v)", len(got), got)
+	}
+	if got[0].Kind != "Pipeline" {
+		t.Errorf("kind = %q, want Pipeline", got[0].Kind)
+	}
+	if got[0].Resolver != "git" {
+		t.Errorf("resolver = %q, want git", got[0].Resolver)
+	}
+	if got[0].PipelineTask != "" {
+		t.Errorf("expected empty PipelineTask for top-level ref, got %q", got[0].PipelineTask)
+	}
+}

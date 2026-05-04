@@ -150,7 +150,7 @@ The columns:
 |---|---|---|---|---|---|---|
 | `taskRef.name` (in-bundle reference) | `PipelineTask.taskRef` | shipped | both | hello | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
 | `StepActions` (`tekton.dev/v1beta1` referenceable steps) | `Step.ref` | gap | both | none | none | docs/short-term-goals.md (Track 1 #8) |
-| Resolvers — git / hub / cluster / bundles | `taskRef.resolver` | gap | both | none | none | docs/short-term-goals.md (Track 1 #9) — needs its own spec |
+| Resolvers — git / hub / cluster / bundles | `taskRef.resolver` | in-progress | both | none | none | docs/superpowers/plans/2026-05-04-resolvers.md (Track 1 #9) — Phase 1 (types + lazy-dispatch + cluster inline + validator + events + CLI flags) shipped; concrete resolvers (Phase 2-4), remote ResolutionRequest driver (Phase 5), and offline cache polish (Phase 6) tracked in the plan |
 | Custom Tasks (`taskRef.apiVersion != tekton.dev/v1`) | `PipelineTask.taskRef.apiVersion` | out-of-scope | n/a | none | none | v1 spec non-goal. |
 | Tekton Chains (signing) | n/a | out-of-scope | n/a | none | none | v1 spec non-goal. |
 | Tekton Results (long-term storage) | n/a | out-of-scope | n/a | none | none | v1 spec non-goal. |
@@ -172,7 +172,7 @@ The columns:
 | `tkn-act doctor -o json` | shipped | Stable shape. |
 | `tkn-act help-json` | shipped | Stable shape. |
 | `tkn-act agent-guide` | shipped | Embeds `cmd/tkn-act/agentguide_data.md`. |
-| `tkn-act run -o json` event stream | shipped | Stable kinds: `run-start`, `run-end`, `task-start`, `task-end`, `task-skip`, `task-retry`, `step-start`, `step-end`, `step-log`, `error`. |
+| `tkn-act run -o json` event stream | shipped | Stable kinds: `run-start`, `run-end`, `task-start`, `task-end`, `task-skip`, `task-retry`, `step-start`, `step-end`, `step-log`, `error`, `resolver-start`, `resolver-end`. The two `resolver-*` kinds are additive (Track 1 #9 Phase 1); agents that don't recognize them ignore them. |
 | Stable exit codes (0,1,2,3,4,5,6,130) | shipped | See `internal/exitcode/exitcode.go`. |
 | `task-retry` events from cluster mode | shipped | Post-hoc from TaskRun.status.retriesStatus; PR #6. |
 

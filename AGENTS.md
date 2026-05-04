@@ -104,7 +104,9 @@ Use this to construct correct invocations without scraping `--help` text.
 
 Streams one JSON object per line on stdout, one event per line. Event kinds:
 `run-start`, `run-end`, `task-start`, `task-end`, `task-skip`, `task-retry`,
-`step-start`, `step-end`, `step-log`, `error`. `task-retry` fires between
+`step-start`, `step-end`, `step-log`, `error`, `resolver-start`, `resolver-end`.
+The two `resolver-*` kinds (Track 1 #9 Phase 1) are additive — agents that
+don't recognize them ignore them. `task-retry` fires between
 attempts of a retried task; the terminal `task-end` carries `attempt: N`.
 Task statuses: `succeeded`, `failed`, `infrafailed`, `skipped`, `not-run`,
 `timeout`. The exit code follows the table below.
@@ -517,6 +519,63 @@ shorten `finally`, and vice versa.
 We do not default `timeouts.pipeline` to `1h` the way upstream Tekton does;
 omission means "no budget at this level." This may change in a future
 release.
+
+---
+
+## Resolvers (Track 1 #9, in progress)
+
+`taskRef.resolver` and `pipelineRef.resolver` (the Tekton catalog-consumption
+pattern) are **partly supported** in v1.6.x. The scaffolding has shipped:
+
+- New types `TaskRef.Resolver` / `TaskRef.ResolverParams` and the
+  `PipelineRef` counterparts. Existing inline-only YAML is unaffected
+  (the new fields are `omitempty`).
+- A new `internal/refresolver` package distinct from `internal/resolver`
+  (which performs `$(...)` variable substitution). The two senses of
+  "resolver" are intentionally separated.
+- **Lazy resolution at task-dispatch time**: `resolver.params` may
+  reference `$(tasks.X.results.Y)` and the engine schedules X before
+  the resolver-backed task. Implicit DAG edges are now inferred from
+  every `$(tasks.X.results.Y)` substring in `pt.Params` AND
+  `pt.TaskRef.ResolverParams` (a baseline behavior change — see the
+  PR description for one observable effect on previously-broken
+  Pipelines).
+- **Eager top-level resolution** for `pipelineRef.resolver` on a
+  PipelineRun: resolved synchronously at load time before any DAG
+  build, since a top-level ref cannot legally substitute upstream
+  task results.
+- **Cluster backend inlines** resolver-backed taskRefs into the
+  submitted PipelineRun before sending it to the local k3d (which
+  has no resolver credentials of its own).
+- **Two new event kinds**: `resolver-start` and `resolver-end`,
+  carrying optional `resolver`, `cached`, `sha256`, `source` fields,
+  all `omitempty` so non-resolver events ignore them. The top-level
+  pipelineRef resolution emits these two events with an empty `task`
+  field — JSON consumers disambiguate via the absence of `task`.
+- **CLI flags scaffolded** but most are no-ops in Phase 1:
+  `--resolver-cache-dir`, `--resolver-allow=git,hub,http,bundles`
+  (default), `--resolver-config`, `--offline`,
+  `--remote-resolver-context`, `--resolver-allow-insecure-http`. Only
+  the inline-stub resolver is registered; any other resolver name
+  fails with `refresolver: resolver "git" not registered (not yet
+  implemented in this release)`.
+- **Validator** rejects unknown resolver names in direct mode (unless
+  `--remote-resolver-context` is set, which short-circuits the
+  allow-list); rejects `resolver.params` that reference a task not in
+  `spec.tasks ∪ spec.finally`; rejects any cache-miss when `--offline`
+  is set.
+
+What's deferred to follow-up phases (each ships independently):
+
+- **Concrete resolvers** — `git`, `hub`, `http`, `bundles`, `cluster`
+  fetchers (Phases 2-4).
+- **Mode B (remote)** — submit a `ResolutionRequest` CRD to a
+  user-configured cluster and use the response (Phase 5).
+- **Offline cache + management subcommands** (`tkn-act cache prune`,
+  `tkn-act cache list`) (Phase 6).
+
+See `docs/superpowers/plans/2026-05-04-resolvers.md` for the full plan
+and `docs/superpowers/specs/2026-05-04-resolvers-design.md` for the spec.
 
 ---
 
