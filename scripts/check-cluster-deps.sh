@@ -46,7 +46,7 @@ check_tool() {
 check_tool docker \
   "docker version --format '{{.Client.Version}}' || docker --version" \
   "https://docs.docker.com/get-docker/" \
-  "ensure the daemon is running, e.g. 'systemctl --user start docker' or open Docker Desktop"
+  "after install, ensure the daemon is running ('systemctl --user start docker' or open Docker Desktop)"
 
 check_tool kubectl \
   "kubectl version --client=true -o yaml 2>/dev/null | grep -m1 gitVersion || kubectl version --client=true" \
