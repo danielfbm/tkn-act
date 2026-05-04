@@ -210,15 +210,19 @@ func runWith(rf runFlags) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Build the refresolver registry. Phase 1 only registers the inline
-	// stub; concrete resolvers land in Phase 2-4. The allow-list passes
-	// through; --offline / --resolver-cache-dir / --resolver-config are
-	// stored on the registry for later phases.
+	// Build the refresolver registry. The default registry pre-registers
+	// inline + git + hub + http + bundles; cluster is OFF by default and
+	// only registers when --cluster-resolver-context is set OR `cluster`
+	// is in --resolver-allow (KUBECONFIG may point at production).
+	allowCluster := gf.clusterResolverContext != ""
 	reg := refresolver.NewDefaultRegistry(refresolver.Options{
-		Allow:             gf.resolverAllow,
-		CacheDir:          resolveResolverCacheDir(gf.resolverCacheDir),
-		Offline:           gf.offline,
-		AllowInsecureHTTP: gf.resolverAllowInsecureHTTP,
+		Allow:                     gf.resolverAllow,
+		CacheDir:                  resolveResolverCacheDir(gf.resolverCacheDir),
+		Offline:                   gf.offline,
+		AllowInsecureHTTP:         gf.resolverAllowInsecureHTTP,
+		AllowCluster:              allowCluster,
+		ClusterResolverContext:    gf.clusterResolverContext,
+		ClusterResolverKubeconfig: gf.clusterResolverKubeconfig,
 	})
 
 	res, err := engine.New(be, rep, engine.Options{
