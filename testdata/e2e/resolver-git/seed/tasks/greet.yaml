@@ -1,0 +1,10 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: greet
+spec:
+  description: Trivial Task served from a bare git repo by the direct git resolver.
+  steps:
+    - name: hi
+      image: alpine:3
+      script: echo hello-from-resolver-git

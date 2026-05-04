@@ -16,6 +16,7 @@ import (
 	"github.com/danielfbm/tkn-act/internal/e2e/fixtures"
 	"github.com/danielfbm/tkn-act/internal/engine"
 	"github.com/danielfbm/tkn-act/internal/loader"
+	"github.com/danielfbm/tkn-act/internal/refresolver"
 	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	"github.com/danielfbm/tkn-act/internal/volumes"
@@ -106,6 +107,19 @@ func runFixtureDocker(t *testing.T, f fixtures.Fixture) {
 		pmap[k] = tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: v}
 	}
 
+	// resolver-git: build a per-test bare repo from the fixture's
+	// seed/ subtree and inject the file:// URL as the repoURL param.
+	// Mirrors the cluster-e2e harness so both backends exercise the
+	// same direct-git-resolver code path.
+	if f.Dir == "resolver-git" {
+		seed := filepath.Join("..", "..", "testdata", "e2e", "resolver-git", "seed")
+		url, err := fixtures.BuildBareRepoFromSeed(seed, t.TempDir())
+		if err != nil {
+			t.Fatalf("build bare repo: %v", err)
+		}
+		pmap["repoURL"] = tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: url}
+	}
+
 	cmStore := volumes.NewStore("")
 	// Bundle-loaded CM/Secret resources (kind: ConfigMap / kind: Secret
 	// embedded in the fixture's -f stream) sit at the lowest precedence
@@ -135,7 +149,15 @@ func runFixtureDocker(t *testing.T, f fixtures.Fixture) {
 		return volumes.MaterializeForTask(taskName, vs, volBase, cmStore, secStore)
 	}
 
-	res, err := engine.New(be, rep, engine.Options{MaxParallel: 4, VolumeResolver: volResolver}).RunPipeline(ctx, engine.PipelineInput{
+	// Wire the default refresolver registry so resolver-backed
+	// fixtures (Track 1 #9) dispatch the same way `tkn-act run` does.
+	// The cache dir is a per-test tmpdir so subtests don't share
+	// resolved bytes across runs.
+	reg := refresolver.NewDefaultRegistry(refresolver.Options{
+		Allow:    []string{"git", "hub", "http", "bundles"},
+		CacheDir: t.TempDir(),
+	})
+	res, err := engine.New(be, rep, engine.Options{MaxParallel: 4, VolumeResolver: volResolver, Refresolver: reg}).RunPipeline(ctx, engine.PipelineInput{
 		Bundle: b, Name: f.Pipeline, Params: pmap, Workspaces: wsHost,
 	})
 	if err != nil {

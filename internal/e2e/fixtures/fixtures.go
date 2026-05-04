@@ -260,6 +260,14 @@ func All() []Fixture {
 			Description: "matrix-fanned task results not exposed as pipeline results in Tekton v0.65 (alpha api fields)",
 		},
 		{
+			Dir: "resolver-git", Pipeline: "resolver-git", WantStatus: "succeeded",
+			// The repoURL is supplied by the harness: BuildBareRepoFromSeed
+			// is invoked when the harness sees Dir=="resolver-git", and the
+			// returned file:// URL is injected into Params["repoURL"]. See
+			// internal/e2e/fixtures/resolvergit.go.
+			Description: "direct git resolver via local bare repo (Track 1 #9 Phase 2)",
+		},
+		{
 			Dir: "matrix-include", Pipeline: "matrix-include", WantStatus: "succeeded",
 			// 1 cross-product row (os=linux, arch=amd64 from Task default)
 			// + 2 include rows (arch=arm64 named arm-extra; arch=armv7
