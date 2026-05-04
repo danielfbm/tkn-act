@@ -1,6 +1,7 @@
 package resolver_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/danielfbm/tkn-act/internal/resolver"
@@ -90,6 +91,65 @@ func TestWorkspacePath(t *testing.T) {
 	}
 	if got != "/workspace/shared" {
 		t.Errorf("got %q", got)
+	}
+}
+
+// TestResolveTaskResultArrayStar pins the resolver extension that
+// matrix-fanned task-result aggregation depends on. Tekton writes
+// the per-expansion string results as a JSON-array literal under
+// the parent name (matching aggregateMatrixResults in
+// internal/engine/matrix.go); $(tasks.X.results.Y[*]) must splice
+// those into N arg-shaped strings, NOT the literal JSON string.
+func TestResolveTaskResultArrayStar(t *testing.T) {
+	ctx := resolver.Context{
+		Results: map[string]map[string]string{
+			"build": {"images": `["a","b","c"]`},
+		},
+	}
+	got, err := resolver.SubstituteArgs([]string{"$(tasks.build.results.images[*])"}, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a", "b", "c"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("SubstituteArgs = %v, want %v", got, want)
+	}
+}
+
+func TestResolveTaskResultArrayStarRejectsNonArrayValue(t *testing.T) {
+	ctx := resolver.Context{
+		Results: map[string]map[string]string{"build": {"tag": "scalar"}},
+	}
+	if _, err := resolver.SubstituteArgs([]string{"$(tasks.build.results.tag[*])"}, ctx); err == nil {
+		t.Fatal("want error for non-array source, got nil")
+	}
+}
+
+func TestResolveTaskResultArrayStarUnknownTask(t *testing.T) {
+	ctx := resolver.Context{Results: map[string]map[string]string{}}
+	if _, err := resolver.SubstituteArgs([]string{"$(tasks.missing.results.x[*])"}, ctx); err == nil {
+		t.Fatal("want error for unknown task, got nil")
+	}
+}
+
+func TestResolveTaskResultArrayStarUnknownResult(t *testing.T) {
+	ctx := resolver.Context{Results: map[string]map[string]string{"build": {}}}
+	if _, err := resolver.SubstituteArgs([]string{"$(tasks.build.results.missing[*])"}, ctx); err == nil {
+		t.Fatal("want error for unknown result, got nil")
+	}
+}
+
+// SubstituteArgsAllowStepRefs honors the same widened [*] semantics.
+func TestResolveTaskResultArrayStarAllowStepRefs(t *testing.T) {
+	ctx := resolver.Context{
+		Results: map[string]map[string]string{"build": {"x": `["1","2"]`}},
+	}
+	got, err := resolver.SubstituteArgsAllowStepRefs([]string{"$(tasks.build.results.x[*])"}, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []string{"1", "2"}) {
+		t.Errorf("got %v, want [1 2]", got)
 	}
 }
 
