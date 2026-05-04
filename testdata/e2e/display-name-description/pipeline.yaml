@@ -1,0 +1,30 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: tk
+spec:
+  displayName: "Unit-test runner"
+  description: "Runs `go test ./...`."
+  steps:
+    - name: compile
+      displayName: "Compile"
+      description: "Compile the test binary."
+      image: alpine:3
+      script: |
+        echo "compiling"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: display-name-description
+spec:
+  displayName: "Build & test"
+  description: "Build then test."
+  tasks:
+    - name: t1
+      displayName: "Compile binary"
+      taskRef: { name: tk }
+  finally:
+    - name: notify
+      displayName: "Send notification"
+      taskRef: { name: tk }

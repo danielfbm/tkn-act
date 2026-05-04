@@ -195,6 +195,71 @@ spec:
 	}
 }
 
+func TestUnmarshalPipelineWithDisplayNameAndDescription(t *testing.T) {
+	in := []byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  displayName: "Build & test"
+  description: "Build then test."
+  tasks:
+    - name: t
+      displayName: "Compile binary"
+      taskRef: {name: t}
+  finally:
+    - name: f
+      displayName: "Notify"
+      taskRef: {name: t}
+`)
+	var got Pipeline
+	if err := yaml.Unmarshal(in, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.DisplayName != "Build & test" {
+		t.Errorf("Pipeline.Spec.DisplayName = %q", got.Spec.DisplayName)
+	}
+	if got.Spec.Description != "Build then test." {
+		t.Errorf("Pipeline.Spec.Description = %q", got.Spec.Description)
+	}
+	if got.Spec.Tasks[0].DisplayName != "Compile binary" {
+		t.Errorf("Tasks[0].DisplayName = %q", got.Spec.Tasks[0].DisplayName)
+	}
+	if got.Spec.Finally[0].DisplayName != "Notify" {
+		t.Errorf("Finally[0].DisplayName = %q", got.Spec.Finally[0].DisplayName)
+	}
+}
+
+func TestUnmarshalTaskWithDisplayNameAndStepFields(t *testing.T) {
+	in := []byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  displayName: "Unit-test runner"
+  description: "Runs go test."
+  steps:
+    - name: s
+      displayName: "Compile"
+      description: "Compile the test binary."
+      image: golang:1.25
+      script: 'true'
+`)
+	var got Task
+	if err := yaml.Unmarshal(in, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.DisplayName != "Unit-test runner" {
+		t.Errorf("Task.Spec.DisplayName = %q", got.Spec.DisplayName)
+	}
+	if got.Spec.Steps[0].DisplayName != "Compile" {
+		t.Errorf("Step.DisplayName = %q", got.Spec.Steps[0].DisplayName)
+	}
+	if got.Spec.Steps[0].Description != "Compile the test binary." {
+		t.Errorf("Step.Description = %q", got.Spec.Steps[0].Description)
+	}
+}
+
 func TestParamValueScalarAndArray(t *testing.T) {
 	in := []byte(`
 - name: scalar

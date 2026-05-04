@@ -4,9 +4,12 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/danielfbm/tkn-act/internal/backend/docker"
@@ -18,6 +21,27 @@ import (
 	"github.com/danielfbm/tkn-act/internal/volumes"
 	"github.com/danielfbm/tkn-act/internal/workspace"
 )
+
+// captureSink is a reporter.Reporter that records every emitted event so
+// the docker-e2e tests can assert on the JSON event shape.
+type captureSink struct {
+	mu     sync.Mutex
+	events []reporter.Event
+}
+
+func (s *captureSink) Emit(e reporter.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, e)
+}
+func (s *captureSink) Close() error { return nil }
+func (s *captureSink) snapshot() []reporter.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]reporter.Event, len(s.events))
+	copy(out, s.events)
+	return out
+}
 
 func TestE2E(t *testing.T) {
 	for _, f := range fixtures.All() {
@@ -65,7 +89,9 @@ func runFixtureDocker(t *testing.T, f fixtures.Fixture) {
 		t.Skipf("docker: %v", err)
 	}
 
-	rep := reporter.NewJSON(io.Discard)
+	jsonRep := reporter.NewJSON(io.Discard)
+	cap := &captureSink{}
+	rep := reporter.NewTee(jsonRep, cap)
 	pmap := map[string]tektontypes.ParamValue{}
 	for k, v := range f.Params {
 		pmap[k] = tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: v}
@@ -115,5 +141,40 @@ func runFixtureDocker(t *testing.T, f fixtures.Fixture) {
 	// dropped pipeline results would still leave WantStatus green.
 	if f.WantResults != nil && !fixtures.ResultsEqual(res.Results, f.WantResults) {
 		t.Errorf("results = %v, want %v (%s)", res.Results, f.WantResults, f.Description)
+	}
+	assertEventShape(t, f, cap.snapshot())
+}
+
+// assertEventShape checks per-fixture invariants on the captured event
+// stream. Today the only structured assertion is WantEventFields, but
+// the helper exists so future cross-backend invariants (e.g., emitted
+// step-level events) have a single place to land.
+func assertEventShape(t *testing.T, f fixtures.Fixture, events []reporter.Event) {
+	t.Helper()
+	if len(f.WantEventFields) > 0 {
+		// First event by kind.
+		first := map[reporter.EventKind]reporter.Event{}
+		for _, e := range events {
+			if _, ok := first[e.Kind]; !ok {
+				first[e.Kind] = e
+			}
+		}
+		for kindStr, want := range f.WantEventFields {
+			ev, ok := first[reporter.EventKind(kindStr)]
+			if !ok {
+				t.Errorf("WantEventFields: no %q event in captured stream", kindStr)
+				continue
+			}
+			// Marshal the event back to JSON so we assert against the
+			// public contract (snake_case keys), not Go field names.
+			raw, _ := json.Marshal(ev)
+			var got map[string]any
+			_ = json.Unmarshal(raw, &got)
+			for key, expected := range want {
+				if fmt.Sprint(got[key]) != expected {
+					t.Errorf("WantEventFields[%s][%s] = %v, want %q", kindStr, key, got[key], expected)
+				}
+			}
+		}
 	}
 }

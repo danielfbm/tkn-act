@@ -130,6 +130,14 @@ type Fixture struct {
 	// produce the same Results map for any fixture that sets this. If
 	// nil, only WantStatus is asserted (the existing behavior).
 	WantResults map[string]any
+	// WantEventFields, if non-nil, asserts that for each named event
+	// kind the first matching event in the captured stream carries
+	// each named JSON-key/value pair. Shape:
+	//   kind -> { jsonKey -> expectedValue }
+	// Only the first event of each kind is inspected (run-start /
+	// run-end always have exactly one; task-start / step-log are
+	// asserted on the first emission). Skipped if the map is nil.
+	WantEventFields map[string]map[string]string
 }
 
 // TestName returns the subtest name for this fixture: explicit Name when
@@ -192,6 +200,27 @@ func All() []Fixture {
 			},
 		},
 		{Dir: "step-results", Pipeline: "stepres", WantStatus: "succeeded"},
+		{
+			Dir: "display-name-description", Pipeline: "display-name-description", WantStatus: "succeeded",
+			// WantEventFields asserts that specific event kinds carry the
+			// documented display_name / description fields. Mirrors how
+			// pipeline-results checks Results, but at the event-stream
+			// layer.
+			//
+			// We intentionally do NOT assert on step-log here: the cluster
+			// backend streams pod logs from goroutines that may not
+			// capture anything for very fast pods (the watch on TaskRun
+			// objects may miss the status-update event, or the
+			// pod-logs-follow stream may attach after the pod has been
+			// torn down). Step-log displayName plumbing is exercised by
+			// the unit tests TestLogSinkStepLogPropagatesDisplayName and
+			// TestStepDisplayNameLookup; the e2e harness asserts only the
+			// run / task event-shape invariant.
+			WantEventFields: map[string]map[string]string{
+				"run-start":  {"display_name": "Build & test", "description": "Build then test."},
+				"task-start": {"display_name": "Compile binary", "description": "Runs `go test ./...`."},
+			},
+		},
 		{
 			Dir: "volumes", Pipeline: "configmap-eater", WantStatus: "succeeded",
 			ConfigMaps: map[string]map[string]string{

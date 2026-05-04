@@ -52,6 +52,27 @@ type Event struct {
 	// Map values are one of: string, []string, map[string]string. Empty
 	// or nil when the pipeline declared no results.
 	Results map[string]any `json:"results,omitempty"`
+	// DisplayName is the human-readable label for the entity this event
+	// describes. Carried on:
+	//   - run-start, run-end:    Pipeline.spec.displayName
+	//   - task-start/end/skip/retry: PipelineTask.displayName
+	//   - step-log:              Step.displayName
+	// Empty when the source YAML didn't set a displayName. Agents
+	// should fall back to the corresponding `pipeline` / `task` / `step`
+	// name field.
+	//
+	// Note: step-start / step-end are defined as event kinds but are
+	// not emitted by production code today (v1.5). If they are added
+	// later, they will carry DisplayName the same way step-log does.
+	DisplayName string `json:"display_name,omitempty"`
+
+	// Description carries:
+	//   - run-start: Pipeline.spec.description
+	//   - task-start: TaskSpec.description (the resolved Task)
+	// Omitted from terminal events to keep line size down — the start
+	// event already carried it. Also omitted from step-log to avoid
+	// ballooning every line of streamed output.
+	Description string `json:"description,omitempty"`
 }
 
 // Reporter consumes events.
@@ -68,14 +89,15 @@ type LogSink struct {
 
 func NewLogSink(r Reporter) *LogSink { return &LogSink{r: r} }
 
-func (s *LogSink) StepLog(taskName, stepName, stream, line string) {
+func (s *LogSink) StepLog(taskName, stepName, stepDisplayName, stream, line string) {
 	s.r.Emit(Event{
-		Kind:   EvtStepLog,
-		Time:   time.Now(),
-		Task:   taskName,
-		Step:   stepName,
-		Stream: stream,
-		Line:   line,
+		Kind:        EvtStepLog,
+		Time:        time.Now(),
+		Task:        taskName,
+		Step:        stepName,
+		DisplayName: stepDisplayName,
+		Stream:      stream,
+		Line:        line,
 	})
 }
 

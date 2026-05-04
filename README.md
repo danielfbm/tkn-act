@@ -94,6 +94,9 @@ are exercised by both backends in CI — divergences are explicit
 - `Task.spec.stepTemplate` — Steps inherit `image`, `command`, `args`,
   `env`, `workingDir`, `imagePullPolicy`, `resources` from a per-Task
   base template (`env` merged by name; Step values always win)
+- `displayName` / `description` on Task / Pipeline / PipelineTask / Step
+  — surfaced on the JSON event stream as `display_name` / `description`,
+  preferred over `name` in pretty output
 
 The single source of truth, with one row per Tekton field and links to
 fixtures, plans, and PRs, is

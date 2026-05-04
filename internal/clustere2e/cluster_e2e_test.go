@@ -4,6 +4,8 @@ package clustere2e_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"path/filepath"
 	"sort"
@@ -230,6 +232,31 @@ func assertEventShape(t *testing.T, f fixtures.Fixture, events []reporter.Event)
 		}
 		if !saw {
 			t.Errorf("timeout fixture: no task-end with status=timeout in event stream")
+		}
+	}
+
+	if len(f.WantEventFields) > 0 {
+		// First event by kind.
+		first := map[reporter.EventKind]reporter.Event{}
+		for _, e := range events {
+			if _, ok := first[e.Kind]; !ok {
+				first[e.Kind] = e
+			}
+		}
+		for kindStr, want := range f.WantEventFields {
+			ev, ok := first[reporter.EventKind(kindStr)]
+			if !ok {
+				t.Errorf("WantEventFields: no %q event in captured stream", kindStr)
+				continue
+			}
+			raw, _ := json.Marshal(ev)
+			var got map[string]any
+			_ = json.Unmarshal(raw, &got)
+			for key, expected := range want {
+				if fmt.Sprint(got[key]) != expected {
+					t.Errorf("WantEventFields[%s][%s] = %v, want %q", kindStr, key, got[key], expected)
+				}
+			}
 		}
 	}
 }
