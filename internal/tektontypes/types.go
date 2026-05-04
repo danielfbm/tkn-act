@@ -38,6 +38,7 @@ type TaskSpec struct {
 	Results     []ResultSpec    `json:"results,omitempty"`
 	Workspaces  []WorkspaceDecl `json:"workspaces,omitempty"`
 	Steps       []Step          `json:"steps"`
+	DisplayName string          `json:"displayName,omitempty"`
 	Description string          `json:"description,omitempty"`
 	// Timeout is a Go duration string (e.g. "30s", "5m"). Empty means no
 	// task-level timeout.
@@ -63,6 +64,8 @@ type StepTemplate struct {
 
 type Step struct {
 	Name            string         `json:"name"`
+	DisplayName     string         `json:"displayName,omitempty"`
+	Description     string         `json:"description,omitempty"`
 	Image           string         `json:"image"`
 	Command         []string       `json:"command,omitempty"`
 	Args            []string       `json:"args,omitempty"`
@@ -169,6 +172,7 @@ type Pipeline struct {
 }
 
 type PipelineSpec struct {
+	DisplayName string                  `json:"displayName,omitempty"`
 	Description string                  `json:"description,omitempty"`
 	Params      []ParamSpec             `json:"params,omitempty"`
 	Workspaces  []PipelineWorkspaceDecl `json:"workspaces,omitempty"`
@@ -203,13 +207,14 @@ type PipelineResultSpec struct {
 }
 
 type PipelineTask struct {
-	Name       string             `json:"name"`
-	TaskRef    *TaskRef           `json:"taskRef,omitempty"`
-	TaskSpec   *TaskSpec          `json:"taskSpec,omitempty"` // inline task
-	Params     []Param            `json:"params,omitempty"`
-	Workspaces []WorkspaceBinding `json:"workspaces,omitempty"`
-	RunAfter   []string           `json:"runAfter,omitempty"`
-	When       []WhenExpression   `json:"when,omitempty"`
+	Name        string             `json:"name"`
+	DisplayName string             `json:"displayName,omitempty"`
+	TaskRef     *TaskRef           `json:"taskRef,omitempty"`
+	TaskSpec    *TaskSpec          `json:"taskSpec,omitempty"` // inline task
+	Params      []Param            `json:"params,omitempty"`
+	Workspaces  []WorkspaceBinding `json:"workspaces,omitempty"`
+	RunAfter    []string           `json:"runAfter,omitempty"`
+	When        []WhenExpression   `json:"when,omitempty"`
 	// Retries is the number of additional attempts after the first failure.
 	// 0 (or unset) means run once.
 	Retries int `json:"retries,omitempty"`
