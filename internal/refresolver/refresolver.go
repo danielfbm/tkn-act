@@ -133,6 +133,10 @@ func NewDefaultRegistry(opts Options) *Registry {
 	gitR := NewGit(opts.CacheDir)
 	gitR.SetAllowInsecureHTTP(opts.AllowInsecureHTTP)
 	r.Register(gitR)
+
+	// Phase 3: hub direct resolver. Sibling phases register
+	// on the same hook (Phase 4: bundles + cluster).
+	r.Register(NewHubResolver(HubOptions{}))
 	return r
 }
 
