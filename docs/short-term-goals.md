@@ -32,7 +32,7 @@ near the top are the ones whose absence forces the most users onto
 | 6 | **Pipeline results** (`Pipeline.spec.results`) | Surfaces a final value at the run level; consumers / agents read it from `run-end`. | Done in v1.5 (PR for `feat: Pipeline.spec.results`). Engine resolves after finally; cluster reads `pr.status.results`; `run-end` event carries `results`. |
 | 7 | **`displayName` / `description`** on Task / Pipeline / Step | Pure UX; absent fields make pretty output less informative and AGENTS-mode output less self-describing. | Done in v1.5 (PR for `feat: displayName + description`). Type addition + event-field plumbing; cluster pass-through verified. |
 | 8 | **StepActions** (`tekton.dev/v1beta1` referenceable steps) | Newer Tekton concept (0.50+). Less frequent in catalogs today but rising. | Not started. Needs design (resolution + caching). |
-| 9 | **Resolvers** (git / hub / cluster / bundles) | Largest user-impact item — most catalog usage references `taskRef` from a hub. | Not started. v1 spec explicitly punted; needs its own spec. |
+| 9 | **Resolvers** (git / hub / cluster / bundles) | Largest user-impact item — most catalog usage references `taskRef` from a hub. | Phase 1 (types + lazy-dispatch + cluster inline + validator + events + CLI flag scaffolding) shipped in v1.6.x; remaining phases (concrete resolvers, remote ResolutionRequest driver, offline polish) tracked in `docs/superpowers/plans/2026-05-04-resolvers.md`. |
 
 ---
 
