@@ -20,6 +20,7 @@ import (
 	"github.com/danielfbm/tkn-act/internal/e2e/fixtures"
 	"github.com/danielfbm/tkn-act/internal/engine"
 	"github.com/danielfbm/tkn-act/internal/loader"
+	"github.com/danielfbm/tkn-act/internal/refresolver"
 	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	"github.com/danielfbm/tkn-act/internal/volumes"
@@ -138,10 +139,33 @@ func runFixtureCluster(t *testing.T, cb *clusterbe.Backend, cmStore, secStore *v
 		pmap[k] = tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: v}
 	}
 
+	// resolver-git: build a per-test bare repo and inject its file://
+	// URL as the repoURL pipeline param. The cluster backend's lazy-
+	// resolve path (Track 1 #9 Phase 1) inlines the resolved TaskSpec
+	// before submitting the PipelineRun, so the bare repo only needs
+	// to be reachable from the host running tkn-act — it doesn't need
+	// to be visible inside the k3d cluster.
+	if f.Dir == "resolver-git" {
+		seed := filepath.Join("..", "..", "testdata", "e2e", "resolver-git", "seed")
+		url, err := fixtures.BuildBareRepoFromSeed(seed, t.TempDir())
+		if err != nil {
+			t.Fatalf("build bare repo: %v", err)
+		}
+		pmap["repoURL"] = tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: url}
+	}
+
 	jsonRep := reporter.NewJSON(io.Discard)
 	cap := &captureSink{}
 	rep := reporter.NewTee(jsonRep, cap)
-	res, err := engine.New(cb, rep, engine.Options{}).RunPipeline(ctx, engine.PipelineInput{
+	// Wire the default refresolver registry so resolver-backed
+	// fixtures (Track 1 #9) dispatch on the cluster path the same
+	// way they do under docker. The on-disk cache dir is a per-test
+	// tmpdir so subtests don't share resolved bytes.
+	reg := refresolver.NewDefaultRegistry(refresolver.Options{
+		Allow:    []string{"git", "hub", "http", "bundles"},
+		CacheDir: t.TempDir(),
+	})
+	res, err := engine.New(cb, rep, engine.Options{Refresolver: reg}).RunPipeline(ctx, engine.PipelineInput{
 		Bundle: b, Name: f.Pipeline, Params: pmap,
 	})
 	if err != nil {

@@ -1,0 +1,25 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: resolver-git
+spec:
+  description: |
+    End-to-end fixture for the direct git resolver (Track 1 #9 Phase 2).
+    The Pipeline declares a single task whose Tekton spec is fetched at
+    dispatch time from a local bare repo by the git resolver. The
+    resolver-git harness builds a bare repo per-test under a tempdir,
+    commits the Task YAML at testdata/e2e/resolver-git/tasks/greet.yaml
+    inside the repo, and substitutes its file:// URL into the
+    repoURL pipeline param.
+  params:
+    - name: repoURL
+      type: string
+      description: file:// URL of the per-test bare repo (set by the e2e harness)
+  tasks:
+    - name: greet
+      taskRef:
+        resolver: git
+        params:
+          - {name: url, value: $(params.repoURL)}
+          - {name: revision, value: main}
+          - {name: pathInRepo, value: tasks/greet.yaml}

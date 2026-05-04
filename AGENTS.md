@@ -683,7 +683,8 @@ release.
 ## Resolvers (Track 1 #9, in progress)
 
 `taskRef.resolver` and `pipelineRef.resolver` (the Tekton catalog-consumption
-pattern) are **partly supported** in v1.6.x. The scaffolding has shipped:
+pattern) are **partly supported** in v1.6.x. Phase 1 (scaffolding) and
+Phase 2 (the direct `git` resolver) have shipped:
 
 - New types `TaskRef.Resolver` / `TaskRef.ResolverParams` and the
   `PipelineRef` counterparts. Existing inline-only YAML is unaffected
@@ -710,13 +711,24 @@ pattern) are **partly supported** in v1.6.x. The scaffolding has shipped:
   all `omitempty` so non-resolver events ignore them. The top-level
   pipelineRef resolution emits these two events with an empty `task`
   field — JSON consumers disambiguate via the absence of `task`.
-- **CLI flags scaffolded** but most are no-ops in Phase 1:
-  `--resolver-cache-dir`, `--resolver-allow=git,hub,http,bundles`
-  (default), `--resolver-config`, `--offline`,
-  `--remote-resolver-context`, `--resolver-allow-insecure-http`. Only
-  the inline-stub resolver is registered; any other resolver name
-  fails with `refresolver: resolver "git" not registered (not yet
-  implemented in this release)`.
+- **`git` resolver (Phase 2, supported in v1.6)**: shallow clones a
+  repo via `go-git/v5` and reads `pathInRepo` at the requested
+  revision. Direct-mode params are:
+  | Param | Required | Default | Notes |
+  |---|---|---|---|
+  | `url` | yes | — | `file://`, `https://`, `ssh://`, or `git@host:path`. Plain `http://` refused unless `--resolver-allow-insecure-http`. |
+  | `revision` | no | `main` | Branch, tag, or full SHA. SHAs trigger a full clone + ResolveRevision fallback path. |
+  | `pathInRepo` | yes | — | Relative path to the YAML inside the repo. `..` traversal refused. |
+  Cache layout: `<--resolver-cache-dir>/git/<sha256(url+revision)>/repo/`.
+  A second call with identical `(url, revision)` reuses the cached
+  working tree without any network IO and emits `resolver-end` with
+  `cached: true`. SSH delegation honors `ssh-agent`; tkn-act never
+  reads SSH keys directly.
+- **CLI flags**: `--resolver-cache-dir`,
+  `--resolver-allow=git,hub,http,bundles` (default — git dispatches;
+  hub/http/bundles still error until their phases land),
+  `--resolver-config`, `--offline`, `--remote-resolver-context`,
+  `--resolver-allow-insecure-http`.
 - **Validator** rejects unknown resolver names in direct mode (unless
   `--remote-resolver-context` is set, which short-circuits the
   allow-list); rejects `resolver.params` that reference a task not in
@@ -725,8 +737,9 @@ pattern) are **partly supported** in v1.6.x. The scaffolding has shipped:
 
 What's deferred to follow-up phases (each ships independently):
 
-- **Concrete resolvers** — `git`, `hub`, `http`, `bundles`, `cluster`
-  fetchers (Phases 2-4).
+- **`hub` and `http` resolvers** (Phase 3).
+- **`bundles` and `cluster` resolvers** (Phase 4). The `bundles`
+  resolver pulls an OCI artifact via `go-containerregistry`.
 - **Mode B (remote)** — submit a `ResolutionRequest` CRD to a
   user-configured cluster and use the response (Phase 5).
 - **Offline cache + management subcommands** (`tkn-act cache prune`,

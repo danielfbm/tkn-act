@@ -114,8 +114,8 @@ func NewRegistry() *Registry {
 }
 
 // NewDefaultRegistry returns a Registry pre-populated with whatever
-// resolvers Phase 1 ships. In Phase 1 that's just the inline stub.
-// Phase 2-4 add git/hub/http/bundles/cluster here.
+// resolvers ship by default. Phase 1 shipped just the inline stub; Phase
+// 2 adds the git resolver. Phase 3-4 add hub/http/bundles/cluster here.
 func NewDefaultRegistry(opts Options) *Registry {
 	r := NewRegistry()
 	r.opts = opts
@@ -126,6 +126,13 @@ func NewDefaultRegistry(opts Options) *Registry {
 		}
 	}
 	r.Register(NewInlineResolver())
+
+	// Direct git resolver (Phase 2). The on-disk cache root is
+	// <CacheDir>/git/<sha256(url+rev)>/repo/. CacheDir empty falls
+	// back to per-call tempdirs (cache disabled).
+	gitR := NewGit(opts.CacheDir)
+	gitR.SetAllowInsecureHTTP(opts.AllowInsecureHTTP)
+	r.Register(gitR)
 	return r
 }
 

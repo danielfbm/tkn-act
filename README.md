@@ -97,13 +97,17 @@ are exercised by both backends in CI — divergences are explicit
 - `displayName` / `description` on Task / Pipeline / PipelineTask / Step
   — surfaced on the JSON event stream as `display_name` / `description`,
   preferred over `name` in pretty output
-- `taskRef.resolver` / `pipelineRef.resolver` — **scaffolding only in
-  v1.6.x**: types, lazy dispatch at task-dispatch time, eager top-level
-  pipelineRef resolution at load time, cluster-backend inline-before-submit,
-  validator pre-flight, two new event kinds (`resolver-start` /
-  `resolver-end`), and CLI flags. Concrete resolvers (`git`, `hub`,
-  `http`, `bundles`, `cluster`) and the remote `ResolutionRequest`
-  driver land in subsequent phases — see
+- `taskRef.resolver` / `pipelineRef.resolver` — **partly supported in
+  v1.6.x**: scaffolding (types, lazy dispatch at task-dispatch time,
+  eager top-level pipelineRef resolution at load time, cluster-backend
+  inline-before-submit, validator pre-flight, two new event kinds —
+  `resolver-start` / `resolver-end`, and CLI flags), plus the
+  **direct `git` resolver** (Phase 2): shallow clones a repo via
+  `go-git/v5` and reads `pathInRepo` at the requested revision; HTTPS
+  / file:// / ssh:// honored, plain http:// refused unless
+  `--resolver-allow-insecure-http` is set. The remaining direct
+  resolvers (`hub`, `http`, `bundles`, `cluster`) and the remote
+  `ResolutionRequest` driver land in subsequent phases — see
   [`docs/superpowers/plans/2026-05-04-resolvers.md`](docs/superpowers/plans/2026-05-04-resolvers.md)
 - `PipelineTask.matrix` — Cartesian-product fan-out across named
   string-list params, plus optional `include` rows for named extras.
@@ -134,9 +138,9 @@ job enforces that the table doesn't drift from the tree.
 
 ## Not yet supported
 
-Resolvers (git/hub/cluster/bundles),
-`PipelineTask.matrix`, custom tasks, signed pipelines, tekton-results,
-Windows.
+Resolvers (`hub`/`http`/`bundles`/`cluster` directly, plus the remote
+`ResolutionRequest` driver — `git` ships in v1.6),
+custom tasks, signed pipelines, tekton-results, Windows.
 
 See [`docs/short-term-goals.md`](docs/short-term-goals.md) for the
 prioritized track of what's next.
