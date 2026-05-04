@@ -281,6 +281,65 @@ func TestResolveColor(t *testing.T) {
 	}
 }
 
+func TestPrettyRunEndPrintsResults(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewPretty(&buf, reporter.PrettyOptions{Color: false, Verbosity: reporter.Normal})
+	r.Emit(reporter.Event{
+		Kind:     reporter.EvtRunEnd,
+		Status:   "succeeded",
+		Duration: 1500 * time.Millisecond,
+		Results: map[string]any{
+			"revision": "abc123",
+			"files":    []string{"a.txt", "b.txt"},
+			"meta":     map[string]string{"owner": "team-a"},
+		},
+	})
+	out := buf.String()
+	if !strings.Contains(out, "PipelineRun") {
+		t.Fatalf("missing run summary line: %q", out)
+	}
+	for _, want := range []string{"revision", "abc123", "files", "a.txt", "meta", "team-a"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\nfull output: %s", want, out)
+		}
+	}
+}
+
+func TestPrettyRunEndOmitsResultsWhenEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewPretty(&buf, reporter.PrettyOptions{Color: false, Verbosity: reporter.Normal})
+	r.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Status: "succeeded", Duration: 100 * time.Millisecond})
+	out := buf.String()
+	if strings.Contains(out, "results:") {
+		t.Errorf("output should not include a results section when none resolved: %q", out)
+	}
+}
+
+func TestJSONRunEndIncludesResults(t *testing.T) {
+	var buf bytes.Buffer
+	r := reporter.NewJSON(&buf)
+	r.Emit(reporter.Event{
+		Kind:   reporter.EvtRunEnd,
+		Status: "succeeded",
+		Results: map[string]any{
+			"revision": "abc123",
+			"files":    []string{"a.txt", "b.txt"},
+			"meta":     map[string]string{"owner": "team-a"},
+		},
+	})
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	res, ok := got["results"].(map[string]any)
+	if !ok {
+		t.Fatalf("results field missing or wrong type: %T %v", got["results"], got["results"])
+	}
+	if res["revision"] != "abc123" {
+		t.Errorf("results.revision = %v, want abc123", res["revision"])
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

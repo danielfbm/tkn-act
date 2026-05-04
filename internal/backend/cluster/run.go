@@ -282,6 +282,7 @@ func (b *Backend) watchPipelineRun(ctx context.Context, in backend.PipelineRunIn
 			res.Message = message
 			res.Ended = time.Now()
 			res.Tasks = b.collectTaskOutcomes(ctx, in, ns)
+			res.Results = extractPipelineResults(un)
 			// `spec.timeouts.{pipeline,tasks,finally}` exhaustion does
 			// NOT always set the PipelineRun condition reason to a
 			// timeout — depending on which budget fired and how Tekton
@@ -540,4 +541,57 @@ func (b *Backend) streamPodLogs(ctx context.Context, in backend.PipelineRunInvoc
 			}
 		}(stepName, rc)
 	}
+}
+
+// extractPipelineResults reads `pr.status.results` (Tekton v1) into a
+// generic map. Each entry has shape {name, value}; value may be a
+// string, a []any (array of strings), or a map[string]any (object).
+// We preserve the JSON-decoded shape: ParamTypeString → string,
+// ParamTypeArray → []string, ParamTypeObject → map[string]string,
+// matching how the docker-path resolvePipelineResults populates
+// RunResult.Results.
+//
+// Tekton v1 is the only schema the cluster integration installs, so
+// we read v1's `status.results` only. Earlier Tekton releases used
+// `status.pipelineResults`; tkn-act doesn't support those.
+func extractPipelineResults(pr *unstructured.Unstructured) map[string]any {
+	results, found, _ := unstructured.NestedSlice(pr.Object, "status", "results")
+	if !found || len(results) == 0 {
+		return nil
+	}
+	out := map[string]any{}
+	for _, r := range results {
+		rm, ok := r.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := rm["name"].(string)
+		if name == "" {
+			continue
+		}
+		switch v := rm["value"].(type) {
+		case string:
+			out[name] = v
+		case []any:
+			arr := make([]string, 0, len(v))
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					arr = append(arr, s)
+				}
+			}
+			out[name] = arr
+		case map[string]any:
+			obj := make(map[string]string, len(v))
+			for k, item := range v {
+				if s, ok := item.(string); ok {
+					obj[k] = s
+				}
+			}
+			out[name] = obj
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

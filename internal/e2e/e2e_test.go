@@ -100,4 +100,11 @@ func runFixtureDocker(t *testing.T, f fixtures.Fixture) {
 	if !strings.EqualFold(res.Status, f.WantStatus) {
 		t.Errorf("status = %s, want %s (%s)", res.Status, f.WantStatus, f.Description)
 	}
+	// Cross-backend Pipeline.spec.results fidelity: when a fixture sets
+	// WantResults, the engine's resolved Results map must match it on
+	// both backends. Without this assertion a regression that silently
+	// dropped pipeline results would still leave WantStatus green.
+	if f.WantResults != nil && !fixtures.ResultsEqual(res.Results, f.WantResults) {
+		t.Errorf("results = %v, want %v (%s)", res.Results, f.WantResults, f.Description)
+	}
 }

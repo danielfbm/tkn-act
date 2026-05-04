@@ -92,3 +92,19 @@ func TestWorkspacePath(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// Regression: RFC 1123 names allow leading digits, so a PipelineTask
+// can legally be named "1stcheckout". The resolver's $(...) regex
+// previously required the first char to be a letter, which silently
+// dropped these refs from substitution. See PR #18 review.
+func TestSubstituteResultLeadingDigitTaskName(t *testing.T) {
+	got, err := resolver.Substitute("v=$(tasks.1stcheckout.results.v)", resolver.Context{
+		Results: map[string]map[string]string{"1stcheckout": {"v": "abc"}},
+	})
+	if err != nil {
+		t.Fatalf("sub: %v", err)
+	}
+	if got != "v=abc" {
+		t.Errorf("got %q, want %q", got, "v=abc")
+	}
+}

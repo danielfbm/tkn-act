@@ -134,6 +134,11 @@ type PipelineRunResult struct {
 	// as Reason — surfaced so failure logs can attribute a misclassified
 	// run to a specific Tekton path.
 	Message string
+	// Results holds the resolved Pipeline.spec.results values the
+	// backend extracted from the controller (cluster) or computed
+	// locally (docker — populated by the engine, not by the docker
+	// backend itself). Same value shape as RunResult.Results.
+	Results map[string]any
 }
 
 // TaskOutcomeOnCluster is the per-task summary the cluster backend hands

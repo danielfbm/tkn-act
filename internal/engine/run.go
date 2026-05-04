@@ -33,6 +33,13 @@ type RunResult struct {
 	// as Reason — surfaced so failure logs can attribute a misclassified
 	// run to a specific backend code path.
 	Message string
+	// Results holds resolved Pipeline.spec.results once the run is
+	// terminal. Each value is one of: string, []string, map[string]string.
+	// nil or empty when the Pipeline didn't declare spec.results, or when
+	// none resolved (every referenced task failed or skipped the result).
+	// A dropped entry surfaces as an EvtError on the event stream — on
+	// both the docker and the cluster backend.
+	Results map[string]any
 }
 
 type TaskOutcome struct {

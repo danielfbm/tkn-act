@@ -4,6 +4,7 @@ package validator
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -180,6 +181,37 @@ func Validate(b *loader.Bundle, pipelineName string, providedParams map[string]b
 		}
 	}
 
+	// 8c. Pipeline.spec.results: every $(tasks.X.results.Y) reference
+	// must name a task that exists in spec.tasks ∪ spec.finally. Result-
+	// name existence isn't checked here (some Tasks compute results
+	// dynamically; resolution-time error handling drops unknown names
+	// non-fatally). Result names themselves must also be unique — two
+	// entries with the same name silently collide in the resolved map
+	// and the user has no recovery path.
+	if len(pl.Spec.Results) > 0 {
+		known := map[string]bool{}
+		for _, pt := range pl.Spec.Tasks {
+			known[pt.Name] = true
+		}
+		for _, pt := range pl.Spec.Finally {
+			known[pt.Name] = true
+		}
+		seenName := map[string]bool{}
+		for _, r := range pl.Spec.Results {
+			if seenName[r.Name] {
+				errs = append(errs, fmt.Errorf("duplicate pipeline result name %q (each Pipeline.spec.results[].name must be unique)", r.Name))
+			}
+			seenName[r.Name] = true
+			collectStrings(r.Value, func(s string) {
+				for _, ref := range extractTaskRefs(s) {
+					if !known[ref] {
+						errs = append(errs, fmt.Errorf("pipeline result %q references unknown task %q (must be in spec.tasks or spec.finally)", r.Name, ref))
+					}
+				}
+			})
+		}
+	}
+
 	// 9. Step.OnError values must be empty, "continue", or "stopAndFail".
 	for taskName, spec := range resolvedTasks {
 		for _, st := range spec.Steps {
@@ -250,4 +282,40 @@ func parseTimeout(field, s string) (time.Duration, error) {
 		return 0, fmt.Errorf("%s: must be positive (use omission to mean no budget), got %q", field, s)
 	}
 	return d, nil
+}
+
+// taskResultRefPat matches $(tasks.<name>.results.<anything>) — we
+// only need to extract the <name> for ref validation. RFC 1123 names
+// allow leading digits (Tekton accepts e.g. "1stcheckout"), so the
+// first char class spans `[a-zA-Z0-9]`, not `[a-zA-Z]`.
+var taskResultRefPat = regexp.MustCompile(`\$\(tasks\.([a-zA-Z0-9][\w-]*)\.results\.[\w.-]+\)`)
+
+// extractTaskRefs returns every task name referenced via
+// $(tasks.X.results.Y) in s (in source order; duplicates allowed —
+// the caller's known-set check is set-based anyway).
+func extractTaskRefs(s string) []string {
+	matches := taskResultRefPat.FindAllStringSubmatch(s, -1)
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// collectStrings calls fn once per string atom in v. For string-typed
+// values that's the single StringVal; for array-typed, each element;
+// for object-typed, each map value.
+func collectStrings(v tektontypes.ParamValue, fn func(string)) {
+	switch v.Type {
+	case tektontypes.ParamTypeArray:
+		for _, item := range v.ArrayVal {
+			fn(item)
+		}
+	case tektontypes.ParamTypeObject:
+		for _, item := range v.ObjectVal {
+			fn(item)
+		}
+	default:
+		fn(v.StringVal)
+	}
 }

@@ -3,6 +3,7 @@ package reporter
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -139,6 +140,20 @@ func (p *prettySink) Emit(e Event) {
 			fmt.Fprintf(p.w, "  %s", p.pal.wrap(p.pal.red, e.Message))
 		}
 		fmt.Fprintln(p.w)
+		if len(e.Results) > 0 {
+			// Stable iteration order so output is deterministic across runs.
+			names := make([]string, 0, len(e.Results))
+			for k := range e.Results {
+				names = append(names, k)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				fmt.Fprintf(p.w, "  %s %s\n",
+					p.pal.wrap(p.pal.bold, name+":"),
+					formatResultValue(e.Results[name]),
+				)
+			}
+		}
 
 	case EvtError:
 		fmt.Fprintf(p.w, "%s %s\n",
@@ -191,4 +206,41 @@ func or(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// formatResultValue renders a Pipeline.spec.results value for pretty
+// output. Strings are passed through (truncated to 80 runes with an
+// ellipsis if longer); arrays render as `[a, b, c]`; objects as
+// `{k1: v1, k2: v2}`. Stable key order on objects.
+//
+// Truncation works on runes, not bytes — slicing a UTF-8 string at a
+// byte index can land mid-codepoint and emit a malformed sequence.
+func formatResultValue(v any) string {
+	const max = 80
+	truncate := func(s string) string {
+		rs := []rune(s)
+		if len(rs) <= max {
+			return s
+		}
+		return string(rs[:max-1]) + "…"
+	}
+	switch t := v.(type) {
+	case string:
+		return truncate(t)
+	case []string:
+		return truncate("[" + strings.Join(t, ", ") + "]")
+	case map[string]string:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, k+": "+t[k])
+		}
+		return truncate("{" + strings.Join(parts, ", ") + "}")
+	default:
+		return truncate(fmt.Sprintf("%v", v))
+	}
 }

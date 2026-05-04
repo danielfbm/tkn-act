@@ -205,6 +205,15 @@ levelLoop:
 			Status: oc.Status, Duration: oc.Duration, Message: oc.Message, Attempt: oc.Attempt,
 		})
 		outcomes[pt.Name] = oc
+		// Finally-task results must enter the same `results` map the
+		// main loop populates: Pipeline.spec.results may reference
+		// $(tasks.<finally>.results.<name>) and the resolver only
+		// reads from this map. Before, finally results were absent
+		// from the map and any spec.results entry that referenced
+		// them was silently dropped.
+		if oc.Results != nil {
+			results[pt.Name] = oc.Results
+		}
 		switch oc.Status {
 		case "failed", "infrafailed":
 			if overall != "timeout" {
@@ -222,12 +231,21 @@ levelLoop:
 		overall = "timeout"
 	}
 
+	// Resolve Pipeline.spec.results once every task (incl. finally) is
+	// terminal. Drops are non-fatal: each surfaces as an EvtError but
+	// does not change overall status or the exit code.
+	pipelineResults, resultErrs := resolvePipelineResults(pl, results)
+	for _, err := range resultErrs {
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtError, Time: time.Now(), Message: err.Error()})
+	}
+
 	e.rep.Emit(reporter.Event{
 		Kind: reporter.EvtRunEnd, Time: time.Now(),
 		Status: overall, Duration: time.Since(overallStart),
+		Results: pipelineResults,
 	})
 
-	return RunResult{Status: overall, Tasks: outcomes}, nil
+	return RunResult{Status: overall, Tasks: outcomes, Results: pipelineResults}, nil
 }
 
 func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pipeline, pt tektontypes.PipelineTask, params map[string]tektontypes.ParamValue, results map[string]map[string]string, runID, pipelineRunName string) TaskOutcome {
@@ -508,6 +526,21 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 		return RunResult{Status: "failed"}, err
 	}
 	e.emitClusterTaskEvents(res.Tasks)
+	// Cross-backend EvtError parity for dropped pipeline results: the
+	// docker engine emits one EvtError per declared spec.results name
+	// the engine couldn't resolve. The cluster backend reads
+	// pr.status.results post-hoc, so missing entries surface here as
+	// "declared by the Pipeline but absent from the backend's verdict."
+	// Emit one EvtError per such drop, in stable name order, so a
+	// silent regression on the cluster path can't slip past CI.
+	for _, name := range droppedClusterResultNames(pl, res.Results) {
+		e.rep.Emit(reporter.Event{
+			Kind: reporter.EvtError, Time: time.Now(),
+			Message: fmt.Sprintf(
+				"pipeline result %q dropped: not produced by Tekton (referenced task may have failed or skipped the result)",
+				name),
+		})
+	}
 	// Surface the backend's terminal Reason/Message on the run-end
 	// event so a misclassification (status doesn't match what the test
 	// expected) can be attributed to a specific backend code path
@@ -520,11 +553,12 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 			endMsg = res.Reason
 		}
 	}
-	e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: res.Status, Duration: dur, Message: endMsg})
+	e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: res.Status, Duration: dur, Message: endMsg, Results: res.Results})
 	out := RunResult{
 		Status:  res.Status,
 		Reason:  res.Reason,
 		Message: res.Message,
+		Results: res.Results,
 		Tasks:   map[string]TaskOutcome{},
 	}
 	for n, oc := range res.Tasks {

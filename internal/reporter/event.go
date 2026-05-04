@@ -48,6 +48,10 @@ type Event struct {
 	// Attempt is 1-based and present on task-retry (the attempt that just
 	// failed) and on task-end (the attempt that produced the final outcome).
 	Attempt int `json:"attempt,omitempty"`
+	// Results holds resolved Pipeline.spec.results on a run-end event.
+	// Map values are one of: string, []string, map[string]string. Empty
+	// or nil when the pipeline declared no results.
+	Results map[string]any `json:"results,omitempty"`
 }
 
 // Reporter consumes events.
