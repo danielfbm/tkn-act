@@ -101,6 +101,27 @@ type Event struct {
 	// Source is a human-readable origin string for the resolver (e.g.
 	// "git: github.com/tektoncd/catalog@abc123 -> task/...").
 	Source string `json:"source,omitempty"`
+
+	// Matrix is set on task-start / task-end / task-skip events
+	// emitted from a PipelineTask.matrix expansion. Nil for
+	// ordinary tasks (omitempty). Carries the original PipelineTask
+	// name (Parent), the 0-based row index, the total expansion
+	// count, and the row's matrix-contributed params.
+	Matrix *MatrixEvent `json:"matrix,omitempty"`
+}
+
+// MatrixEvent identifies one expansion of a matrix-fanned
+// PipelineTask. Parent is the original PipelineTask name; Index is
+// the 0-based row index in the expansion order; Of is the total
+// number of expansions of this Parent; Params holds the row's
+// matrix-contributed params (string-keyed string values). The
+// engine constructs this from tektontypes.MatrixInfo before
+// emitting the event.
+type MatrixEvent struct {
+	Parent string            `json:"parent"`
+	Index  int               `json:"index"`
+	Of     int               `json:"of"`
+	Params map[string]string `json:"params,omitempty"`
 }
 
 // Reporter consumes events.
@@ -116,6 +137,13 @@ type LogSink struct {
 }
 
 func NewLogSink(r Reporter) *LogSink { return &LogSink{r: r} }
+
+// Reporter exposes the wrapped reporter so callers that need to emit
+// non-log events (e.g. the cluster backend's matrix-fallback warning)
+// can do so without taking a separate dependency on the reporter
+// type. Returns nil when the LogSink was constructed without a
+// backing reporter.
+func (s *LogSink) Reporter() Reporter { return s.r }
 
 func (s *LogSink) StepLog(taskName, stepName, stepDisplayName, stream, line string) {
 	s.r.Emit(Event{

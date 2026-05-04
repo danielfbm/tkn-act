@@ -343,6 +343,77 @@ func TestParamValueScalarAndArray(t *testing.T) {
 	}
 }
 
+func TestUnmarshalPipelineTaskWithMatrix(t *testing.T) {
+	in := []byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - name: build
+      taskRef: {name: build}
+      matrix:
+        params:
+          - name: os
+            value: [linux, darwin]
+          - name: goversion
+            value: ["1.21", "1.22"]
+        include:
+          - name: arm-extra
+            params:
+              - {name: os, value: linux}
+              - {name: goversion, value: "1.22"}
+              - {name: arch, value: arm64}
+`)
+	var got Pipeline
+	if err := yaml.Unmarshal(in, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Spec.Tasks) != 1 {
+		t.Fatalf("tasks = %d, want 1", len(got.Spec.Tasks))
+	}
+	m := got.Spec.Tasks[0].Matrix
+	if m == nil {
+		t.Fatalf("Matrix is nil")
+	}
+	if len(m.Params) != 2 {
+		t.Fatalf("Params = %d, want 2", len(m.Params))
+	}
+	if m.Params[0].Name != "os" || len(m.Params[0].Value) != 2 || m.Params[0].Value[0] != "linux" {
+		t.Errorf("Params[0] = %+v, want os=[linux,darwin]", m.Params[0])
+	}
+	if m.Params[1].Name != "goversion" || m.Params[1].Value[1] != "1.22" {
+		t.Errorf("Params[1] = %+v", m.Params[1])
+	}
+	if len(m.Include) != 1 || m.Include[0].Name != "arm-extra" {
+		t.Errorf("Include = %+v, want one arm-extra row", m.Include)
+	}
+	if len(m.Include[0].Params) != 3 || m.Include[0].Params[2].Name != "arch" {
+		t.Errorf("Include[0].Params = %+v", m.Include[0].Params)
+	}
+	if m.Include[0].Params[2].Value.StringVal != "arm64" {
+		t.Errorf("Include[0].Params[2].Value = %+v", m.Include[0].Params[2].Value)
+	}
+}
+
+func TestUnmarshalPipelineTaskWithoutMatrix(t *testing.T) {
+	in := []byte(`
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - {name: build, taskRef: {name: build}}
+`)
+	var got Pipeline
+	if err := yaml.Unmarshal(in, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.Tasks[0].Matrix != nil {
+		t.Errorf("Matrix = %+v, want nil", got.Spec.Tasks[0].Matrix)
+	}
+}
+
 // TestUnmarshalTaskRefWithResolver pins the YAML round-trip for a
 // resolver-backed taskRef. The Phase 1 spec adds Resolver+ResolverParams
 // as optional fields on TaskRef; agents should be able to load a
@@ -486,5 +557,95 @@ spec:
 	}
 	if len(got.Spec.Steps[0].Params) != 1 || got.Spec.Steps[0].Params[0].Name != "url" {
 		t.Errorf("params = %+v", got.Spec.Steps[0].Params)
+	}
+}
+
+func TestMaterializeMatrixRowsCrossProduct(t *testing.T) {
+	pt := PipelineTask{
+		Name: "build",
+		Matrix: &Matrix{Params: []MatrixParam{
+			{Name: "os", Value: []string{"linux", "darwin"}},
+			{Name: "goversion", Value: []string{"1.21", "1.22"}},
+		}},
+	}
+	rows := MaterializeMatrixRows(pt)
+	if len(rows) != 4 {
+		t.Fatalf("rows = %d, want 4", len(rows))
+	}
+	want := []map[string]string{
+		{"os": "linux", "goversion": "1.21"},
+		{"os": "linux", "goversion": "1.22"},
+		{"os": "darwin", "goversion": "1.21"},
+		{"os": "darwin", "goversion": "1.22"},
+	}
+	for i, w := range want {
+		for k, v := range w {
+			if rows[i].Params[k] != v {
+				t.Errorf("rows[%d].Params[%q] = %q, want %q", i, k, rows[i].Params[k], v)
+			}
+		}
+	}
+}
+
+func TestMaterializeMatrixRowsIncludeRows(t *testing.T) {
+	pt := PipelineTask{
+		Name: "build",
+		Matrix: &Matrix{
+			Params: []MatrixParam{{Name: "os", Value: []string{"linux"}}},
+			Include: []MatrixInclude{
+				{Name: "arm-extra", Params: []Param{
+					{Name: "arch", Value: ParamValue{Type: ParamTypeString, StringVal: "arm64"}},
+				}},
+			},
+		},
+	}
+	rows := MaterializeMatrixRows(pt)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if rows[1].IncludeName != "arm-extra" || rows[1].Params["arch"] != "arm64" {
+		t.Errorf("rows[1] = %+v", rows[1])
+	}
+}
+
+func TestMaterializeMatrixRowsNilOnNonMatrix(t *testing.T) {
+	pt := PipelineTask{Name: "x"}
+	if rows := MaterializeMatrixRows(pt); rows != nil {
+		t.Errorf("expected nil for non-matrix task; got %+v", rows)
+	}
+}
+
+func TestMaterializeMatrixRowsNilOnEmptyValue(t *testing.T) {
+	pt := PipelineTask{
+		Name: "x",
+		Matrix: &Matrix{Params: []MatrixParam{
+			{Name: "os", Value: []string{}},
+		}},
+	}
+	if rows := MaterializeMatrixRows(pt); rows != nil {
+		t.Errorf("expected nil on empty value list; got %+v", rows)
+	}
+}
+
+func TestMaterializeMatrixRowsIncludeOnly(t *testing.T) {
+	// No cross-product params, only include rows.
+	pt := PipelineTask{
+		Name: "build",
+		Matrix: &Matrix{
+			Include: []MatrixInclude{
+				{Params: []Param{{Name: "k", Value: ParamValue{Type: ParamTypeString, StringVal: "v1"}}}},
+				{Name: "named", Params: []Param{{Name: "k", Value: ParamValue{Type: ParamTypeString, StringVal: "v2"}}}},
+			},
+		},
+	}
+	rows := MaterializeMatrixRows(pt)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if rows[0].Params["k"] != "v1" || rows[0].IncludeName != "" {
+		t.Errorf("rows[0] = %+v", rows[0])
+	}
+	if rows[1].Params["k"] != "v2" || rows[1].IncludeName != "named" {
+		t.Errorf("rows[1] = %+v", rows[1])
 	}
 }

@@ -48,6 +48,11 @@ type TaskOutcome struct {
 	Results  map[string]string
 	Attempt  int           // final attempt number (1-based); 0 = did not run
 	Duration time.Duration // duration of the final attempt
+	// Matrix, when non-nil, identifies which expansion of a
+	// matrix-fanned parent PipelineTask this outcome came from.
+	// Threaded into reporter.Event.Matrix at task-start / task-end /
+	// task-skip emission.
+	Matrix *tektontypes.MatrixInfo
 }
 
 func newRunID() string {

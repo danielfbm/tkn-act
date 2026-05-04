@@ -9,6 +9,7 @@
 package resolver
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -111,15 +112,17 @@ func SubstituteAllowStepRefs(s string, ctx Context) (string, error) {
 }
 
 // SubstituteArgs is like Substitute but operates on a []string and supports
-// $(params.x[*]) — the entire arg is replaced by the array's elements.
+// $(params.x[*]) and $(tasks.X.results.Y[*]) — the entire arg is replaced
+// by the array's elements. For task-result [*] references, the source
+// string is JSON-decoded into []string before splicing (Tekton's on-disk
+// shape for an array-of-strings result).
 func SubstituteArgs(args []string, ctx Context) ([]string, error) {
 	var out []string
 	for _, a := range args {
 		if isArrayStarRef(a) {
-			name := strings.TrimSuffix(strings.TrimPrefix(a, "$(params."), "[*])")
-			vals, ok := ctx.ArrayParams[name]
-			if !ok {
-				return nil, fmt.Errorf("unknown array param %q", name)
+			vals, err := expandArrayStar(a, ctx)
+			if err != nil {
+				return nil, err
 			}
 			out = append(out, vals...)
 			continue
@@ -141,12 +144,13 @@ func SubstituteArgsAllowStepRefs(args []string, ctx Context) ([]string, error) {
 	var out []string
 	for _, a := range args {
 		if isArrayStarRef(a) {
-			name := strings.TrimSuffix(strings.TrimPrefix(a, "$(params."), "[*])")
-			vals, ok := ctx.ArrayParams[name]
-			if !ok {
+			vals, err := expandArrayStar(a, ctx)
+			if err != nil {
 				// Defer to the outer pass — the inner pass only populates
-				// StepAction-scoped params; outer task-level array params
-				// pass through as the literal $(params.X[*]) token.
+				// StepAction-scoped params and lacks the cross-task results
+				// map; outer task-level array params and
+				// $(tasks.X.results.Y[*]) refs pass through as the literal
+				// token for the outer pass to resolve.
 				out = append(out, a)
 				continue
 			}
@@ -162,8 +166,56 @@ func SubstituteArgsAllowStepRefs(args []string, ctx Context) ([]string, error) {
 	return out, nil
 }
 
+// isArrayStarRef now accepts BOTH $(params.<name>[*]) and
+// $(tasks.<task>.results.<name>[*]). Matrix-fanned task-result
+// aggregation depends on the latter.
 func isArrayStarRef(s string) bool {
-	return strings.HasPrefix(s, "$(params.") && strings.HasSuffix(s, "[*])")
+	if !strings.HasPrefix(s, "$(") || !strings.HasSuffix(s, "[*])") {
+		return false
+	}
+	inner := s[2 : len(s)-len("[*])")]
+	return strings.HasPrefix(inner, "params.") || strings.HasPrefix(inner, "tasks.")
+}
+
+// expandArrayStar resolves an `$(...[*])` reference into the
+// per-element string slice it represents. Two recognised forms:
+//
+//	$(params.<name>[*])              — read from ctx.ArrayParams
+//	$(tasks.<task>.results.<name>[*]) — read JSON-array literal
+//	                                    from ctx.Results
+func expandArrayStar(s string, ctx Context) ([]string, error) {
+	inner := s[2 : len(s)-len("[*])")] // strip $( ... [*])
+	if strings.HasPrefix(inner, "params.") {
+		name := strings.TrimPrefix(inner, "params.")
+		vals, ok := ctx.ArrayParams[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown array param %q", name)
+		}
+		return vals, nil
+	}
+	if strings.HasPrefix(inner, "tasks.") {
+		rest := strings.TrimPrefix(inner, "tasks.")
+		dot := strings.Index(rest, ".results.")
+		if dot < 0 {
+			return nil, fmt.Errorf("malformed task-result [*] ref %q", s)
+		}
+		task := rest[:dot]
+		name := strings.TrimPrefix(rest[dot:], ".results.")
+		rs, ok := ctx.Results[task]
+		if !ok {
+			return nil, fmt.Errorf("no results for task %q", task)
+		}
+		raw, ok := rs[name]
+		if !ok {
+			return nil, fmt.Errorf("task %q has no result %q", task, name)
+		}
+		var arr []string
+		if err := json.Unmarshal([]byte(raw), &arr); err != nil {
+			return nil, fmt.Errorf("task result %q is not a JSON-array: %w", task+"."+name, err)
+		}
+		return arr, nil
+	}
+	return nil, fmt.Errorf("unrecognised [*] reference %q", s)
 }
 
 // lookupAllowDefer is the deferral-tolerant counterpart of lookup. It calls

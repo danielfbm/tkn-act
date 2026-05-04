@@ -77,16 +77,25 @@ func (i *Installer) enableFeatureFlags(ctx context.Context) error {
 		return nil
 	}
 	const (
-		ns      = "tekton-pipelines"
-		cmName  = "feature-flags"
-		flagKey = "enable-step-actions"
-		flagVal = "true"
+		ns     = "tekton-pipelines"
+		cmName = "feature-flags"
 	)
+	// Feature flags tkn-act enables on the local Tekton install:
+	//   enable-step-actions  — Track 1 #8 (StepAction step references)
+	//   enable-api-fields    — `alpha` widens result-reference syntax,
+	//                          including the matrix-result `[*]` pipeline-
+	//                          level aggregation (Track 1 #3). v0.65 ships
+	//                          matrix as GA but pipeline-result `[*]` over
+	//                          a matrix-fanned task still gates on `alpha`.
+	flags := map[string]string{
+		"enable-step-actions": "true",
+		"enable-api-fields":   "alpha",
+	}
 	cm, err := i.opt.Kube.CoreV1().ConfigMaps(ns).Get(ctx, cmName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		_, err = i.opt.Kube.CoreV1().ConfigMaps(ns).Create(ctx, &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: cmName, Namespace: ns},
-			Data:       map[string]string{flagKey: flagVal},
+			Data:       flags,
 		}, metav1.CreateOptions{})
 		if err != nil {
 			return fmt.Errorf("create %s/%s: %w", ns, cmName, err)
@@ -96,13 +105,19 @@ func (i *Installer) enableFeatureFlags(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("get %s/%s: %w", ns, cmName, err)
 	}
-	if cm.Data[flagKey] == flagVal {
-		return nil
-	}
 	if cm.Data == nil {
 		cm.Data = map[string]string{}
 	}
-	cm.Data[flagKey] = flagVal
+	dirty := false
+	for k, v := range flags {
+		if cm.Data[k] != v {
+			cm.Data[k] = v
+			dirty = true
+		}
+	}
+	if !dirty {
+		return nil
+	}
 	if _, err := i.opt.Kube.CoreV1().ConfigMaps(ns).Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
 		return fmt.Errorf("update %s/%s: %w", ns, cmName, err)
 	}

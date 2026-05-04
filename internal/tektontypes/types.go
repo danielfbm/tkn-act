@@ -302,6 +302,128 @@ type PipelineTask struct {
 	// Retries is the number of additional attempts after the first failure.
 	// 0 (or unset) means run once.
 	Retries int `json:"retries,omitempty"`
+	// Matrix declares a Cartesian-product fan-out of this PipelineTask
+	// across one or more named string-list params, with optional named
+	// `include` rows. Mirrors Tekton v1 PipelineTask.matrix.
+	Matrix *Matrix `json:"matrix,omitempty"`
+
+	// MatrixInfo is the per-expansion identity assigned by the engine's
+	// expandMatrix pass; not part of the YAML schema. The engine reads
+	// it when emitting task-start / task-end / task-skip events to
+	// populate reporter.Event.Matrix. Never serialized.
+	MatrixInfo *MatrixInfo `json:"-"`
+}
+
+// Matrix declares a Cartesian-product fan-out of one PipelineTask
+// across one or more named string-list params. Optional include
+// rows add named combinations on top of the cross-product. Mirrors
+// Tekton v1 PipelineTask.matrix for the subset tkn-act reads.
+type Matrix struct {
+	Params  []MatrixParam   `json:"params,omitempty"`
+	Include []MatrixInclude `json:"include,omitempty"`
+}
+
+// MatrixParam is a name + value list. Tekton requires `value` to be
+// a list of strings here (no scalars, no objects); the validator
+// enforces it.
+type MatrixParam struct {
+	Name  string   `json:"name"`
+	Value []string `json:"value"`
+}
+
+// MatrixInclude is one extra named row. Its params introduce param
+// names not present in matrix.params. tkn-act rejects include rows
+// whose params overlap a cross-product param name (would diverge
+// from upstream Tekton's fold semantics on the cluster backend);
+// see docs/superpowers/specs/2026-05-04-pipeline-matrix-design.md.
+type MatrixInclude struct {
+	Name   string  `json:"name,omitempty"`
+	Params []Param `json:"params,omitempty"`
+}
+
+// MatrixInfo is the per-expansion identity: which parent
+// PipelineTask the row came from, where it sits in the row order,
+// and what params the row contributed. Carried through the engine
+// (TaskOutcome.Matrix), the cluster backend
+// (TaskOutcomeOnCluster.Matrix), and the reporter (Event.Matrix).
+// Declared here (not in internal/engine) so the engine, backend,
+// and reporter packages can share it without an import cycle.
+type MatrixInfo struct {
+	Parent string
+	Index  int
+	Of     int
+	Params map[string]string
+	// IncludeName is the include row's declared name when the row
+	// originated from matrix.include and that row had a name. Empty
+	// for cross-product rows and for unnamed include rows.
+	IncludeName string
+}
+
+// MatrixRow is the public shape of one materialized matrix row,
+// used by both the engine's expandMatrix pass (internally) and the
+// cluster backend's TaskRun-to-expansion matcher (which reads it
+// from MaterializeMatrixRows). Lives in tektontypes so the cluster
+// package can build the same row order the engine would, without an
+// engine→backend import cycle.
+type MatrixRow struct {
+	Params      map[string]string
+	IncludeName string
+}
+
+// MaterializeMatrixRows builds the same cross-product + include rows
+// the engine's expandMatrix produces, in the same order. Returns
+// nil for non-matrix tasks. Errors (cardinality cap, empty value
+// list) cause MaterializeMatrixRows to return nil — the validator
+// rejects those cases at validate time so they cannot reach the
+// cluster backend in practice.
+func MaterializeMatrixRows(pt PipelineTask) []MatrixRow {
+	if pt.Matrix == nil {
+		return nil
+	}
+	m := pt.Matrix
+	for _, mp := range m.Params {
+		if len(mp.Value) == 0 {
+			return nil
+		}
+	}
+	cross := 0
+	if len(m.Params) > 0 {
+		cross = 1
+		for _, mp := range m.Params {
+			cross *= len(mp.Value)
+		}
+	}
+	var rows []MatrixRow
+	if cross > 0 {
+		idxs := make([]int, len(m.Params))
+		for {
+			row := MatrixRow{Params: map[string]string{}}
+			for i, mp := range m.Params {
+				row.Params[mp.Name] = mp.Value[idxs[i]]
+			}
+			rows = append(rows, row)
+			done := true
+			for i := len(idxs) - 1; i >= 0; i-- {
+				idxs[i]++
+				if idxs[i] < len(m.Params[i].Value) {
+					done = false
+					break
+				}
+				idxs[i] = 0
+			}
+			if done {
+				break
+			}
+		}
+	}
+	for _, inc := range m.Include {
+		ps := map[string]string{}
+		for _, p := range inc.Params {
+			ps[p.Name] = p.Value.StringVal
+		}
+		rows = append(rows, MatrixRow{Params: ps, IncludeName: inc.Name})
+	}
+	return rows
 }
 
 type TaskRef struct {

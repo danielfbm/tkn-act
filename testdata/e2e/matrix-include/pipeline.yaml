@@ -1,0 +1,43 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: emit
+spec:
+  params:
+    - name: os
+      default: linux
+    - name: arch
+      default: amd64
+  results:
+    - name: tag
+  steps:
+    - name: emit
+      image: alpine:3
+      script: |
+        printf "$(params.os)-$(params.arch)" > $(results.tag.path)
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: matrix-include
+spec:
+  results:
+    - name: tags
+      type: array
+      value: $(tasks.build.results.tag[*])
+  tasks:
+    - name: build
+      taskRef: { name: emit }
+      # No PipelineTask-level params — Tekton rejects a name appearing in
+      # both `params` and `matrix.params` ("expected exactly one"). The
+      # cross-product carries `os`; include rows contribute `arch` only.
+      matrix:
+        params:
+          - name: os
+            value: [linux]
+        include:
+          - name: arm-extra
+            params:
+              - { name: arch, value: arm64 }
+          - params:
+              - { name: arch, value: armv7 }

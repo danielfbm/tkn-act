@@ -1,0 +1,41 @@
+# This Pipeline is REJECTED by tkn-act at validate time (exit 4)
+# because matrix.include[0].params.os overlaps matrix.params.os.
+#
+# Real Tekton FOLDS the include row into the matching cross-product
+# row (so a 2x1 cross-product + 1 overlapping include = 2 rows, not
+# 3). tkn-act --docker would APPEND the include as a new 3rd row,
+# diverging from cluster mode silently. To prevent the divergence
+# we reject at validate time until v2 implements the fold.
+#
+# See docs/superpowers/specs/2026-05-04-pipeline-matrix-design.md § 7
+# and docs/feature-parity.md.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: emit
+spec:
+  params:
+    - name: os
+    - name: arch
+      default: amd64
+  steps:
+    - image: alpine:3
+      script: 'true'
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: matrix-include-overlap
+spec:
+  tasks:
+    - name: build
+      taskRef: { name: emit }
+      matrix:
+        params:
+          - name: os
+            value: [linux, darwin]
+        include:
+          - name: arm-extra
+            params:
+              - { name: os, value: linux } # overlap → REJECTED
+              - { name: arch, value: arm64 }

@@ -1,0 +1,38 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: emit
+spec:
+  params:
+    - name: os
+    - name: goversion
+  results:
+    - name: tag
+  steps:
+    - name: emit
+      image: alpine:3
+      script: |
+        printf "$(params.os)-$(params.goversion)" > $(results.tag.path)
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: matrix
+spec:
+  results:
+    # Per Tekton v1, an array result from a matrix-fanned task is
+    # written as the unwrapped $(tasks.X.results.Y[*]) reference (not
+    # an array literal containing it) — both backends resolve this
+    # to the array of per-expansion strings.
+    - name: tags
+      type: array
+      value: $(tasks.build.results.tag[*])
+  tasks:
+    - name: build
+      taskRef: { name: emit }
+      matrix:
+        params:
+          - name: os
+            value: [linux, darwin]
+          - name: goversion
+            value: ["1.21", "1.22"]

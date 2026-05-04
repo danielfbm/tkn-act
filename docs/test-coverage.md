@@ -125,6 +125,8 @@ fixtures under `testdata/e2e/`:
 | `configmap-from-yaml/` | `kind: ConfigMap` (apiVersion v1) embedded in `-f`; mounted as a volume |
 | `secret-from-yaml/`    | `kind: Secret` (apiVersion v1) embedded in `-f`; both `data` (base64) and `stringData` exercised |
 | `sidecars/`            | `Task.spec.sidecars`: redis sidecar; steps connect on `localhost:6379` (shared netns via per-Task pause container on docker; native pod-shared netns on cluster) |
+| `matrix/`              | `PipelineTask.matrix`: 2×2 cross-product, per-row results aggregated into `$(tasks.build.results.tag[*])` (`Pipeline.spec.results`) |
+| `matrix-include/`      | `matrix.include` named + unnamed rows (no overlap with cross-product); result-array order preserved |
 
 Plus `internal/backend/docker/docker_integration_test.go`.
 
@@ -157,6 +159,13 @@ In rough order of "you should be aware":
 - **Step-state isolation.** Each step is a separate container; cwd /
   env / `/tmp` from a prior step is gone. Documented as a foot-gun in
   `testdata/limitations/step-state/`.
+- **`matrix.include` overlapping a cross-product param.** Real Tekton
+  folds the include row into the matching cross-product row;
+  tkn-act validate-rejects the overlap (exit 4) until v2 implements
+  the fold. Documented in
+  `testdata/limitations/matrix-include-overlap/` and parsed by
+  `internal/loader/limitations_test.go` to confirm the YAML stays
+  loadable.
 
 ### Plumbed but not covered by an automated test
 

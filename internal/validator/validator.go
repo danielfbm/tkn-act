@@ -174,7 +174,10 @@ func validateCore(b *loader.Bundle, pipelineName string, providedParams map[stri
 		}
 	}
 
-	// 2. Required params declared by tasks must be bound.
+	// 2. Required params declared by tasks must be bound. Matrix params
+	// (cross-product param names + every include row's params) count
+	// as bound; the engine's expandMatrix pass merges them onto each
+	// expansion's pt.Params.
 	for _, pt := range all {
 		spec, ok := resolvedTasks[pt.Name]
 		if !ok {
@@ -183,6 +186,16 @@ func validateCore(b *loader.Bundle, pipelineName string, providedParams map[stri
 		bound := map[string]bool{}
 		for _, p := range pt.Params {
 			bound[p.Name] = true
+		}
+		if pt.Matrix != nil {
+			for _, mp := range pt.Matrix.Params {
+				bound[mp.Name] = true
+			}
+			for _, inc := range pt.Matrix.Include {
+				for _, p := range inc.Params {
+					bound[p.Name] = true
+				}
+			}
 		}
 		for _, decl := range spec.Params {
 			if decl.Default == nil && !bound[decl.Name] {
@@ -524,6 +537,72 @@ func validateCore(b *loader.Bundle, pipelineName string, providedParams map[stri
 			}
 			if t := decl.Default.Type; t == tektontypes.ParamTypeArray || t == tektontypes.ParamTypeObject {
 				errs = append(errs, fmt.Errorf("StepAction %q param %q: default type %q is not supported (only string defaults)", saName, decl.Name, t))
+			}
+		}
+	}
+
+	// 19. Matrix rules. Mirrors Tekton's PipelineTask.matrix shape; cap
+	// at validatorMatrixMaxRows (matches engine.matrixMaxRows). The
+	// include-overlap rule (an include row's params overlapping a
+	// matrix.params name) is the Critical-2 fix preventing
+	// docker-vs-cluster divergence: real Tekton folds the include row
+	// into the matching cross-product row; tkn-act always appends, so
+	// we reject the overlap until v2 implements the fold.
+	const validatorMatrixMaxRows = 256
+	for _, pt := range all {
+		if pt.Matrix == nil {
+			continue
+		}
+		seen := map[string]bool{}
+		cross := 0
+		if len(pt.Matrix.Params) > 0 {
+			cross = 1
+		}
+		for _, mp := range pt.Matrix.Params {
+			if seen[mp.Name] {
+				errs = append(errs, fmt.Errorf("pipeline task %q matrix declares param %q twice", pt.Name, mp.Name))
+			}
+			seen[mp.Name] = true
+			if len(mp.Value) == 0 {
+				errs = append(errs, fmt.Errorf("pipeline task %q matrix param %q must be a non-empty string list", pt.Name, mp.Name))
+				continue
+			}
+			cross *= len(mp.Value)
+		}
+		total := cross + len(pt.Matrix.Include)
+		if total > validatorMatrixMaxRows {
+			errs = append(errs, fmt.Errorf("pipeline task %q matrix would produce %d rows, exceeding the cap of %d", pt.Name, total, validatorMatrixMaxRows))
+		}
+		crossNames := map[string]bool{}
+		for _, mp := range pt.Matrix.Params {
+			crossNames[mp.Name] = true
+		}
+		for _, inc := range pt.Matrix.Include {
+			for _, p := range inc.Params {
+				if p.Value.Type != tektontypes.ParamTypeString && p.Value.Type != "" {
+					errs = append(errs, fmt.Errorf("pipeline task %q matrix include %q param %q must be a string", pt.Name, inc.Name, p.Name))
+				}
+				if crossNames[p.Name] {
+					errs = append(errs, fmt.Errorf(
+						"pipeline task %q matrix include %q param %q overlaps a cross-product param; "+
+							"matrix.include params overlapping cross-product params are not supported in v1; "+
+							"see Track 1 #3 follow-up",
+						pt.Name, inc.Name, p.Name))
+				}
+			}
+		}
+		// Result-typing: matrix-fanned tasks may only emit string results.
+		// Tekton promotes string → array-of-strings under the parent name;
+		// array / object results have no such promotion. Reject so users
+		// see the validation error before runtime.
+		if spec, ok := resolvedTasks[pt.Name]; ok {
+			for _, r := range spec.Results {
+				if r.Type == "array" || r.Type == "object" {
+					errs = append(errs, fmt.Errorf(
+						"pipeline task %q (matrix-fanned) references task whose result %q is type %q; "+
+							"matrix-fanned tasks may only emit string results",
+						pt.Name, r.Name, r.Type))
+				}
 			}
 		}
 	}

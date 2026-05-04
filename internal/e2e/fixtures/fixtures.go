@@ -231,5 +231,51 @@ func All() []Fixture {
 		{Dir: "configmap-from-yaml", Pipeline: "configmap-from-yaml", WantStatus: "succeeded"},
 		{Dir: "secret-from-yaml", Pipeline: "secret-from-yaml", WantStatus: "succeeded"},
 		{Dir: "sidecars", Pipeline: "sidecars", WantStatus: "succeeded"},
+		{
+			Dir: "matrix", Pipeline: "matrix", WantStatus: "succeeded",
+			// 2x2 cross-product (os ∈ {linux, darwin} × goversion ∈ {1.21, 1.22}).
+			// Row order is outermost-iterates-slowest, so:
+			//   build-0 = (linux, 1.21), build-1 = (linux, 1.22),
+			//   build-2 = (darwin, 1.21), build-3 = (darwin, 1.22).
+			// The pipeline declares an array result `tags` value
+			// $(tasks.build.results.tag[*]) — the resolver splices the
+			// per-expansion strings in row order.
+			WantResults: map[string]any{
+				"tags": []any{"linux-1.21", "linux-1.22", "darwin-1.21", "darwin-1.22"},
+			},
+			// DockerOnly: Tekton v0.65 (the pinned cluster-integration
+			// version) does not surface matrix-fanned task results as
+			// pipeline-level results when referenced via $(tasks.X.results.Y[*]),
+			// even with enable-api-fields=alpha — the controller emits
+			// CouldntGetPipelineResult: "the referenced results don't
+			// exist". The matrix expansion itself + per-TaskRun
+			// reconstruction via param-hash still works on cluster (every
+			// expansion succeeds; events carry MatrixInfo); it's the
+			// pipeline-level [*] aggregation that's missing controller-
+			// side. Cluster-mode coverage of the per-TaskRun event path
+			// is provided by internal/backend/cluster/run_test.go::
+			// TestMatchMatrixRowFromTaskRun*. Track this to a Tekton bump
+			// in cluster-integration.yml.
+			DockerOnly:  true,
+			Description: "matrix-fanned task results not exposed as pipeline results in Tekton v0.65 (alpha api fields)",
+		},
+		{
+			Dir: "matrix-include", Pipeline: "matrix-include", WantStatus: "succeeded",
+			// 1 cross-product row (os=linux, arch=amd64 from Task default)
+			// + 2 include rows (arch=arm64 named arm-extra; arch=armv7
+			// unnamed). Include rows inherit `os` from the Task default.
+			// Order: cross-product, then include in declaration order.
+			WantResults: map[string]any{
+				"tags": []any{"linux-amd64", "linux-arm64", "linux-armv7"},
+			},
+			// DockerOnly: same Tekton v0.65 limitation as `matrix`. The
+			// include row semantics also differ — Tekton v0.65 doesn't
+			// emit TaskRuns for include-only-introduced params (rows
+			// without an overlapping cross-product param). Bump Tekton
+			// to a release where matrix-result PipelineResult resolution
+			// is GA before flipping this back to cross-backend.
+			DockerOnly:  true,
+			Description: "matrix.include row TaskRun creation + matrix-fanned PipelineResult both gated on Tekton bump",
+		},
 	}
 }

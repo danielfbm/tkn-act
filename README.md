@@ -105,6 +105,11 @@ are exercised by both backends in CI — divergences are explicit
   `http`, `bundles`, `cluster`) and the remote `ResolutionRequest`
   driver land in subsequent phases — see
   [`docs/superpowers/plans/2026-05-04-resolvers.md`](docs/superpowers/plans/2026-05-04-resolvers.md)
+- `PipelineTask.matrix` — Cartesian-product fan-out across named
+  string-list params, plus optional `include` rows for named extras.
+  Per-row `when:`, result aggregation (`$(tasks.X.results.Y[*])`),
+  256-row cardinality cap. Cluster-backend round-trip via canonical
+  param-hash matching.
 - `Task.spec.sidecars` — long-lived helper containers (databases,
   proxies, mock services). On `--docker`, a tiny per-Task pause
   container owns the netns and steps + sidecars all join it via
