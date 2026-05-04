@@ -15,7 +15,7 @@ Three workflows live under `.github/workflows/`:
 
 | File | When it runs | What it runs |
 |---|---|---|
-| `ci.yml` | every push, every PR | `go vet`, `go build`, `go test -race -count=1 ./...` (untagged), `tkn-act help-json` smoke; matrix: ubuntu-latest + macos-latest. PR-only `tests-required` job. |
+| `ci.yml` | every push, every PR | `go vet`, `go build`, `go test -race -count=1 ./...` (untagged), `tkn-act help-json` smoke; matrix: ubuntu-latest + macos-latest. PR-only `tests-required` and `coverage` jobs. |
 | `docker-integration.yml` | `push` to `main`/`release/**` always; PR only when paths in its filter changed | `go test -tags integration -count=1 -timeout 15m ./internal/e2e/...` on ubuntu-latest. Pre-pulls `alpine:3`. |
 | `cluster-integration.yml` | same trigger pattern | installs `kubectl` + `k3d`, then `go test -tags cluster -count=1 -timeout 25m ./internal/clustere2e/...` on ubuntu-latest. Dumps cluster state on failure. |
 
@@ -23,6 +23,38 @@ Three workflows live under `.github/workflows/`:
 `*.go` file outside `_test.go`/`vendor/` without modifying any
 `_test.go` file. Override per-PR by including the literal token
 `[skip-test-check]` in any commit message in the PR.
+
+### Coverage gate
+
+`coverage` (in `ci.yml`, PR-only) runs
+`.github/scripts/coverage-check.sh` against the PR's base and head SHAs.
+The script:
+
+1. Checks each ref out into a detached worktree.
+2. Runs `go test -cover -count=1 ./...` (default test set, no build
+   tags) on both sides and parses the per-package
+   `coverage: NN.N% of statements` line emitted by `go test`.
+3. Compares per-package: any package on HEAD whose coverage is lower
+   than on BASE by more than the rounding tolerance (0.1pp) is a drop.
+
+The job fails if there are any drops, and prints a per-package table
+(BASE, HEAD, DELTA, STATUS) so authors see exactly what regressed. New
+packages on HEAD without a BASE baseline are skipped, removed packages
+don't count as drops, and packages with `[no test files]` are skipped
+entirely. Test failures on either side abort the gate with a clear
+message rather than silently passing as 0%.
+
+The gate runs only on PRs (no base to compare against on push to
+`main`) and only on the default test set — `-tags integration` and
+`-tags cluster` coverage is intentionally not measured, since those
+suites run in their own workflows and would roughly double CI time.
+
+Override per-PR by including the literal token `[skip-coverage-check]`
+in any commit message in the PR (mirrors `tests-required`'s
+`[skip-test-check]` mechanism). Use it for genuinely coverage-immune
+changes — a deletion that drops a covered code path along with its
+tests, a refactor that intentionally drops dead code — not as a
+shortcut.
 
 ### Path scopes (PR-only gates)
 
@@ -143,8 +175,11 @@ In rough order of "you should be aware":
 - **Linters beyond `go vet`.** No `golangci-lint`, `staticcheck`,
   `gosec`, or `govulncheck`. Style and security regressions would slip
   through.
-- **Coverage reporting.** No `-coverprofile`, no Codecov / Coveralls
-  upload. We don't track line coverage over time.
+- **Coverage reporting (external).** No Codecov / Coveralls upload;
+  no historical coverage dashboards. The PR-only `coverage` job in
+  `ci.yml` does enforce a per-package no-drop invariant against the
+  target branch (see "Coverage gate" above), but absolute coverage
+  numbers over time are not tracked anywhere.
 - **macOS docker / cluster integration.** macOS runners run only the
   build/vet/unit job (`ci.yml`); the integration workflows are
   ubuntu-only because docker isn't preinstalled on macos runners and
@@ -187,6 +222,7 @@ In rough order of "you should be aware":
 |---|---|
 | `build & test` | `go vet`, `go build`, or any unit test. Fast and local-reproducible: `go test -race ./...`. |
 | `tests-required` | The PR has a Go code change without a `_test.go` change. Either add a test or include `[skip-test-check]` in a commit message. |
+| `coverage no-drop` | A package on HEAD has lower coverage than on BASE by more than 0.1pp. The job log prints a per-package table. Add tests for the affected package(s) or, for genuinely coverage-immune changes, include `[skip-coverage-check]` in a commit message. Reproduce locally: `bash .github/scripts/coverage-check.sh origin/main HEAD`. |
 | `docker e2e` | An `internal/e2e/` test failed under real Docker. Reproduce locally with `go test -tags integration ./internal/e2e/...`. |
 | `k3d e2e` | The k3d cluster failed to come up, Tekton failed to install, or the cluster fixture failed. The job dumps cluster pod state on failure; check that block in the GitHub Actions log. |
 

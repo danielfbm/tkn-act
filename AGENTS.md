@@ -301,6 +301,34 @@ The rationale is the usual one: every behavior we ship is one we must be
 able to detect breaks in later. AI agents working on this repo should treat
 this as a hard precondition for opening a PR.
 
+### Coverage gate (sibling rule)
+
+**Coverage must not drop below the target branch on a per-package basis.**
+The `coverage` job in `.github/workflows/ci.yml` runs
+`.github/scripts/coverage-check.sh` on every PR. It runs
+`go test -cover -count=1 ./...` (default test set, no build tags) on both
+the PR's base SHA and head SHA, then compares per-package: if any package
+on HEAD has lower coverage than on BASE by more than 0.1 percentage points,
+the gate fails and prints a per-package table showing the drop.
+
+| Edge case | Behavior |
+|---|---|
+| Package new on HEAD (no BASE baseline) | not a drop; reported as `new` |
+| Package removed on HEAD | not a drop; reported as `removed` |
+| Package with `[no statements]` | treated as 100% on both sides |
+| Package with `[no test files]` | skipped (no measurement) |
+| Tests fail on either side | gate aborts with a clear message — does not silently pass as 0% |
+
+For genuinely coverage-immune changes (a deletion that drops a covered
+code path along with its tests, a refactor that intentionally drops dead
+code), include the literal token `[skip-coverage-check]` in any commit
+message in the PR. The script greps `git log --format=%B base..head` for
+it, the same way `tests-required` looks for `[skip-test-check]`.
+
+The gate runs only on `pull_request` (not on push to `main` — there's no
+base to compare against). It only measures the default test set, not
+`-tags integration` or `-tags cluster`; those run in their own workflows.
+
 ---
 
 ## Local development
