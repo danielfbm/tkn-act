@@ -51,8 +51,44 @@ func New(be backend.Backend, rep reporter.Reporter, opts Options) *Engine {
 }
 
 func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, error) {
+	// Eager top-level pipelineRef.resolver resolution. A PipelineRun
+	// whose spec.pipelineRef carries a resolver block is resolved
+	// SYNCHRONOUSLY at load time (spec §7) — the resolved Pipeline
+	// replaces in.Name and gets injected into the bundle before DAG
+	// build. Top-level resolution emits resolver-start / resolver-end
+	// with an empty Task field; the consumer disambiguates "this is a
+	// top-level pipelineRef resolution" from "this is a per-task
+	// resolution" via the absence of the task field.
+	if pl, ok := maybeResolveTopLevelPipelineRef(ctx, in, e.opts.Refresolver, e.rep); ok {
+		// Inject a synthetic name if the PipelineRun didn't carry one,
+		// or the resolved Pipeline's metadata.name differs.
+		name := pl.Metadata.Name
+		if name == "" {
+			name = "resolved"
+			pl.Metadata.Name = name
+		}
+		if in.Bundle.Pipelines == nil {
+			in.Bundle.Pipelines = map[string]tektontypes.Pipeline{}
+		}
+		in.Bundle.Pipelines[name] = pl
+		in.Name = name
+	} else if in.Name == "" {
+		// No top-level resolver and no name — surface the failure if
+		// maybeResolveTopLevelPipelineRef reported one (it emitted a
+		// run-end already), else fall through to the not-found branch.
+		// We don't synthesize a "best guess" pipeline name here; the
+		// caller (CLI) disambiguates that.
+	}
 	pl, ok := in.Bundle.Pipelines[in.Name]
 	if !ok {
+		// If the engine emitted a top-level resolver-end with status
+		// failed, treat the run as already-terminated. Detect that by
+		// checking whether maybeResolveTopLevelPipelineRef saw a
+		// resolver block; if it did, we already emitted run-start /
+		// run-end ourselves and can return cleanly.
+		if hasTopLevelPipelineRefResolver(in.Bundle) {
+			return RunResult{Status: "failed"}, nil
+		}
 		return RunResult{}, fmt.Errorf("pipeline %q not found", in.Name)
 	}
 	if pb, ok := e.be.(backend.PipelineBackend); ok {
