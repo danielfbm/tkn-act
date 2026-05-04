@@ -684,8 +684,9 @@ release.
 
 `taskRef.resolver` and `pipelineRef.resolver` (the Tekton catalog-consumption
 pattern) are **partly supported** in v1.6.x. Phase 1 (scaffolding),
-Phase 2 (direct `git`), Phase 3 (`hub` + `http`), and Phase 4
-(`bundles` + off-by-default `cluster`) have shipped:
+Phase 2 (direct `git`), Phase 3 (`hub` + `http`), Phase 4
+(`bundles` + off-by-default `cluster`), and Phase 5 (Mode B remote
+resolver via `ResolutionRequest` CRD) have shipped:
 
 - New types `TaskRef.Resolver` / `TaskRef.ResolverParams` and the
   `PipelineRef` counterparts. Existing inline-only YAML is unaffected
@@ -736,7 +737,12 @@ Phase 2 (direct `git`), Phase 3 (`hub` + `http`), and Phase 4
   context to read from, and **`--cluster-resolver-kubeconfig=<path>`**
   overrides the kubeconfig path. Setting either flag implicitly flips
   the registry's `AllowCluster=true` so the cluster resolver registers
-  in the default registry.
+  in the default registry. **`--remote-resolver-context=<ctx>`**
+  (Phase 5) flips the registry into Mode B; pair with
+  `--remote-resolver-namespace=<ns>` (default `default`) and
+  `--remote-resolver-timeout=<duration>` (default `60s`) to control
+  where the `ResolutionRequest` lands and how long tkn-act waits for
+  the controller to reconcile.
 - **Validator** rejects unknown resolver names in direct mode (unless
   `--remote-resolver-context` is set, which short-circuits the
   allow-list); rejects `resolver.params` that reference a task not in
@@ -756,10 +762,49 @@ Phase 2 (direct `git`), Phase 3 (`hub` + `http`), and Phase 4
 
 Failure surfaces as `task-end` `status: "failed"` with `message: "resolver: hub: ..."` / `"resolver: http: ..."` / `"resolver: bundles: ..."` / `"resolver: cluster: ..."`, which routes through the standard pipeline-failure exit code (5).
 
+### Mode B — remote resolver via `ResolutionRequest` (Phase 5, shipped)
+
+Setting `--remote-resolver-context=<kubeconfig-context>` flips the
+registry into **Mode B**: every `taskRef.resolver:` /
+`pipelineRef.resolver:` block is dispatched by submitting a
+`resolution.tekton.dev/v1beta1` `ResolutionRequest` CRD to the
+remote Tekton cluster, watching `status.conditions[Succeeded]`, and
+decoding `status.data` (base64) once the controller fills it in. The
+direct-mode allow-list is short-circuited — any resolver name the
+remote cluster's controller knows is dispatchable, including
+arbitrary custom resolver names.
+
+Wire-compat:
+- v1beta1 first; falls back to **v1alpha1** on `NoKindMatchError`
+  for older Tekton Resolution installs (long-term-support OpenShift
+  Pipelines, etc.). Both API versions share the fields tkn-act
+  reads (`spec.params`, `status.conditions`, `status.data`).
+
+Cleanup discipline:
+- The `ResolutionRequest` is **always Deleted** on the way out
+  (success, controller-reported failure, timeout, **or
+  `context.Cancel`** — the deferred Delete uses `context.Background()`
+  so SIGINT mid-resolution still triggers cleanup).
+
+Security stance:
+- Mode B uses **the user's kubeconfig identity** — whatever
+  service-account that context resolves to is the one the remote
+  cluster sees. tkn-act never elevates privileges, never stores
+  credentials of its own, and never modifies the kubeconfig file.
+- The chosen kubeconfig context's RBAC must include
+  `create / get / delete` on `resolutionrequests` in the namespace
+  named by `--remote-resolver-namespace`.
+
+Flags (all on `tkn-act run`):
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--remote-resolver-context <ctx>` | unset | Kubeconfig context to dispatch ResolutionRequests through. Setting non-empty flips registry into Mode B. |
+| `--remote-resolver-namespace <ns>` | `default` | Namespace where ResolutionRequests are submitted. |
+| `--remote-resolver-timeout <duration>` | `60s` | Per-request wait budget for the controller's reconcile. Failure surfaces as `task-end` `status: "failed"` with a `remote: timeout after ...` message. |
+
 What's deferred to follow-up phases (each ships independently):
 
-- **Mode B (remote)** — submit a `ResolutionRequest` CRD to a
-  user-configured cluster and use the response (Phase 5).
 - **Offline cache + management subcommands** (`tkn-act cache prune`,
   `tkn-act cache list`) (Phase 6).
 

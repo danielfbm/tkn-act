@@ -118,8 +118,20 @@ are exercised by both backends in CI — divergences are explicit
   Tekton resources via the kube dynamic client and is **OFF BY
   DEFAULT** for safety (KUBECONFIG may point at production) — opt in
   via `--cluster-resolver-context=<ctx>` or by adding `cluster` to
-  `--resolver-allow`. The remote `ResolutionRequest` driver lands in
-  Phase 5 — see
+  `--resolver-allow`. **Mode B — remote resolver via
+  `ResolutionRequest` CRD ships in Phase 5**: setting
+  `--remote-resolver-context=<kubeconfig-context>` flips the registry
+  into Mode B, where every `taskRef.resolver:` block is dispatched
+  by submitting a `resolution.tekton.dev/v1beta1.ResolutionRequest`
+  to the remote cluster, watching `status.conditions[Succeeded]`,
+  and decoding `status.data`. Wire-compat: v1beta1 first, with
+  v1alpha1 fallback for older Tekton Resolution installs. Cleanup
+  discipline: the `ResolutionRequest` is always Deleted on the way
+  out (success / failure / timeout / `context.Cancel`). Pair with
+  `--remote-resolver-namespace=<ns>` (default `default`) and
+  `--remote-resolver-timeout=<duration>` (default `60s`). Arbitrary
+  custom resolver names are valid in Mode B (the validator's
+  allow-list is short-circuited). See
   [`docs/superpowers/plans/2026-05-04-resolvers.md`](docs/superpowers/plans/2026-05-04-resolvers.md)
 - `PipelineTask.matrix` — Cartesian-product fan-out across named
   string-list params, plus optional `include` rows for named extras.
@@ -150,9 +162,11 @@ job enforces that the table doesn't drift from the tree.
 
 ## Not yet supported
 
-Resolvers (`hub`/`http`/`bundles`/`cluster` directly, plus the remote
-`ResolutionRequest` driver — `git` ships in v1.6),
-custom tasks, signed pipelines, tekton-results, Windows.
+Custom tasks, signed pipelines, tekton-results, Windows.
+(`taskRef.resolver` is shipped for the five canonical names — `git`,
+`hub`, `http`, `bundles`, `cluster` — plus Mode B remote resolution
+via `ResolutionRequest`; offline cache management subcommands land
+in v1.6 Phase 6.)
 
 See [`docs/short-term-goals.md`](docs/short-term-goals.md) for the
 prioritized track of what's next.
