@@ -50,6 +50,10 @@ func TestHelpJSONShape(t *testing.T) {
 		"tkn-act cluster up",
 		"tkn-act cluster down",
 		"tkn-act cluster status",
+		// Track 1 #9 Phase 6: resolver cache management.
+		"tkn-act cache list",
+		"tkn-act cache prune",
+		"tkn-act cache clear",
 	}
 	have := map[string]commandInfo{}
 	for _, c := range out.Commands {
