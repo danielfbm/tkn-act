@@ -1,0 +1,26 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: resolver-bundles
+spec:
+  params:
+    - name: bundle-ref
+      type: string
+      description: |
+        OCI image reference of a Tekton bundle. The e2e harness
+        spins up an in-memory OCI registry, packages the contents
+        of testdata/e2e/resolver-bundles/served/ as a Tekton bundle,
+        pushes it as <host>/tkn-act/test-bundle:v1, and substitutes
+        that reference into this param. The Pipeline below uses the
+        bundles resolver to fetch the named Task out of the bundle.
+  tasks:
+    - name: greet
+      taskRef:
+        resolver: bundles
+        params:
+          - name: bundle
+            value: $(params.bundle-ref)
+          - name: name
+            value: resolved-from-bundle
+          - name: kind
+            value: task
