@@ -116,6 +116,67 @@ func TestResolvePipelineResultsDropsMissingTask(t *testing.T) {
 	}
 }
 
+// Object-valued pipeline results that lose multiple keys must produce
+// errors (and result-name collisions, when there are several) in a
+// deterministic order across runs. Map iteration in Go is randomised,
+// so the resolver must sort the object's keys before iterating.
+// PR #18 reviewer Min-4.
+func TestResolvePipelineResultsObjectDropOrderDeterministic(t *testing.T) {
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Results: []tektontypes.PipelineResultSpec{
+			// Two object entries, each with several missing-task refs,
+			// so we get >1 drop per entry. The first failing key inside
+			// each object wins (the resolver short-circuits on first
+			// error per entry); sorted iteration makes that win
+			// deterministic.
+			{Name: "objA", Value: tektontypes.ParamValue{
+				Type: tektontypes.ParamTypeObject,
+				ObjectVal: map[string]string{
+					"zzz": "$(tasks.missingZ.results.v)",
+					"aaa": "$(tasks.missingA.results.v)",
+					"mmm": "$(tasks.missingM.results.v)",
+				},
+			}},
+			{Name: "objB", Value: tektontypes.ParamValue{
+				Type: tektontypes.ParamTypeObject,
+				ObjectVal: map[string]string{
+					"yyy": "$(tasks.gone1.results.v)",
+					"bbb": "$(tasks.gone2.results.v)",
+				},
+			}},
+		},
+	}}
+
+	// Run the resolver many times and assert every run yields the same
+	// error sequence. With unsorted map iteration the first-failing key
+	// would change run-to-run.
+	const iterations = 50
+	var first []string
+	for i := 0; i < iterations; i++ {
+		_, errs := resolvePipelineResults(pl, map[string]map[string]string{})
+		got := make([]string, len(errs))
+		for j, e := range errs {
+			got[j] = e.Error()
+		}
+		if i == 0 {
+			first = got
+			continue
+		}
+		if !reflect.DeepEqual(first, got) {
+			t.Fatalf("non-deterministic drop order at iteration %d:\nfirst=%v\ngot=%v", i, first, got)
+		}
+	}
+	// Sanity: alphabetical iteration means objA's first failure is on
+	// the alphabetically-smallest key "aaa" (referencing missingA),
+	// and objB's on "bbb" (referencing gone2).
+	if !strings.Contains(first[0], "missingA") {
+		t.Errorf("first error should mention the alphabetically-first failing ref (missingA), got %q", first[0])
+	}
+	if !strings.Contains(first[1], "gone2") {
+		t.Errorf("second error should mention objB's first ref (gone2), got %q", first[1])
+	}
+}
+
 func TestResolvePipelineResultsDropsMissingResultName(t *testing.T) {
 	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
 		Results: []tektontypes.PipelineResultSpec{

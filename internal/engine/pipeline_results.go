@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/danielfbm/tkn-act/internal/resolver"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
@@ -60,10 +61,19 @@ func resolvePipelineResults(pl tektontypes.Pipeline, results map[string]map[stri
 				out[spec.Name] = items
 			}
 		case tektontypes.ParamTypeObject:
+			// Sort the object's keys before iterating: Go map iteration
+			// is randomised, and we surface drops via EvtError — drop
+			// order must be deterministic across runs so log diffs and
+			// test assertions stay stable.
+			keys := make([]string, 0, len(spec.Value.ObjectVal))
+			for k := range spec.Value.ObjectVal {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
 			obj := make(map[string]string, len(spec.Value.ObjectVal))
 			dropped := false
-			for k, v := range spec.Value.ObjectVal {
-				s, err := resolver.Substitute(v, ctx)
+			for _, k := range keys {
+				s, err := resolver.Substitute(spec.Value.ObjectVal[k], ctx)
 				if err != nil {
 					errs = append(errs, fmt.Errorf("pipeline result %q dropped: %w", spec.Name, err))
 					dropped = true
