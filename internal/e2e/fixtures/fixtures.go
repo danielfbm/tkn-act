@@ -5,6 +5,90 @@
 // captured per-fixture rather than by silently omitting tests on one side.
 package fixtures
 
+import (
+	"reflect"
+)
+
+// ResultsEqual compares two RunResult.Results-style maps for cross-
+// backend fidelity, treating []string and []any-of-strings as equal
+// and map[string]string vs map[string]any-of-strings as equal. The
+// docker engine builds typed []string / map[string]string; fixture
+// authors usually write []any literals. Either side may also be nil
+// or empty when the other is — both mean "no resolved results."
+func ResultsEqual(got, want map[string]any) bool {
+	if len(got) == 0 && len(want) == 0 {
+		return true
+	}
+	if len(got) != len(want) {
+		return false
+	}
+	for k, wv := range want {
+		gv, ok := got[k]
+		if !ok {
+			return false
+		}
+		if !valueEqual(gv, wv) {
+			return false
+		}
+	}
+	return true
+}
+
+func valueEqual(g, w any) bool {
+	// Strings: direct compare.
+	if gs, ok := g.(string); ok {
+		ws, ok := w.(string)
+		return ok && gs == ws
+	}
+	// Arrays: normalise both sides to []string then DeepEqual.
+	if gs, ok := toStringSlice(g); ok {
+		ws, ok := toStringSlice(w)
+		return ok && reflect.DeepEqual(gs, ws)
+	}
+	// Objects: normalise to map[string]string.
+	if gm, ok := toStringMap(g); ok {
+		wm, ok := toStringMap(w)
+		return ok && reflect.DeepEqual(gm, wm)
+	}
+	return reflect.DeepEqual(g, w)
+}
+
+func toStringSlice(v any) ([]string, bool) {
+	switch x := v.(type) {
+	case []string:
+		return x, true
+	case []any:
+		out := make([]string, 0, len(x))
+		for _, item := range x {
+			s, ok := item.(string)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, s)
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+func toStringMap(v any) (map[string]string, bool) {
+	switch x := v.(type) {
+	case map[string]string:
+		return x, true
+	case map[string]any:
+		out := make(map[string]string, len(x))
+		for k, item := range x {
+			s, ok := item.(string)
+			if !ok {
+				return nil, false
+			}
+			out[k] = s
+		}
+		return out, true
+	}
+	return nil, false
+}
+
 // Fixture describes one testdata/e2e/<dir> case in a backend-agnostic way.
 //
 // WantStatus matches engine.RunResult.Status: succeeded | failed | timeout.
@@ -39,6 +123,13 @@ type Fixture struct {
 	Name string
 	// Description is a one-liner used in failure messages.
 	Description string
+	// WantResults, when non-nil, asserts engine.RunResult.Results is
+	// equal (after a normalising pass — []string and []any with string
+	// items count as equal, etc.) to this map. The cross-backend
+	// fidelity guarantee for Pipeline.spec.results: both backends must
+	// produce the same Results map for any fixture that sets this. If
+	// nil, only WantStatus is asserted (the existing behavior).
+	WantResults map[string]any
 }
 
 // TestName returns the subtest name for this fixture: explicit Name when
@@ -89,7 +180,17 @@ func All() []Fixture {
 		{Dir: "tasks-timeout", Pipeline: "tasks-timeout", WantStatus: "timeout"},
 		{Dir: "finally-timeout", Pipeline: "finally-timeout", WantStatus: "timeout"},
 		{Dir: "step-template", Pipeline: "step-template", WantStatus: "succeeded"},
-		{Dir: "pipeline-results", Pipeline: "pipeline-results", WantStatus: "succeeded"},
+		{
+			Dir: "pipeline-results", Pipeline: "pipeline-results", WantStatus: "succeeded",
+			// Both backends must surface the same resolved values. The
+			// pipeline declares revision=$(tasks.checkout.results.commit)
+			// and report=[checkout/commit, notify/id]; checkout emits
+			// "abc123", notify (in finally) emits "notify-42".
+			WantResults: map[string]any{
+				"revision": "abc123",
+				"report":   []any{"abc123", "notify-42"},
+			},
+		},
 		{Dir: "step-results", Pipeline: "stepres", WantStatus: "succeeded"},
 		{
 			Dir: "volumes", Pipeline: "configmap-eater", WantStatus: "succeeded",

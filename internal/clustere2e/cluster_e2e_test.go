@@ -132,6 +132,12 @@ func runFixtureCluster(t *testing.T, cb *clusterbe.Backend, cmStore, secStore *v
 			res.Status, f.WantStatus, f.Description,
 			res.Reason, res.Message, taskOutcomesString(res.Tasks))
 	}
+	// Cross-backend Pipeline.spec.results fidelity: the cluster path
+	// reads pr.status.results from the Tekton verdict; the docker path
+	// resolves locally. WantResults asserts both produce the same map.
+	if f.WantResults != nil && !fixtures.ResultsEqual(res.Results, f.WantResults) {
+		t.Errorf("results = %v, want %v (%s)", res.Results, f.WantResults, f.Description)
+	}
 	assertEventShape(t, f, cap.snapshot())
 }
 
