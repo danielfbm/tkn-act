@@ -260,6 +260,64 @@ spec:
 	}
 }
 
+func TestUnmarshalTaskWithSidecars(t *testing.T) {
+	in := []byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  sidecars:
+    - name: redis
+      image: redis:7-alpine
+      env:
+        - {name: TZ, value: UTC}
+    - name: mock
+      image: mock:1
+      script: 'serve --port 8080'
+      volumeMounts:
+        - {name: shared, mountPath: /data}
+  steps:
+    - {name: s, image: alpine:3, script: 'true'}
+`)
+	var got Task
+	if err := yaml.Unmarshal(in, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Spec.Sidecars) != 2 {
+		t.Fatalf("Sidecars = %d, want 2", len(got.Spec.Sidecars))
+	}
+	if got.Spec.Sidecars[0].Name != "redis" || got.Spec.Sidecars[0].Image != "redis:7-alpine" {
+		t.Errorf("sidecar[0] = %+v", got.Spec.Sidecars[0])
+	}
+	if got.Spec.Sidecars[0].Env[0].Name != "TZ" {
+		t.Errorf("sidecar[0].Env = %+v", got.Spec.Sidecars[0].Env)
+	}
+	if got.Spec.Sidecars[1].Script == "" {
+		t.Errorf("sidecar[1].Script empty")
+	}
+	if len(got.Spec.Sidecars[1].VolumeMounts) != 1 || got.Spec.Sidecars[1].VolumeMounts[0].MountPath != "/data" {
+		t.Errorf("sidecar[1].VolumeMounts = %+v", got.Spec.Sidecars[1].VolumeMounts)
+	}
+}
+
+func TestUnmarshalTaskWithoutSidecars(t *testing.T) {
+	in := []byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps:
+    - {name: s, image: alpine:3, script: 'true'}
+`)
+	var got Task
+	if err := yaml.Unmarshal(in, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Spec.Sidecars) != 0 {
+		t.Errorf("Sidecars = %+v, want empty", got.Spec.Sidecars)
+	}
+}
+
 func TestParamValueScalarAndArray(t *testing.T) {
 	in := []byte(`
 - name: scalar

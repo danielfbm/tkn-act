@@ -45,6 +45,47 @@ type TaskSpec struct {
 	Timeout      string        `json:"timeout,omitempty"`
 	Volumes      []Volume      `json:"volumes,omitempty"`
 	StepTemplate *StepTemplate `json:"stepTemplate,omitempty"`
+	Sidecars     []Sidecar     `json:"sidecars,omitempty"`
+}
+
+// Sidecar is a long-lived helper container that shares the Task's
+// pod/network namespace for the duration of the Task. Mirrors Tekton's
+// v1 Sidecar; tkn-act honors the subset listed below on the docker
+// backend (image, command/args, script, env, workingDir, resources,
+// volumeMounts, workspaces). The cluster backend forwards the full
+// marshalled shape — any other field the controller knows about works
+// under --cluster regardless of what tkn-act reads.
+type Sidecar struct {
+	Name            string           `json:"name"`
+	Image           string           `json:"image"`
+	Command         []string         `json:"command,omitempty"`
+	Args            []string         `json:"args,omitempty"`
+	Script          string           `json:"script,omitempty"`
+	Env             []EnvVar         `json:"env,omitempty"`
+	WorkingDir      string           `json:"workingDir,omitempty"`
+	Resources       *StepResources   `json:"resources,omitempty"`
+	VolumeMounts    []VolumeMount    `json:"volumeMounts,omitempty"`
+	Workspaces      []WorkspaceUsage `json:"workspaces,omitempty"`
+	Ports           []ContainerPort  `json:"ports,omitempty"`
+	ImagePullPolicy string           `json:"imagePullPolicy,omitempty"`
+}
+
+// WorkspaceUsage is the per-container workspace declaration used by
+// Sidecar. Tekton's Step takes its workspace bindings from the
+// PipelineTask, so this type is sidecar-only for now.
+type WorkspaceUsage struct {
+	Name      string `json:"name"`
+	MountPath string `json:"mountPath,omitempty"`
+	SubPath   string `json:"subPath,omitempty"`
+}
+
+// ContainerPort is a fidelity-only stub for upstream's
+// corev1.ContainerPort. tkn-act records the bytes and forwards them
+// to the cluster backend; no semantic effect on docker.
+type ContainerPort struct {
+	Name          string `json:"name,omitempty"`
+	ContainerPort int    `json:"containerPort"`
+	Protocol      string `json:"protocol,omitempty"`
 }
 
 // StepTemplate is the partial-Step template merged into every Step in
