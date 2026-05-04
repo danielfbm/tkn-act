@@ -238,6 +238,66 @@ func merge(into, from *Bundle) error {
 	return nil
 }
 
+// UnresolvedRef describes a single resolver-backed taskRef or pipelineRef
+// found in a Bundle. PipelineTask names the PipelineTask that carries the
+// resolver block; for the top-level pipelineRef on a PipelineRun, it's "".
+// Pipeline names the enclosing Pipeline (or empty for the top-level
+// PipelineRun.spec.pipelineRef case). Kind is "Task" or "Pipeline".
+type UnresolvedRef struct {
+	Pipeline     string
+	PipelineTask string
+	Kind         string
+	Resolver     string
+}
+
+// HasUnresolvedRefs lists every taskRef.resolver / pipelineRef.resolver
+// found in the Bundle. Used by validate -o json and --offline pre-flight
+// to tell users exactly which references would need to resolve.
+func HasUnresolvedRefs(b *Bundle) []UnresolvedRef {
+	if b == nil {
+		return nil
+	}
+	var out []UnresolvedRef
+	// Per-Pipeline taskRef resolvers (main DAG + finally).
+	for plName, pl := range b.Pipelines {
+		for _, pt := range pl.Spec.Tasks {
+			if pt.TaskRef != nil && pt.TaskRef.Resolver != "" {
+				out = append(out, UnresolvedRef{
+					Pipeline: plName, PipelineTask: pt.Name, Kind: "Task",
+					Resolver: pt.TaskRef.Resolver,
+				})
+			}
+		}
+		for _, pt := range pl.Spec.Finally {
+			if pt.TaskRef != nil && pt.TaskRef.Resolver != "" {
+				out = append(out, UnresolvedRef{
+					Pipeline: plName, PipelineTask: pt.Name, Kind: "Task",
+					Resolver: pt.TaskRef.Resolver,
+				})
+			}
+		}
+	}
+	// Top-level PipelineRun.spec.pipelineRef resolvers.
+	for _, pr := range b.PipelineRuns {
+		if pr.Spec.PipelineRef != nil && pr.Spec.PipelineRef.Resolver != "" {
+			out = append(out, UnresolvedRef{
+				Pipeline: "", PipelineTask: "", Kind: "Pipeline",
+				Resolver: pr.Spec.PipelineRef.Resolver,
+			})
+		}
+	}
+	// Top-level TaskRun.spec.taskRef resolvers (rare but possible).
+	for _, tr := range b.TaskRuns {
+		if tr.Spec.TaskRef != nil && tr.Spec.TaskRef.Resolver != "" {
+			out = append(out, UnresolvedRef{
+				Pipeline: "", PipelineTask: "", Kind: "Task",
+				Resolver: tr.Spec.TaskRef.Resolver,
+			})
+		}
+	}
+	return out
+}
+
 // docSep matches a YAML document separator on its own line: `---` (optionally
 // followed by whitespace), allowing for an optional leading BOM/whitespace.
 var docSep = regexp.MustCompile(`(?m)^---\s*$`)
