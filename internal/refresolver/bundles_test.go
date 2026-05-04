@@ -279,6 +279,197 @@ func TestBundlesResolverName(t *testing.T) {
 	}
 }
 
+// TestBundlesResolverInsecureHTTPHostDetection covers the loopback /
+// non-loopback host-classification helper through the public Resolve
+// path. The resolver's `allowInsecureFor` decides whether to use plain
+// HTTP for the registry; loopback hosts (127.x, ::1, localhost) bypass
+// the AllowInsecureHTTP toggle, anything else needs the explicit flag.
+func TestBundlesResolverInsecureHTTPHostDetection(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		bundle            string
+		allowInsecureHTTP bool
+	}{
+		{name: "127.0.0.1-port", bundle: "127.0.0.1:1/x/y:tag", allowInsecureHTTP: false},
+		{name: "localhost", bundle: "localhost:1/x/y:tag", allowInsecureHTTP: false},
+		{name: "ipv6-loopback-bracketed", bundle: "[::1]:1/x/y:tag", allowInsecureHTTP: false},
+		{name: "127.5", bundle: "127.5.6.7:1/x/y:tag", allowInsecureHTTP: false},
+		{name: "non-loopback-with-flag", bundle: "203.0.113.1:1/x/y:tag", allowInsecureHTTP: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := refresolver.NewBundlesResolver(refresolver.BundlesOptions{
+				AllowInsecureHTTP: tc.allowInsecureHTTP,
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+			defer cancel()
+			_, err := res.Resolve(ctx, refresolver.Request{
+				Resolver: "bundles",
+				Params: map[string]string{
+					"bundle": tc.bundle,
+					"name":   "any",
+				},
+			})
+			if err == nil {
+				return
+			}
+			if strings.Contains(err.Error(), "is required") {
+				t.Errorf("%q: expected fetch-time error, got param-validation error: %v", tc.bundle, err)
+			}
+		})
+	}
+}
+
+// TestBundlesResolverInvalidBundleRef exercises the name.ParseReference
+// failure branch — a malformed reference fails before any network IO.
+func TestBundlesResolverInvalidBundleRef(t *testing.T) {
+	res := refresolver.NewBundlesResolver(refresolver.BundlesOptions{})
+	_, err := res.Resolve(context.Background(), refresolver.Request{
+		Resolver: "bundles",
+		Params: map[string]string{
+			"bundle": "not a valid OCI ref :: at all",
+			"name":   "x",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for malformed OCI ref")
+	}
+	if !strings.Contains(err.Error(), "bundle") && !strings.Contains(err.Error(), "ref") {
+		t.Errorf("error %q does not mention the bundle ref", err)
+	}
+}
+
+// TestBundlesResolverPipelineKind: kind=pipeline matches a Pipeline-
+// labelled layer, exercising the kind-discrimination branch in
+// extractTektonResource.
+func TestBundlesResolverPipelineKind(t *testing.T) {
+	srv := httptest.NewServer(registry.New())
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "http://")
+
+	pipelineYAML := `apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: my-pipeline
+spec:
+  tasks:
+    - name: hello
+      taskRef:
+        name: hello
+`
+	img, err := bundleFromYAMLs(map[string]bundleSpec{
+		"my-pipeline": {
+			kind:       "pipeline",
+			apiVersion: "tekton.dev/v1",
+			yaml:       pipelineYAML,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build bundle: %v", err)
+	}
+	ref := host + "/tkn-act/test-bundle:v1"
+	if err := crane.Push(img, ref); err != nil {
+		t.Fatalf("crane.Push: %v", err)
+	}
+
+	res := refresolver.NewBundlesResolver(refresolver.BundlesOptions{AllowInsecureHTTP: true})
+	out, err := res.Resolve(context.Background(), refresolver.Request{
+		Resolver: "bundles",
+		Params: map[string]string{
+			"bundle": ref,
+			"name":   "my-pipeline",
+			"kind":   "pipeline",
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if !strings.Contains(string(out.Bytes), "kind: Pipeline") {
+		t.Errorf("expected kind: Pipeline; got %q", out.Bytes)
+	}
+}
+
+// TestBundlesResolverKindMismatch: the bundle has a Task by the
+// requested name but the request asks for a Pipeline of that name —
+// the layer must be skipped and an error mentioning the existing
+// layers surfaces.
+func TestBundlesResolverKindMismatch(t *testing.T) {
+	srv := httptest.NewServer(registry.New())
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "http://")
+
+	img, err := bundleFromYAMLs(map[string]bundleSpec{
+		"greet-bundle": {
+			kind:       "task",
+			apiVersion: "tekton.dev/v1",
+			yaml:       sampleTektonTaskYAML,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build bundle: %v", err)
+	}
+	ref := host + "/tkn-act/test-bundle:v1"
+	if err := crane.Push(img, ref); err != nil {
+		t.Fatalf("crane.Push: %v", err)
+	}
+
+	res := refresolver.NewBundlesResolver(refresolver.BundlesOptions{AllowInsecureHTTP: true})
+	_, err = res.Resolve(context.Background(), refresolver.Request{
+		Resolver: "bundles",
+		Params: map[string]string{
+			"bundle": ref,
+			"name":   "greet-bundle",
+			"kind":   "pipeline", // mismatch
+		},
+	})
+	if err == nil {
+		t.Fatal("expected kind-mismatch error")
+	}
+	if !strings.Contains(err.Error(), "greet-bundle") {
+		t.Errorf("error %q should list found layers", err)
+	}
+}
+
+// TestBundlesResolverNoAnnotations: a bundle whose layers have no
+// Tekton annotations at all — the resolver must surface the "no
+// Tekton-bundle annotations" error path.
+func TestBundlesResolverNoAnnotations(t *testing.T) {
+	srv := httptest.NewServer(registry.New())
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "http://")
+
+	tarBytes, err := tarSingleFile("nope.yaml", []byte("not-a-tekton-resource"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured := tarBytes
+	layer, err := tarball.LayerFromOpener(func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(captured)), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := mutate.AppendLayers(empty.Image, layer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := host + "/tkn-act/no-anns:v1"
+	if err := crane.Push(img, ref); err != nil {
+		t.Fatalf("crane.Push: %v", err)
+	}
+
+	res := refresolver.NewBundlesResolver(refresolver.BundlesOptions{AllowInsecureHTTP: true})
+	_, err = res.Resolve(context.Background(), refresolver.Request{
+		Resolver: "bundles",
+		Params:   map[string]string{"bundle": ref, "name": "x", "kind": "task"},
+	})
+	if err == nil {
+		t.Fatal("expected error for unannotated bundle")
+	}
+	if !strings.Contains(err.Error(), "annotation") && !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error %q does not mention the annotation gap", err)
+	}
+}
+
 // TestBundlesResolverRegisteredInDefaultRegistry: bundles is wired into
 // NewDefaultRegistry's allow-list and dispatch table after Phase 4.
 func TestBundlesResolverRegisteredInDefaultRegistry(t *testing.T) {
