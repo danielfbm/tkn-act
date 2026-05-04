@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/danielfbm/tkn-act/internal/engine/dag"
 	"github.com/danielfbm/tkn-act/internal/loader"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
@@ -431,7 +433,170 @@ func validateCore(b *loader.Bundle, pipelineName string, providedParams map[stri
 		}
 	}
 
+	// 13 / 14 / 15 / 17 — these rule numbers continue past the existing
+	// rule 12 (sidecars). The spec / plan numbering refers to the
+	// StepActions ruleset (12-18); we keep that intent in error messages
+	// but use unique rule numbers here to avoid collision with sidecars.
+	//
+	// Rules covered below:
+	//   - resolver-form Step.ref rejection (spec rule 17)
+	//   - ref + inline-body mutual exclusion (spec rule 13)
+	//   - unknown StepAction reference (spec rule 12)
+	//   - missing required StepAction param (spec rule 14)
+	rawStepsByTask := loadRawSteps(b)
+	for _, pt := range all {
+		spec, ok := resolvedTasks[pt.Name]
+		if !ok {
+			continue
+		}
+		rawSteps := rawStepsByTask[taskNameForPT(b, pt)]
+	stepLoop:
+		for i, st := range spec.Steps {
+			if st.Ref == nil {
+				continue
+			}
+			// Resolver-form ref: rejection. Inspect the raw map view of
+			// the ref: block — sigs.k8s.io/yaml drops unknown keys
+			// (resolver / params / bundle) during typed unmarshaling, so
+			// the typed StepActionRef alone can't detect them.
+			if i < len(rawSteps) {
+				if rawRef, ok := rawSteps[i]["ref"].(map[string]any); ok {
+					for _, key := range []string{"resolver", "params", "bundle"} {
+						if _, has := rawRef[key]; has {
+							errs = append(errs, fmt.Errorf("pipeline task %q step %q: resolver-based StepAction refs (resolver/params/bundle under ref:) are not supported in this release; see Track 1 #9", pt.Name, st.Name))
+							continue stepLoop
+						}
+					}
+				}
+			}
+			// ref + inline body mutual exclusion.
+			if st.Image != "" || len(st.Command) > 0 || len(st.Args) > 0 ||
+				st.Script != "" || len(st.Env) > 0 || st.WorkingDir != "" ||
+				st.ImagePullPolicy != "" || st.Resources != nil ||
+				len(st.Results) > 0 {
+				errs = append(errs, fmt.Errorf("pipeline task %q step %q: ref and inline body are mutually exclusive", pt.Name, st.Name))
+				continue
+			}
+			// Unknown StepAction reference.
+			action, present := b.StepActions[st.Ref.Name]
+			if !present {
+				errs = append(errs, fmt.Errorf("pipeline task %q step %q: references unknown StepAction %q", pt.Name, st.Name, st.Ref.Name))
+				continue
+			}
+			// Required-param coverage.
+			bound := map[string]bool{}
+			for _, p := range st.Params {
+				bound[p.Name] = true
+			}
+			for _, decl := range action.Spec.Params {
+				if decl.Default == nil && !bound[decl.Name] {
+					errs = append(errs, fmt.Errorf("pipeline task %q step %q: missing required StepAction param %q", pt.Name, st.Name, decl.Name))
+				}
+			}
+		}
+	}
+
+	// 16. Inline Step (no ref:) must have a non-empty image after
+	// stepTemplate inheritance. Run AFTER the validator's own
+	// stepTemplate-merge pass so an image inherited from
+	// Task.spec.stepTemplate.image counts. Only inline Steps
+	// participate; ref-Steps inherit their image from the StepAction
+	// body (rules 12-13 already caught the bad cases).
+	for taskName, spec := range resolvedTasks {
+		merged := mergeStepTemplateForImage(spec)
+		for _, st := range merged.Steps {
+			if st.Ref != nil {
+				continue
+			}
+			if st.Image == "" {
+				errs = append(errs, fmt.Errorf("pipeline task %q step %q: inline step has no image (set image: or use ref:)", taskName, st.Name))
+			}
+		}
+	}
+
+	// 18. StepAction params with array/object defaults are rejected at
+	// validate time (the inner pass only honors string defaults; this
+	// prevents silent drops).
+	for saName, sa := range b.StepActions {
+		for _, decl := range sa.Spec.Params {
+			if decl.Default == nil {
+				continue
+			}
+			if t := decl.Default.Type; t == tektontypes.ParamTypeArray || t == tektontypes.ParamTypeObject {
+				errs = append(errs, fmt.Errorf("StepAction %q param %q: default type %q is not supported (only string defaults)", saName, decl.Name, t))
+			}
+		}
+	}
+
 	return errs
+}
+
+// taskNameForPT returns the bundle key for the underlying Task referenced
+// by the PipelineTask, or "" for an inline taskSpec / resolver-backed ref.
+// Used by rule 17 to look up the raw YAML (which is keyed by the loaded
+// Task's metadata.name, not the PipelineTask's name).
+func taskNameForPT(b *loader.Bundle, pt tektontypes.PipelineTask) string {
+	if pt.TaskRef != nil && pt.TaskRef.Resolver == "" && pt.TaskRef.Name != "" {
+		if _, ok := b.Tasks[pt.TaskRef.Name]; ok {
+			return pt.TaskRef.Name
+		}
+	}
+	return ""
+}
+
+// loadRawSteps re-unmarshals every loaded Task's raw bytes as a generic
+// map and pulls out spec.steps[] as []map[string]any. Used by rule 17 to
+// inspect Step.ref keys (resolver / params / bundle) that
+// sigs.k8s.io/yaml silently drops during typed unmarshaling. Tasks
+// without raw bytes (resolver-backed dispatches, inline taskSpec in
+// PipelineTask) get an empty slice; rule 17 simply skips them.
+func loadRawSteps(b *loader.Bundle) map[string][]map[string]any {
+	out := map[string][]map[string]any{}
+	for name, raw := range b.RawTasks {
+		var doc map[string]any
+		if err := yaml.Unmarshal(raw, &doc); err != nil {
+			continue
+		}
+		spec, _ := doc["spec"].(map[string]any)
+		if spec == nil {
+			continue
+		}
+		steps, _ := spec["steps"].([]any)
+		if steps == nil {
+			continue
+		}
+		ms := make([]map[string]any, 0, len(steps))
+		for _, s := range steps {
+			if m, ok := s.(map[string]any); ok {
+				ms = append(ms, m)
+			} else {
+				ms = append(ms, nil)
+			}
+		}
+		out[name] = ms
+	}
+	return out
+}
+
+// mergeStepTemplateForImage is a thin reimplementation of
+// engine.applyStepTemplate's image-inheritance rule, scoped to what
+// rule 16 needs (the validator can't depend on the engine package).
+// Only Image inheritance from spec.stepTemplate.image into Steps with
+// empty Image is applied; other fields are irrelevant for this check.
+func mergeStepTemplateForImage(spec tektontypes.TaskSpec) tektontypes.TaskSpec {
+	if spec.StepTemplate == nil || spec.StepTemplate.Image == "" {
+		return spec
+	}
+	out := spec
+	out.Steps = make([]tektontypes.Step, len(spec.Steps))
+	for i, st := range spec.Steps {
+		ns := st
+		if ns.Image == "" {
+			ns.Image = spec.StepTemplate.Image
+		}
+		out.Steps[i] = ns
+	}
+	return out
 }
 
 // ValidateTaskSpec runs the per-Task semantic checks the engine needs

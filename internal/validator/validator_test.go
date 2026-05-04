@@ -1,10 +1,12 @@
 package validator_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/danielfbm/tkn-act/internal/loader"
+	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	"github.com/danielfbm/tkn-act/internal/validator"
 )
 
@@ -931,5 +933,287 @@ spec:
 `)
 	if errs := validator.Validate(b, "p", nil); len(errs) != 0 {
 		t.Fatalf("unexpected errors: %v", errs)
+	}
+}
+
+// ---- StepAction validator rules (rules paired with Track 1 #8) ----
+
+func TestValidateStepActionRefValid(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata: {name: greet}
+spec:
+  params: [{name: who, default: world}]
+  image: alpine:3
+  script: 'echo $(params.who)'
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps:
+    - {name: g, ref: {name: greet}}
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks: [{name: a, taskRef: {name: t}}]
+`)
+	if errs := validator.Validate(b, "p", nil); len(errs) != 0 {
+		t.Errorf("unexpected errors: %v", errs)
+	}
+}
+
+func TestValidateStepActionUnknownRef(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps: [{name: g, ref: {name: nope}}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks: [{name: a, taskRef: {name: t}}]
+`)
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) == 0 {
+		t.Fatal("want unknown-StepAction error, got none")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "unknown StepAction") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("want unknown-StepAction error, got %v", errs)
+	}
+}
+
+func TestValidateStepActionRefAndInlineRejected(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata: {name: greet}
+spec: {image: alpine:3, script: 'echo hi'}
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps:
+    - {name: g, ref: {name: greet}, image: busybox}
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks: [{name: a, taskRef: {name: t}}]
+`)
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) == 0 {
+		t.Fatal("want ref+inline-rejected error, got none")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "ref and inline body") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("want ref+inline-rejected error, got %v", errs)
+	}
+}
+
+func TestValidateStepActionMissingRequiredParam(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata: {name: greet}
+spec:
+  params: [{name: who}]
+  image: alpine:3
+  script: 'echo $(params.who)'
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps: [{name: g, ref: {name: greet}}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks: [{name: a, taskRef: {name: t}}]
+`)
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) == 0 {
+		t.Fatal("want missing-param error, got none")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), `missing required StepAction param "who"`) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("want missing-param error, got %v", errs)
+	}
+}
+
+// Rule 15: a StepAction body itself must not contain `ref:`. Spec
+// settles this with a structural guard (StepActionSpec has no Ref
+// field); no runtime post-load scan. This reflection-based test is
+// the canonical enforcement — if anyone adds Ref to StepActionSpec,
+// this test goes red and the build breaks.
+func TestValidateStepActionNoNestedRef(t *testing.T) {
+	var sa tektontypes.StepActionSpec
+	v := reflect.ValueOf(sa)
+	for i := 0; i < v.NumField(); i++ {
+		if name := v.Type().Field(i).Name; name == "Ref" {
+			t.Fatal("StepActionSpec must not model Ref (would allow nested refs)")
+		}
+	}
+}
+
+// Rule 16: an inline Step (no ref:) must have a non-empty image after
+// stepTemplate inheritance. Paired with the Step.Image JSON tag
+// relaxation from required → omitempty.
+func TestValidateInlineStepRequiresImage(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps:
+    - {name: bad, script: 'echo'}
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks: [{name: a, taskRef: {name: t}}]
+`)
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) == 0 {
+		t.Fatal("want no-image error, got none")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "inline step has no image") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("want no-image error, got %v", errs)
+	}
+}
+
+// Rule 16 positive: image inherited from stepTemplate should pass.
+func TestValidateInlineStepImageInheritedFromStepTemplate(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  stepTemplate: {image: alpine:3}
+  steps:
+    - {name: ok, script: 'echo'}
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks: [{name: a, taskRef: {name: t}}]
+`)
+	if errs := validator.Validate(b, "p", nil); len(errs) != 0 {
+		t.Errorf("unexpected errors: %v", errs)
+	}
+}
+
+// Rule 17: resolver-form ref: { resolver: hub, ... } must be
+// rejected with a clear "not supported in this release" message,
+// not the confusing "references unknown StepAction \"\"" from rule 12.
+func TestValidateResolverFormRefRejected(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps:
+    - name: g
+      ref: {resolver: hub, params: [{name: name, value: git-clone}]}
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks: [{name: a, taskRef: {name: t}}]
+`)
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) == 0 {
+		t.Fatal("want resolver-form rejection, got none")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "resolver-based StepAction refs") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("want resolver-form rejection, got %v", errs)
+	}
+}
+
+// Rule 18: a StepAction param with array/object default is rejected.
+func TestValidateStepActionArrayDefaultRejected(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1beta1
+kind: StepAction
+metadata: {name: greet}
+spec:
+  params:
+    - name: who
+      type: array
+      default: [a, b]
+  image: alpine:3
+  script: 'echo'
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps: [{name: g, ref: {name: greet}, params: [{name: who, value: x}]}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks: [{name: a, taskRef: {name: t}}]
+`)
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) == 0 {
+		t.Fatal("want default-type error, got none")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "default type") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("want default-type error, got %v", errs)
 	}
 }

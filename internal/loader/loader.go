@@ -23,6 +23,12 @@ type Bundle struct {
 	// tekton.dev/v1beta1, kind StepAction). The engine inlines them
 	// into Steps that carry `ref:` before stepTemplate / substitution.
 	StepActions map[string]tektontypes.StepAction
+	// RawTasks holds the original YAML bytes for each Task by name.
+	// The validator uses this to inspect raw map shapes for fields
+	// that sigs.k8s.io/yaml drops during typed unmarshaling
+	// (e.g. unknown keys under Step.ref like resolver/params/bundle —
+	// see validator rule 17).
+	RawTasks map[string][]byte
 	// ConfigMaps and Secrets are bytes-by-key, populated from any
 	// `kind: ConfigMap` / `kind: Secret` (apiVersion: v1) doc found in
 	// the loaded YAML. They are intended to be poured into the
@@ -40,6 +46,7 @@ func LoadFiles(paths []string) (*Bundle, error) {
 		Tasks:       map[string]tektontypes.Task{},
 		Pipelines:   map[string]tektontypes.Pipeline{},
 		StepActions: map[string]tektontypes.StepAction{},
+		RawTasks:    map[string][]byte{},
 		ConfigMaps:  map[string]map[string][]byte{},
 		Secrets:     map[string]map[string][]byte{},
 	}
@@ -65,6 +72,7 @@ func LoadBytes(data []byte) (*Bundle, error) {
 		Tasks:       map[string]tektontypes.Task{},
 		Pipelines:   map[string]tektontypes.Pipeline{},
 		StepActions: map[string]tektontypes.StepAction{},
+		RawTasks:    map[string][]byte{},
 		ConfigMaps:  map[string]map[string][]byte{},
 		Secrets:     map[string]map[string][]byte{},
 	}
@@ -126,6 +134,13 @@ func loadOne(out *Bundle, data []byte) error {
 			return fmt.Errorf("duplicate Task %q", t.Metadata.Name)
 		}
 		out.Tasks[t.Metadata.Name] = t
+		// Stash raw bytes for the validator's rule 17 (resolver-form
+		// Step.ref) which needs to inspect keys that typed unmarshaling
+		// silently drops.
+		if out.RawTasks == nil {
+			out.RawTasks = map[string][]byte{}
+		}
+		out.RawTasks[t.Metadata.Name] = append([]byte(nil), data...)
 	case "Pipeline":
 		var p tektontypes.Pipeline
 		if err := yaml.Unmarshal(data, &p); err != nil {
@@ -251,6 +266,12 @@ func merge(into, from *Bundle) error {
 			return fmt.Errorf("duplicate Task %q across files", k)
 		}
 		into.Tasks[k] = v
+	}
+	for k, v := range from.RawTasks {
+		if into.RawTasks == nil {
+			into.RawTasks = map[string][]byte{}
+		}
+		into.RawTasks[k] = v
 	}
 	for k, v := range from.Pipelines {
 		if _, dup := into.Pipelines[k]; dup {
