@@ -4,11 +4,14 @@ name: cli-self-build
 # tests *itself* on the docker backend, all four checks (vet / test / build /
 # golangci-lint) running in parallel inside golang:1.25-alpine containers.
 #
-# Heavier than `cli-e2e` (~3-5 minutes wall clock with cold module cache),
-# so this workflow is NOT triggered on every PR. It runs:
-#   - daily on schedule (catches upstream image / module breakage),
-#   - on pushes to release branches,
-#   - on demand via workflow_dispatch.
+# Heavier than `cli-e2e` (~3-5 minutes wall clock with cold module cache).
+# Triggered on:
+#   - every PR that touches code, fixtures, pipelines, or this workflow,
+#   - daily schedule (catches upstream image / module breakage independent
+#     of any PR activity),
+#   - pushes to release branches,
+#   - manual dispatch.
+# Doc-only PRs skip via path filters.
 
 on:
   schedule:
@@ -21,7 +24,17 @@ on:
         default: './...'
   push:
     branches:
+      - main
       - 'release/**'
+  pull_request:
+    paths:
+      - 'cmd/tkn-act/**'
+      - 'internal/**'
+      - 'pipelines/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/cli-self-build.yml'
 
 permissions:
   contents: read
