@@ -197,6 +197,7 @@ prioritized track of what's next.
 |---|---|
 | [`AGENTS.md`](AGENTS.md) | Canonical guide for AI agents and scripts: machine-readable interfaces, exit codes, JSON shapes, environment variables, and project rules (squash-merge, tests-required, docs-sync). Also embedded in the binary (`tkn-act agent-guide`). |
 | [`docs/feature-parity.md`](docs/feature-parity.md) | Single source of truth for which Tekton features are `shipped` / `in-progress` / `gap`, with the e2e fixture and limitations fixture per row. CI gate: `parity-check`. |
+| [`docs/remote-resolvers-guide.md`](docs/remote-resolvers-guide.md) | How-to walkthrough for pointing `tkn-act` at an existing Tekton cluster so `taskRef.resolver:` blocks resolve remotely (Mode B via `ResolutionRequest`) while tasks still run locally. RBAC checks, sample pipelines, cache + `--offline`, troubleshooting. |
 | [`docs/short-term-goals.md`](docs/short-term-goals.md) | Prioritized tracks for upcoming work (Track 1 = Tekton features, Track 2 = backend parity, Track 3 = ergonomics). Status updated as items land. |
 | [`docs/test-coverage.md`](docs/test-coverage.md) | What runs in each CI workflow, which paths trigger which workflow, and which fixtures are in `-tags integration` vs `-tags cluster`. |
 
