@@ -1,0 +1,144 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: git-clone
+spec:
+  description: |
+    Clone `url` at `revision` into the `source` workspace. Tries a shallow
+    clone first and falls back to a full clone (useful for `file://` URLs
+    or when the revision is a SHA rather than a branch).
+  params:
+    - name: url
+      type: string
+    - name: revision
+      type: string
+      default: main
+  workspaces:
+    - name: source
+  results:
+    - name: revision-resolved
+      type: string
+      description: "Resolved HEAD SHA after checkout."
+  steps:
+    - name: clone
+      image: alpine:3
+      workingDir: $(workspaces.source.path)
+      script: |
+        set -eu
+        apk add --no-cache git >/dev/null
+        TMPDIR=$(mktemp -d)
+        if ! git clone --depth 1 --branch "$(params.revision)" "$(params.url)" "$TMPDIR/repo" 2>/dev/null; then
+          git clone "$(params.url)" "$TMPDIR/repo"
+          (cd "$TMPDIR/repo" && git checkout "$(params.revision)" 2>/dev/null || true)
+        fi
+        (cd "$TMPDIR/repo" && git rev-parse HEAD | tr -d '\n') > $(results.revision-resolved.path)
+        cp -a "$TMPDIR/repo/." "$(workspaces.source.path)/"
+        rm -rf "$TMPDIR"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: ci-git
+spec:
+  description: |
+    Clone the repo at the requested revision, then run vet/test/build/lint
+    in parallel.
+
+    Usage:
+      WS=$(mktemp -d) && ./bin/tkn-act run \
+        -f pipelines/tasks.yaml -f pipelines/ci-git.yaml \
+        -w source="$WS" \
+        --param repo-url="file://$(pwd)" \
+        --param revision=HEAD \
+        --param packages=./cmd/tkn-act/...
+
+    For environments where proxy.golang.org is unreachable, override:
+        --param goproxy=https://goproxy.io,direct
+  params:
+    - name: repo-url
+      type: string
+      description: "Git URL to clone (https, ssh, or file:// for local)."
+    - name: revision
+      type: string
+      default: main
+      description: "Branch, tag, or SHA to check out."
+    - name: packages
+      type: string
+      default: "./..."
+    - name: goproxy
+      type: string
+      default: "https://proxy.golang.org,direct"
+      description: "GOPROXY value forwarded to every Go-using task."
+  workspaces:
+    - name: source
+  tasks:
+    - name: clone
+      taskRef:
+        name: git-clone
+      params:
+        - name: url
+          value: $(params.repo-url)
+        - name: revision
+          value: $(params.revision)
+      workspaces:
+        - name: source
+          workspace: source
+    - name: go-vet
+      taskRef:
+        name: go-vet
+      runAfter: [clone]
+      params:
+        - name: packages
+          value: $(params.packages)
+        - name: goproxy
+          value: $(params.goproxy)
+      workspaces:
+        - name: source
+          workspace: source
+    - name: go-test
+      taskRef:
+        name: go-test
+      runAfter: [clone]
+      params:
+        - name: packages
+          value: $(params.packages)
+        - name: goproxy
+          value: $(params.goproxy)
+      workspaces:
+        - name: source
+          workspace: source
+    - name: go-build
+      taskRef:
+        name: go-build
+      runAfter: [clone]
+      params:
+        - name: goproxy
+          value: $(params.goproxy)
+      workspaces:
+        - name: source
+          workspace: source
+    - name: golangci-lint
+      taskRef:
+        name: golangci-lint
+      runAfter: [clone]
+      params:
+        - name: packages
+          value: $(params.packages)
+        - name: goproxy
+          value: $(params.goproxy)
+      workspaces:
+        - name: source
+          workspace: source
+  results:
+    - name: version
+      description: "Version string baked into the rebuilt bin/tkn-act."
+      value: $(tasks.go-build.results.version)
+    - name: revision-resolved
+      description: "Resolved HEAD SHA from the clone task."
+      value: $(tasks.clone.results.revision-resolved)
+    - name: test-count
+      description: "Number of test functions observed by go-test."
+      value: $(tasks.go-test.results.test-count)
+    - name: lint-exit
+      description: "golangci-lint exit code; 0 means no findings."
+      value: $(tasks.golangci-lint.results.lint-exit)
