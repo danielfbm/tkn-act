@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -740,13 +741,20 @@ func uniqueImages(b *loader.Bundle, pl tektontypes.Pipeline) []string {
 			spec = expanded
 		}
 		spec = applyStepTemplate(spec)
+		// Pre-pull is best-effort: image strings still containing
+		// `$(...)` (param / context / matrix-row references) are not
+		// valid OCI references and would fail ImagePull immediately,
+		// even though they would resolve correctly at task-dispatch
+		// time after substituteSpec runs. Skip them here and rely on
+		// the per-step ensureImage path in the backend, which sees
+		// the substituted image and pulls IfNotPresent.
 		for _, s := range spec.Steps {
-			if s.Image != "" {
+			if s.Image != "" && !strings.Contains(s.Image, "$(") {
 				seen[s.Image] = struct{}{}
 			}
 		}
 		for _, sc := range spec.Sidecars {
-			if sc.Image != "" {
+			if sc.Image != "" && !strings.Contains(sc.Image, "$(") {
 				seen[sc.Image] = struct{}{}
 			}
 		}

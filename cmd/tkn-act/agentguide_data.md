@@ -221,7 +221,7 @@ Exit 0 → safe to run. Exit 4 → parse the `errors` array.
 
 ```sh
 tkn-act run -f pipeline.yaml \
-  -p revision=main \
+  --param revision=main \
   -w shared=./build \
   -o json
 ```

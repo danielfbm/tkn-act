@@ -47,7 +47,7 @@ If -f is not given, tkn-act discovers Tekton YAML in the current directory
   tkn-act run
 
   # Run a specific file with a parameter and a workspace
-  tkn-act run -f pipeline.yaml -p revision=main -w shared=./build
+  tkn-act run -f pipeline.yaml --param revision=main -w shared=./build
 
   # Emit machine-readable JSON events to stdout (for AI agents / scripts)
   tkn-act run -f pipeline.yaml -o json
