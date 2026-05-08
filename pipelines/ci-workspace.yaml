@@ -1,0 +1,83 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: ci-workspace
+spec:
+  description: |
+    Run tkn-act's own vet/test/build/lint against source provided via a
+    workspace bind-mount (no clone). All four checks run in parallel.
+
+    Usage:
+      ./bin/tkn-act run \
+        -f pipelines/tasks.yaml -f pipelines/ci-workspace.yaml \
+        -w source="$(pwd)" \
+        --param packages=./...
+
+    For environments where proxy.golang.org is unreachable, override:
+        --param goproxy=https://goproxy.io,direct
+  params:
+    - name: packages
+      type: string
+      default: "./..."
+    - name: goproxy
+      type: string
+      default: "https://proxy.golang.org,direct"
+      description: "GOPROXY value forwarded to every Go-using task."
+  workspaces:
+    - name: source
+  tasks:
+    - name: go-vet
+      taskRef:
+        name: go-vet
+      params:
+        - name: packages
+          value: $(params.packages)
+        - name: goproxy
+          value: $(params.goproxy)
+      workspaces:
+        - name: source
+          workspace: source
+    - name: go-test
+      taskRef:
+        name: go-test
+      params:
+        - name: packages
+          value: $(params.packages)
+        - name: goproxy
+          value: $(params.goproxy)
+      workspaces:
+        - name: source
+          workspace: source
+    - name: go-build
+      taskRef:
+        name: go-build
+      params:
+        - name: goproxy
+          value: $(params.goproxy)
+      workspaces:
+        - name: source
+          workspace: source
+    - name: golangci-lint
+      taskRef:
+        name: golangci-lint
+      params:
+        - name: packages
+          value: $(params.packages)
+        - name: goproxy
+          value: $(params.goproxy)
+      workspaces:
+        - name: source
+          workspace: source
+  results:
+    - name: version
+      description: "Version string baked into the rebuilt bin/tkn-act."
+      value: $(tasks.go-build.results.version)
+    - name: binary-sha256
+      description: "sha256 of the rebuilt bin/tkn-act."
+      value: $(tasks.go-build.results.binary-sha256)
+    - name: test-count
+      description: "Number of test functions observed by go-test."
+      value: $(tasks.go-test.results.test-count)
+    - name: lint-exit
+      description: "golangci-lint exit code; 0 means no findings."
+      value: $(tasks.golangci-lint.results.lint-exit)

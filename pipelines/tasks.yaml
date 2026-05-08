@@ -1,0 +1,192 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: go-vet
+spec:
+  description: |
+    Run `go vet` against the default build, plus the integration and cluster
+    build tags, mirroring the repo's `make vet` target.
+  params:
+    - name: packages
+      type: string
+      default: "./..."
+    - name: goproxy
+      type: string
+      default: "https://proxy.golang.org,direct"
+      description: "GOPROXY value for module fetches; chain mirrors for restricted networks."
+  workspaces:
+    - name: source
+  stepTemplate:
+    image: golang:1.25-alpine
+    workingDir: $(workspaces.source.path)
+    env:
+      - name: GOPROXY
+        value: $(params.goproxy)
+      - name: GOFLAGS
+        value: "-buildvcs=false"
+      - name: GOSUMDB
+        value: "off"
+  steps:
+    - name: vet-default
+      script: |
+        set -eu
+        apk add --no-cache git >/dev/null
+        go vet $(params.packages)
+    - name: vet-integration
+      script: |
+        set -eu
+        go vet -tags integration $(params.packages)
+    - name: vet-cluster
+      script: |
+        set -eu
+        go vet -tags cluster $(params.packages)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: go-test
+spec:
+  description: |
+    Run `go test -race -count=1` on the requested packages and emit the test
+    function count as `test-count`.
+  params:
+    - name: packages
+      type: string
+      default: "./..."
+    - name: goproxy
+      type: string
+      default: "https://proxy.golang.org,direct"
+  workspaces:
+    - name: source
+  results:
+    - name: test-count
+      type: string
+      description: "Number of `=== RUN` test entries observed."
+  steps:
+    - name: test
+      image: golang:1.25-alpine
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: GOPROXY
+          value: $(params.goproxy)
+        - name: GOFLAGS
+          value: "-buildvcs=false"
+        - name: GOSUMDB
+          value: "off"
+      script: |
+        set -eu
+        apk add --no-cache git gcc musl-dev >/dev/null
+        go test -race -count=1 -v $(params.packages) 2>&1 | tee /tmp/test.log
+        grep -c '^=== RUN' /tmp/test.log | tr -d '\n' > $(results.test-count.path)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: go-build
+spec:
+  description: |
+    Build bin/tkn-act with the same `-ldflags` shape the Makefile uses, then
+    surface the resolved version string and the binary's sha256 as results.
+  params:
+    - name: package
+      type: string
+      default: "./cmd/tkn-act"
+    - name: output-path
+      type: string
+      default: "bin/tkn-act-pipeline"
+      description: |
+        Output path relative to the source workspace. Default avoids
+        bin/tkn-act so a workspace-bind-mount run does not clobber the
+        host-built binary.
+    - name: goproxy
+      type: string
+      default: "https://proxy.golang.org,direct"
+  workspaces:
+    - name: source
+  results:
+    - name: version
+      type: string
+      description: "Output of `git describe --tags --always --dirty`, embedded into the binary."
+    - name: binary-sha256
+      type: string
+      description: "sha256 of the produced binary."
+    - name: output-path
+      type: string
+      description: "Path of the produced binary inside the workspace."
+  steps:
+    - name: build
+      image: golang:1.25-alpine
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: GOPROXY
+          value: $(params.goproxy)
+        - name: GOFLAGS
+          value: "-buildvcs=false"
+        - name: GOSUMDB
+          value: "off"
+      script: |
+        set -eu
+        apk add --no-cache git coreutils >/dev/null
+        OUT="$(params.output-path)"
+        VER=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+        printf '%s' "$VER" > $(results.version.path)
+        mkdir -p "$(dirname "$OUT")"
+        CGO_ENABLED=0 go build \
+          -ldflags="-s -w -X main.version=$VER" \
+          -o "$OUT" $(params.package)
+        sha256sum "$OUT" | awk '{print $1}' | tr -d '\n' > $(results.binary-sha256.path)
+        printf '%s' "$OUT" > $(results.output-path.path)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: golangci-lint
+spec:
+  description: |
+    Run golangci-lint. Best-effort: the script captures the lint exit code
+    into a result and itself exits 0, so a noisy lint run does not fail the
+    surrounding pipeline. A `lint-exit` of "0" means clean.
+  params:
+    - name: packages
+      type: string
+      default: "./..."
+    - name: goproxy
+      type: string
+      default: "https://proxy.golang.org,direct"
+    - name: golangci-lint-version
+      type: string
+      default: "v1.64.8"
+  workspaces:
+    - name: source
+  results:
+    - name: lint-exit
+      type: string
+      description: "Exit code reported by golangci-lint (0 = clean)."
+  steps:
+    - name: lint
+      image: golang:1.25-alpine
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: GOPROXY
+          value: $(params.goproxy)
+        - name: GOFLAGS
+          value: "-buildvcs=false"
+        - name: GOSUMDB
+          value: "off"
+        - name: CGO_ENABLED
+          value: "0"
+        - name: GOLANGCI_LINT_VERSION
+          value: $(params.golangci-lint-version)
+      script: |
+        set -eu
+        apk add --no-cache git >/dev/null
+        INSTALL_OK=1
+        go install "github.com/golangci/golangci-lint/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}" || INSTALL_OK=0
+        if [ "$INSTALL_OK" = "1" ]; then
+          set +e
+          "$(go env GOPATH)/bin/golangci-lint" run $(params.packages)
+          printf '%s' "$?" > $(results.lint-exit.path)
+        else
+          printf '%s' "install-failed" > $(results.lint-exit.path)
+        fi
+        exit 0

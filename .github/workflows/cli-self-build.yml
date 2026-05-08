@@ -1,0 +1,99 @@
+name: cli-self-build
+
+# Runs the meta pipeline `pipelines/ci-workspace.yaml` — tkn-act builds and
+# tests *itself* on the docker backend, all four checks (vet / test / build /
+# golangci-lint) running in parallel inside golang:1.25-alpine containers.
+#
+# Heavier than `cli-e2e` (~3-5 minutes wall clock with cold module cache).
+# Triggered on:
+#   - every PR that touches code, fixtures, pipelines, or this workflow,
+#   - daily schedule (catches upstream image / module breakage independent
+#     of any PR activity),
+#   - pushes to release branches,
+#   - manual dispatch.
+# Doc-only PRs skip via path filters.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # daily at 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: 'Go package selector forwarded to vet/test/lint'
+        required: false
+        default: './...'
+  push:
+    branches:
+      - main
+      - 'release/**'
+  pull_request:
+    paths:
+      - 'cmd/tkn-act/**'
+      - 'internal/**'
+      - 'pipelines/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/cli-self-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  self-build:
+    name: tkn-act runs ci-workspace on itself
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build host tkn-act
+        run: make build
+
+      - name: warm image cache
+        run: |
+          docker pull alpine:3
+          docker pull golang:1.25-alpine
+
+      - name: validate self-build pipelines
+        run: |
+          ./bin/tkn-act validate -f pipelines/tasks.yaml -f pipelines/ci-workspace.yaml -o json | jq -e '.ok == true'
+          ./bin/tkn-act validate -f pipelines/tasks.yaml -f pipelines/ci-git.yaml       -o json | jq -e '.ok == true'
+
+      - name: run ci-workspace on this checkout
+        env:
+          # The dispatch input wins; otherwise default to the full set.
+          PACKAGES: ${{ github.event.inputs.packages || './...' }}
+        run: |
+          ./bin/tkn-act run \
+            -f pipelines/tasks.yaml -f pipelines/ci-workspace.yaml \
+            -w "source=$(pwd)" \
+            --param "packages=${PACKAGES}" \
+            -o json > /tmp/self-build.jsonl
+          echo "exit=$?"
+
+      - name: assert pipeline succeeded with the expected results
+        run: |
+          # 1) Exit code already enforced by `set -e` on the previous step
+          #    (tkn-act exits 0 only when the pipeline succeeds).
+          # 2) run-end carries every aggregated pipeline result we declared.
+          jq -se '
+            (map(select(.kind == "run-end")) | first) as $end |
+            $end.status == "succeeded"
+            and ($end.results.version           | length) > 0
+            and ($end.results."binary-sha256"   | length) == 64
+            and ($end.results."test-count"      | tonumber) > 0
+            and ($end.results."lint-exit"       != null)
+          ' /tmp/self-build.jsonl
+          echo "ok: pipeline succeeded with version=$(jq -r 'select(.kind=="run-end") | .results.version' /tmp/self-build.jsonl), test-count=$(jq -r 'select(.kind=="run-end") | .results."test-count"' /tmp/self-build.jsonl), lint-exit=$(jq -r 'select(.kind=="run-end") | .results."lint-exit"' /tmp/self-build.jsonl)"
+
+      - name: upload event stream
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-self-build-events
+          path: /tmp/self-build.jsonl

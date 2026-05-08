@@ -1,0 +1,110 @@
+name: cli-e2e
+
+# Exercises the tkn-act *binary* on a few small fixtures as actual
+# subprocesses. Distinct from `docker-integration` (which drives the engine
+# via Go test code with `-tags integration`): this workflow asserts on the
+# CLI surface — flag parsing, exit codes, and the public JSON event shape
+# documented in AGENTS.md.
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+  pull_request:
+    paths:
+      - 'cmd/tkn-act/**'
+      - 'internal/**'
+      - 'testdata/e2e/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/cli-e2e.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cli-smoke:
+    name: CLI smoke (binary subprocess)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build tkn-act
+        run: make build
+
+      - name: doctor returns ok=true
+        run: |
+          ./bin/tkn-act doctor -o json | tee /tmp/doctor.json
+          jq -e '.ok == true' /tmp/doctor.json
+
+      - name: warm image cache
+        # Fixtures here use only alpine:3. Pre-pulling keeps wall clock
+        # dominated by Tekton work rather than registry latency.
+        run: docker pull alpine:3
+
+      - name: list discovers hello pipeline
+        run: |
+          ./bin/tkn-act list -C testdata/e2e/hello -o json | tee /tmp/list.json
+          jq -e '.pipelines | index("hello") != null' /tmp/list.json
+
+      - name: validate hello fixture (exit 0)
+        run: |
+          ./bin/tkn-act validate -f testdata/e2e/hello/pipeline.yaml -o json | tee /tmp/validate.json
+          jq -e '.ok == true and .pipeline == "hello" and (.errors | length) == 0' /tmp/validate.json
+
+      - name: run hello fixture (JSON contract)
+        run: |
+          ./bin/tkn-act run -f testdata/e2e/hello/pipeline.yaml -o json > /tmp/hello.jsonl
+          # Exact event-kind set we expect for a one-task pipeline:
+          jq -se '
+            (map(select(.kind == "run-start"))   | length) == 1 and
+            (map(select(.kind == "task-start"))  | length) == 1 and
+            (map(select(.kind == "task-end"     and .status == "succeeded")) | length) == 1 and
+            (map(select(.kind == "run-end"      and .status == "succeeded")) | length) == 1
+          ' /tmp/hello.jsonl
+
+      - name: run params-and-results (chained results)
+        run: |
+          ./bin/tkn-act run -f testdata/e2e/params-and-results/pipeline.yaml -o json > /tmp/pr.jsonl
+          # Both tasks must succeed and the consume task's stdout must
+          # contain the value emit produced — proves $(tasks.X.results.Y)
+          # threaded through the binary path correctly.
+          jq -se '
+            (map(select(.kind == "task-end" and .task == "emit"    and .status == "succeeded")) | length) == 1 and
+            (map(select(.kind == "task-end" and .task == "consume" and .status == "succeeded")) | length) == 1 and
+            (map(select(.kind == "step-log" and .task == "consume" and (.line | test("got 1.2.3")))) | length) >= 1 and
+            (map(select(.kind == "run-end"  and .status == "succeeded")) | length) == 1
+          ' /tmp/pr.jsonl
+
+      - name: validate-error returns exit code 4
+        # AGENTS.md exit-code contract: 4 = "Tekton YAML rejected
+        # (parse, schema, DAG, when, results)". A missing file is the
+        # simplest stable trigger.
+        run: |
+          set +e
+          ./bin/tkn-act validate -f /does/not/exist.yaml -o json
+          ec=$?
+          set -e
+          if [ "$ec" != "4" ]; then
+            echo "expected exit 4 (validate), got $ec" >&2
+            exit 1
+          fi
+
+      - name: pretty output is non-empty (humans path)
+        run: |
+          ./bin/tkn-act run -f testdata/e2e/hello/pipeline.yaml --color=never > /tmp/pretty.log 2>&1
+          test -s /tmp/pretty.log
+          grep -q hello-from-tkn-act /tmp/pretty.log
+
+      - name: upload event streams on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-e2e-events
+          path: /tmp/*.jsonl
