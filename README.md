@@ -38,7 +38,7 @@ run `tkn act ...`.
 
     cd my-repo-with-pipeline.yaml
     tkn-act                                # auto-discovers pipeline.yaml / .tekton/
-    tkn-act run -f pipeline.yaml -p revision=main -w shared=./build
+    tkn-act run -f pipeline.yaml --param revision=main -w shared=./build
     tkn-act validate
     tkn-act list
 
