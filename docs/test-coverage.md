@@ -1,6 +1,6 @@
 # Test coverage — what CI runs and what it doesn't
 
-Last updated: 2026-05-03 (cross-backend fidelity work; covers v1.2).
+Last updated: 2026-05-13 (post Tekton bump to v1.12 LTS + cluster-CI matrix; covers through v1.6).
 
 This document inventories what the GitHub Actions pipelines and the
 test suite cover today, and — equally important — what they do not. It
@@ -11,13 +11,15 @@ behavior I changed is exercised."
 
 ## 1. Workflows
 
-Three workflows live under `.github/workflows/`:
+Five workflows live under `.github/workflows/`:
 
 | File | When it runs | What it runs |
 |---|---|---|
-| `ci.yml` | every push, every PR | `go vet`, `go build`, `go test -race -count=1 ./...` (untagged), `tkn-act help-json` smoke; matrix: ubuntu-latest + macos-latest. PR-only `tests-required` and `coverage` jobs. |
+| `ci.yml` | every push, every PR | `go vet`, `go build`, `go test -race -count=1 ./...` (untagged), `tkn-act help-json` smoke; matrix: ubuntu-latest + macos-latest. PR-only `tests-required`, `coverage`, `parity-check`, and `agentguide-freshness` jobs. |
 | `docker-integration.yml` | `push` to `main`/`release/**` always; PR only when paths in its filter changed | `go test -tags integration -count=1 -timeout 15m ./internal/e2e/...` on ubuntu-latest. Pre-pulls `alpine:3`. |
-| `cluster-integration.yml` | same trigger pattern | installs `kubectl` + `k3d`, then `go test -tags cluster -count=1 -timeout 25m ./internal/clustere2e/...` on ubuntu-latest. Dumps cluster state on failure. |
+| `cluster-integration.yml` | same trigger pattern | installs `kubectl` + `k3d`, then `go test -tags cluster -count=1 -timeout 25m ./internal/clustere2e/...` on ubuntu-latest. **Matrix over Tekton LTS versions** (`v1.3.0` + `v1.12.0` as of 2026-05-13); each leg sets `TKN_ACT_TEKTON_VERSION` and runs the full fixture table. `fail-fast: false` so each leg reports independently. Dumps cluster state on failure. |
+| `cli-e2e.yml` | same trigger pattern | builds `tkn-act` and exercises it as a subprocess against `testdata/e2e/` fixtures (no Go-level harness — verifies the binary's actual CLI surface, exit codes, and `-o json` shape). |
+| `cli-self-build.yml` | same trigger pattern | runs `tkn-act` against its own `pipelines/` so the project dog-foods every release. |
 
 `tests-required` (in `ci.yml`) fails any PR whose diff modifies any
 `*.go` file outside `_test.go`/`vendor/` without modifying any
