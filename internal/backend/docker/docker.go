@@ -35,16 +35,31 @@ type Options struct {
 	// stopping sidecars at end of Task. Default 30s; matches
 	// upstream Tekton's terminationGracePeriodSeconds.
 	SidecarStopGrace time.Duration
+	// Remote selects the daemon-location detection strategy:
+	//
+	//   ""     same as "auto" (default; compares daemon Info.Name to client hostname)
+	//   "auto" auto-detect
+	//   "on"   force remote (use volume-staging path, Phase 3)
+	//   "off"  force local (use bind-mount path)
+	//
+	// Phase 2 wires the detection only — Backend.remote is set but
+	// not yet consumed by the Step/Sidecar code paths.
+	Remote string
 }
 
 type Backend struct {
 	cli       *client.Client
 	opts      Options
 	scriptDir string
+	// remote reports whether the daemon's filesystem is independent
+	// of the client's (so bind mounts of local paths won't work).
+	// Set during New(). Phase 3 will switch staging accordingly.
+	remote bool
 }
 
 func New(opts Options) (*Backend, error) {
-	cli, err := newDockerClient(os.Getenv("DOCKER_HOST"))
+	dockerHost := os.Getenv("DOCKER_HOST")
+	cli, err := newDockerClient(dockerHost)
 	if err != nil {
 		return nil, err
 	}
@@ -57,8 +72,48 @@ func New(opts Options) (*Backend, error) {
 	if opts.SidecarStopGrace == 0 {
 		opts.SidecarStopGrace = 30 * time.Second
 	}
-	return &Backend{cli: cli, opts: opts}, nil
+	remote, err := decideRemote(opts.Remote, dockerHost, cli)
+	if err != nil {
+		return nil, err
+	}
+	return &Backend{cli: cli, opts: opts, remote: remote}, nil
 }
+
+// decideRemote resolves the Options.Remote setting plus DOCKER_HOST
+// and (for "auto") a one-shot cli.Info() probe into a single bool.
+// Extracted so the policy is testable without a real daemon.
+func decideRemote(mode, dockerHost string, cli *client.Client) (bool, error) {
+	switch mode {
+	case "on":
+		return true, nil
+	case "off":
+		return false, nil
+	case "", "auto":
+		// fall through
+	default:
+		return false, fmt.Errorf("docker backend: invalid Remote=%q (want auto|on|off)", mode)
+	}
+	// auto: unix:// (or empty DOCKER_HOST defaulting to unix://) is
+	// local by definition. Otherwise compare the daemon's hostname
+	// to the client's; if Info fails for any reason, fall back to
+	// "remote" so the safer staging path is taken in Phase 3.
+	if dockerHost == "" || strings.HasPrefix(dockerHost, "unix://") {
+		return false, nil
+	}
+	info, err := cli.Info(context.Background())
+	if err != nil {
+		return true, nil //nolint:nilerr // best-effort detection; Phase 3 staging is the safety net
+	}
+	local, err := os.Hostname()
+	if err != nil || local == "" {
+		return true, nil
+	}
+	return info.Name != "" && info.Name != local, nil
+}
+
+// IsRemote reports the result of remote-daemon detection. Exposed for
+// Phase 3 (volume staging) and for tests.
+func (b *Backend) IsRemote() bool { return b.remote }
 
 // newDockerClient builds a moby client honoring DOCKER_HOST including
 // the ssh:// scheme — which client.FromEnv alone does not understand.

@@ -41,6 +41,11 @@ type globalFlags struct {
 	// Sidecar pacing.
 	sidecarStartGrace time.Duration
 	sidecarStopGrace  time.Duration
+	// Remote docker daemon. "auto" (default) compares the daemon's
+	// Info.Name to the client hostname; "on" / "off" force the
+	// decision. Phase 3 will switch the docker backend's staging
+	// strategy when this resolves to "on".
+	remoteDocker string
 }
 
 var gf globalFlags
@@ -104,6 +109,8 @@ Designed for both humans and AI agents:
 	// Sidecar pacing.
 	cmd.PersistentFlags().DurationVar(&gf.sidecarStartGrace, "sidecar-start-grace", 2*time.Second, "how long to wait after starting all sidecars before launching the first step")
 	cmd.PersistentFlags().DurationVar(&gf.sidecarStopGrace, "sidecar-stop-grace", 30*time.Second, "SIGTERM-then-SIGKILL window when stopping sidecars at end of Task (matches upstream Tekton's terminationGracePeriodSeconds)")
+	// Remote-docker daemon mode (env: TKN_ACT_REMOTE_DOCKER).
+	cmd.PersistentFlags().StringVar(&gf.remoteDocker, "remote-docker", "auto", "remote docker daemon mode: auto | on | off (env: "+envRemoteDocker+")")
 
 	cmd.AddCommand(newRunCmd())
 	cmd.AddCommand(newListCmd())
