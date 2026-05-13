@@ -24,8 +24,11 @@ and runs the `testdata/e2e/hello/pipeline.yaml` fixture against the real
 controller. If anything is missing, run `make doctor` first — it prints
 install hints and pinned versions matching the
 [`cluster-integration`](.github/workflows/cluster-integration.yml) CI
-job. `make help` lists every target; [`AGENTS.md`](AGENTS.md) is the
-canonical agent / JSON contract.
+job. `make help` lists every target;
+[`docs/agent-guide/`](docs/agent-guide/README.md) is the canonical
+agent / JSON contract (also embedded in the binary as
+`tkn-act agent-guide`). For contributor rules — merge policy,
+test/coverage gates, doc-sync — see [`AGENTS.md`](AGENTS.md).
 
 ## Install
 
@@ -186,16 +189,18 @@ prioritized track of what's next.
   `5` pipeline failure, `6` timeout, `130` cancelled.
 - `tkn-act doctor -o json` — preflight: Docker, k3d, kubectl, cache dir.
 - `tkn-act help-json` — full command / flag / example tree.
-- `tkn-act agent-guide` prints the embedded agent guide
-  ([`AGENTS.md`](AGENTS.md)) — also the canonical place to read about
-  conventions, exit codes, JSON contracts, and the project rule that
-  every change must update related docs in the same PR.
+- `tkn-act agent-guide` prints the embedded agent guide (sourced
+  from [`docs/agent-guide/`](docs/agent-guide/README.md)) — the
+  canonical place to read about conventions, exit codes, JSON
+  contracts, and feature semantics. `tkn-act agent-guide --list`
+  enumerates sections; `--section <name>` prints one.
 
 ## Documentation
 
 | Document | Purpose |
 |---|---|
-| [`AGENTS.md`](AGENTS.md) | Canonical guide for AI agents and scripts: machine-readable interfaces, exit codes, JSON shapes, environment variables, and project rules (squash-merge, tests-required, docs-sync). Also embedded in the binary (`tkn-act agent-guide`). |
+| [`docs/agent-guide/`](docs/agent-guide/README.md) | Canonical user guide for AI agents and scripts: machine-readable interfaces, exit codes, JSON shapes, environment variables, feature semantics. Embedded in the binary (`tkn-act agent-guide` prints the curated concatenation; `--list` / `--section <name>` for finer access). |
+| [`AGENTS.md`](AGENTS.md) | Contributor guide: squash-merge default, tests-required rule, coverage gate, local development, doc-sync rule. Also reachable via `CLAUDE.md` symlink for Claude Code. |
 | [`docs/feature-parity.md`](docs/feature-parity.md) | Single source of truth for which Tekton features are `shipped` / `in-progress` / `gap`, with the e2e fixture and limitations fixture per row. CI gate: `parity-check`. |
 | [`docs/remote-resolvers-guide.md`](docs/remote-resolvers-guide.md) | How-to walkthrough for pointing `tkn-act` at an existing Tekton cluster so `taskRef.resolver:` blocks resolve remotely (Mode B via `ResolutionRequest`) while tasks still run locally. RBAC checks, sample pipelines, cache + `--offline`, troubleshooting. |
 | [`docs/short-term-goals.md`](docs/short-term-goals.md) | Prioritized tracks for upcoming work (Track 1 = Tekton features, Track 2 = backend parity, Track 3 = ergonomics). Status updated as items land. |

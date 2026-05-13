@@ -1,7 +1,7 @@
 # AGENTS.md Modularization
 
 **Date:** 2026-05-08
-**Status:** Draft — awaiting user review
+**Status:** Superseded by [2026-05-13-agent-guide-folder-design.md](2026-05-13-agent-guide-folder-design.md). Kept for historical context — the case for a Go stdlib generator over a shell pipeline, the freshness-test pattern, and the one-PR migration discipline carry over to the successor spec.
 
 ## Problem
 

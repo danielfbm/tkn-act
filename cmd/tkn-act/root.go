@@ -56,7 +56,7 @@ Designed for both humans and AI agents:
   - Every error returns a documented, stable exit code (see 'tkn-act agent-guide').
   - 'tkn-act help-json' emits the full command+flag tree as JSON.
   - 'tkn-act doctor' verifies the local environment.
-  - 'tkn-act agent-guide' prints the embedded AI-agent guide (AGENTS.md).`,
+  - 'tkn-act agent-guide' prints the embedded AI-agent user guide (sourced from docs/agent-guide/).`,
 		Example: `  # Auto-discover and run a pipeline
   tkn-act
 

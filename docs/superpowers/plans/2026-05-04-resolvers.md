@@ -1,5 +1,13 @@
 # Resolvers (Track 1 #9) — phased implementation plan
 
+> **Migration note (2026-05-13):** This plan was authored before the
+> agent-guide folder split (spec `2026-05-13-agent-guide-folder-design.md`).
+> Wherever it says "update `AGENTS.md` / mirror to `agentguide_data.md`",
+> read that as: edit the matching file in `docs/agent-guide/` and re-run
+> `go generate ./cmd/tkn-act/` (or `make agentguide`) so
+> `cmd/tkn-act/agentguide_data/` mirrors it. AGENTS.md is now the
+> contributor guide and is no longer mirrored into the binary.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Honor Tekton's `taskRef.resolver` and `pipelineRef.resolver` blocks across two operating modes (direct: tkn-act fetches; remote: tkn-act submits a Tekton `ResolutionRequest` to a real cluster), with lazy resolution at task-dispatch time so `resolver.params` can reference upstream-task results. Implements `docs/superpowers/specs/2026-05-04-resolvers-design.md`.

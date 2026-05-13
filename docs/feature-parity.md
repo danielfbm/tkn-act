@@ -51,8 +51,9 @@ Picking a feature off the `gap` list:
      populate `e2e fixture`, clear `limitations fixture`, link the PR.
    - `docs/short-term-goals.md` — move the row out of Track 1 / Track 2.
    - `docs/test-coverage.md` — list the new fixture under the right tag.
-   - `AGENTS.md` and `cmd/tkn-act/agentguide_data.md` — note the new
-     capability (keep these two in sync).
+   - The matching `docs/agent-guide/<name>.md` file — note the new
+     capability. Then re-run `go generate ./cmd/tkn-act/` (or
+     `make agentguide`) so `cmd/tkn-act/agentguide_data/` mirrors it.
 4. Implement using TDD; add the e2e fixture under `testdata/e2e/<name>/`
    and the descriptor entry in `internal/e2e/fixtures.All()` so it runs
    on **both** backends.
@@ -172,7 +173,7 @@ The columns:
 |---|---|---|
 | `tkn-act doctor -o json` | shipped | Stable shape. |
 | `tkn-act help-json` | shipped | Stable shape. |
-| `tkn-act agent-guide` | shipped | Embeds `cmd/tkn-act/agentguide_data.md`. |
+| `tkn-act agent-guide` | shipped | Embeds the `cmd/tkn-act/agentguide_data/` tree generated from `docs/agent-guide/`. Supports `--list` and `--section <name>`. |
 | `tkn-act run -o json` event stream | shipped | Stable kinds: `run-start`, `run-end`, `task-start`, `task-end`, `task-skip`, `task-retry`, `step-start`, `step-end`, `step-log`, `error`, `resolver-start`, `resolver-end`. The two `resolver-*` kinds are additive (Track 1 #9 Phase 1); agents that don't recognize them ignore them. |
 | Stable exit codes (0,1,2,3,4,5,6,130) | shipped | See `internal/exitcode/exitcode.go`. |
 | `task-retry` events from cluster mode | shipped | Post-hoc from TaskRun.status.retriesStatus; PR #6. |

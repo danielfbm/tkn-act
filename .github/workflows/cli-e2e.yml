@@ -4,7 +4,7 @@ name: cli-e2e
 # subprocesses. Distinct from `docker-integration` (which drives the engine
 # via Go test code with `-tags integration`): this workflow asserts on the
 # CLI surface — flag parsing, exit codes, and the public JSON event shape
-# documented in AGENTS.md.
+# documented under docs/agent-guide/.
 
 on:
   push:
@@ -83,7 +83,7 @@ jobs:
           ' /tmp/pr.jsonl
 
       - name: validate-error returns exit code 4
-        # AGENTS.md exit-code contract: 4 = "Tekton YAML rejected
+        # docs/agent-guide/ exit-code contract: 4 = "Tekton YAML rejected
         # (parse, schema, DAG, when, results)". A missing file is the
         # simplest stable trigger.
         run: |
