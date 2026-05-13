@@ -1,14 +1,29 @@
 package docker
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"os"
+	"strings"
+	"testing"
 
-// TestDecideRemote covers every branch of decideRemote that does not
-// require a real daemon: the "on"/"off" forces, the unix-socket short
-// circuit, an empty DOCKER_HOST, and the invalid-mode error path. The
-// "auto + tcp" branch that calls cli.Info() is exercised indirectly by
-// the docker_integration tests and (eventually) by the
-// remote-docker-integration workflow.
-func TestDecideRemote(t *testing.T) {
+	"github.com/docker/docker/api/types/system"
+)
+
+// fakeInfoer is a daemonInfoer stub that lets tests drive the
+// "auto + non-unix DOCKER_HOST" branch of decideRemote without
+// standing up a daemon.
+type fakeInfoer struct {
+	name string
+	err  error
+}
+
+func (f fakeInfoer) Info(_ context.Context) (system.Info, error) {
+	return system.Info{Name: f.name}, f.err
+}
+
+// TestDecideRemote_Static covers the branches that don't call Info.
+func TestDecideRemote_Static(t *testing.T) {
 	cases := []struct {
 		name       string
 		mode       string
@@ -25,7 +40,6 @@ func TestDecideRemote(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// cli is nil — none of these branches dereference it.
 			remote, err := decideRemote(tc.mode, tc.dockerHost, nil)
 			if tc.wantErr {
 				if err == nil {
@@ -41,4 +55,72 @@ func TestDecideRemote(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDecideRemote_AutoProbe covers the "auto + non-unix DOCKER_HOST"
+// branch using a stub daemonInfoer. The four cases the user-visible
+// safety net depends on:
+//
+//   - hostname matches → local
+//   - hostname differs → remote
+//   - empty name (daemon ambiguous) → remote (safer for Phase 3)
+//   - Info error → error returned to caller (no silent classification)
+func TestDecideRemote_AutoProbe(t *testing.T) {
+	clientHost, err := os.Hostname()
+	if err != nil || clientHost == "" {
+		t.Skip("os.Hostname unavailable")
+	}
+
+	t.Run("hostname matches -> local", func(t *testing.T) {
+		got, err := decideRemote("auto", "tcp://127.0.0.1:2375", fakeInfoer{name: clientHost})
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if got {
+			t.Errorf("remote = true, want false")
+		}
+	})
+
+	t.Run("hostname differs -> remote", func(t *testing.T) {
+		got, err := decideRemote("auto", "tcp://otherhost:2375", fakeInfoer{name: "some-other-daemon"})
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if !got {
+			t.Errorf("remote = false, want true")
+		}
+	})
+
+	t.Run("empty daemon Name -> remote", func(t *testing.T) {
+		got, err := decideRemote("auto", "tcp://x:2375", fakeInfoer{name: ""})
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if !got {
+			t.Errorf("remote = false, want true (empty Name treated as ambiguous)")
+		}
+	})
+
+	t.Run("Info error -> propagated", func(t *testing.T) {
+		_, err := decideRemote("auto", "tcp://x:2375", fakeInfoer{err: errors.New("network unreachable")})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "--remote-docker=on|off") {
+			t.Errorf("err = %v, want hint about --remote-docker", err)
+		}
+	})
+
+	t.Run("nil infoer + non-unix host -> remote", func(t *testing.T) {
+		// Belt-and-suspenders: if decideRemote is ever called with a
+		// nil cli (e.g. transport not yet established), fall to remote
+		// rather than panicking.
+		got, err := decideRemote("auto", "tcp://x:2375", nil)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if !got {
+			t.Errorf("remote = false, want true")
+		}
+	})
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/system"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 )
@@ -37,10 +38,9 @@ type Options struct {
 	SidecarStopGrace time.Duration
 	// Remote selects the daemon-location detection strategy:
 	//
-	//   ""     same as "auto" (default; compares daemon Info.Name to client hostname)
-	//   "auto" auto-detect
-	//   "on"   force remote (use volume-staging path, Phase 3)
-	//   "off"  force local (use bind-mount path)
+	//   "" or "auto" auto-detect via cli.Info().Name vs os.Hostname()
+	//   "on"          force remote (use volume-staging path, Phase 3)
+	//   "off"         force local (use bind-mount path)
 	//
 	// Phase 2 wires the detection only — Backend.remote is set but
 	// not yet consumed by the Step/Sidecar code paths.
@@ -79,10 +79,26 @@ func New(opts Options) (*Backend, error) {
 	return &Backend{cli: cli, opts: opts, remote: remote}, nil
 }
 
+// daemonInfoer is the slice of the moby client.Client API that
+// decideRemote needs. Defined here so tests can substitute a stub
+// without standing up a daemon.
+type daemonInfoer interface {
+	Info(ctx context.Context) (system.Info, error)
+}
+
 // decideRemote resolves the Options.Remote setting plus DOCKER_HOST
 // and (for "auto") a one-shot cli.Info() probe into a single bool.
 // Extracted so the policy is testable without a real daemon.
-func decideRemote(mode, dockerHost string, cli *client.Client) (bool, error) {
+//
+// Auto-detection rules: unix:// (or unset DOCKER_HOST) is local. Any
+// other scheme triggers the Info probe — matching hostnames mean
+// local, mismatching mean remote, and any ambiguity (Info error,
+// empty daemon Name, missing client hostname) is reported as remote.
+// "Unknown" defaults to remote because misclassifying a remote
+// daemon as local in Phase 3 would silently bind-mount paths that
+// don't exist on the daemon's host. The user can pin the answer
+// with --remote-docker=on|off.
+func decideRemote(mode, dockerHost string, info daemonInfoer) (bool, error) {
 	switch mode {
 	case "on":
 		return true, nil
@@ -93,22 +109,24 @@ func decideRemote(mode, dockerHost string, cli *client.Client) (bool, error) {
 	default:
 		return false, fmt.Errorf("docker backend: invalid Remote=%q (want auto|on|off)", mode)
 	}
-	// auto: unix:// (or empty DOCKER_HOST defaulting to unix://) is
-	// local by definition. Otherwise compare the daemon's hostname
-	// to the client's; if Info fails for any reason, fall back to
-	// "remote" so the safer staging path is taken in Phase 3.
 	if dockerHost == "" || strings.HasPrefix(dockerHost, "unix://") {
 		return false, nil
 	}
-	info, err := cli.Info(context.Background())
+	if info == nil {
+		return true, nil
+	}
+	di, err := info.Info(context.Background())
 	if err != nil {
-		return true, nil //nolint:nilerr // best-effort detection; Phase 3 staging is the safety net
+		return false, fmt.Errorf("docker backend: auto-detect remote daemon: %w (set --remote-docker=on|off to skip detection)", err)
 	}
 	local, err := os.Hostname()
 	if err != nil || local == "" {
 		return true, nil
 	}
-	return info.Name != "" && info.Name != local, nil
+	if di.Name == "" {
+		return true, nil
+	}
+	return di.Name != local, nil
 }
 
 // IsRemote reports the result of remote-daemon detection. Exposed for

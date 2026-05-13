@@ -208,7 +208,10 @@ func runWith(rf runFlags) error {
 			Secrets:    secStore,
 		})
 	} else {
-		mode := resolveRemoteDocker(gf.remoteDocker)
+		mode, err := resolveRemoteDocker(gf.remoteDocker)
+		if err != nil {
+			return exitcode.Wrap(exitcode.Usage, err)
+		}
 		dockerBe, err := docker.New(docker.Options{
 			SidecarStartGrace: gf.sidecarStartGrace,
 			SidecarStopGrace:  gf.sidecarStopGrace,
