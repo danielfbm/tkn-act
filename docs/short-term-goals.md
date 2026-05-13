@@ -1,6 +1,6 @@
 # Short-term goals
 
-Last updated: 2026-05-03.
+Last updated: 2026-05-13 (Track 2 fully complete; cluster-CI now matrixes over Tekton LTS versions).
 
 This document is the project's working priority list for the next few
 weeks of feature work. It has two ranked tracks; both run in parallel
@@ -38,14 +38,18 @@ near the top are the ones whose absence forces the most users onto
 
 ## Track 2 — Backend parity (current backends first)
 
-Today the project has two backends — `docker` (default) and `cluster`
-(k3d). The v1.2 work shipped six new docker-backend features; the
-`cluster-integration` workflow only exercises the `hello` fixture, so
-we don't actually verify that "the same pipeline behaves the same way
-on both backends."
+> **Status (2026-05-13):** Complete. All five items below shipped
+> between v1.2 and v1.6. As of PR #35 the `cluster-integration`
+> workflow also runs a Tekton-LTS matrix (`v1.3.0`, `v1.12.0`), so a
+> future Tekton bump cannot silently regress the prior LTS. New work
+> proceeds on the natural follow-ups listed under the table.
 
-Closing this gap before adding more backends (kind, podman) is the
-priority.
+Originally: the project has two backends — `docker` (default) and
+`cluster` (k3d). The v1.2 work shipped six new docker-backend
+features; the `cluster-integration` workflow only exercised the
+`hello` fixture, so "the same pipeline behaves the same way on both
+backends" was a claim, not a tested invariant. Closing that gap was
+prioritized before adding new backends.
 
 | # | Item | Why it matters |
 |---|---|---|

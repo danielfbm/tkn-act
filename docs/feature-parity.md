@@ -1,6 +1,6 @@
 # Tekton feature parity
 
-Last updated: 2026-05-03.
+Last updated: 2026-05-13 (default Tekton install bumped from v0.65.0 → v1.12.0 LTS; cluster-CI runs a `{v1.3.0, v1.12.0}` matrix).
 
 This document is the **canonical scoreboard** for what `tkn-act` does and
 doesn't support from upstream Tekton, and what proves it. It's read by
