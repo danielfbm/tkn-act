@@ -162,7 +162,10 @@ esac
   `SSH_AUTH_SOCK` plus `~/.ssh/id_ed25519` / `id_rsa`; `~/.ssh/known_hosts`
   is honored unless `TKN_ACT_SSH_INSECURE=1`). The remote daemon
   socket defaults to `/var/run/docker.sock`; override with
-  `TKN_ACT_DOCKER_SOCKET`.
+  `TKN_ACT_DOCKER_SOCKET`. The per-invocation override is
+  `--docker-host` (precedence: flag > env > moby SDK default unix
+  socket); use it when targeting a one-off daemon without mutating
+  process-wide env.
 - `TKN_ACT_REMOTE_DOCKER` — `auto` (default) | `on` | `off`. Forces
   the docker backend's remote-mode detection. `on` switches to
   per-run docker volume staging instead of bind-mounting host paths

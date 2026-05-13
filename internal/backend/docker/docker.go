@@ -52,6 +52,14 @@ type Options struct {
 	// point this at an internal-mirror tag like
 	// "registry.internal/pause:3.9".
 	PauseImage string
+
+	// Host overrides the daemon address for this Backend. Non-empty
+	// values win over $DOCKER_HOST so a single CLI invocation can
+	// target a different daemon without mutating process-wide env.
+	// Same scheme set as DOCKER_HOST: unix://, tcp://, ssh://.
+	// Empty means "use the env" (or the moby SDK's default unix
+	// socket when the env is also unset). Phase 4 surface.
+	Host string
 }
 
 type Backend struct {
@@ -85,7 +93,7 @@ type Backend struct {
 }
 
 func New(opts Options) (*Backend, error) {
-	dockerHost := os.Getenv("DOCKER_HOST")
+	dockerHost := resolveDockerHost(opts.Host)
 	cli, err := newDockerClient(dockerHost)
 	if err != nil {
 		return nil, err
@@ -115,6 +123,19 @@ func resolvePauseImage(opt string) string {
 		return defaultPauseImage
 	}
 	return opt
+}
+
+// resolveDockerHost returns the daemon address the moby client should
+// dial: an explicit Options.Host wins, otherwise we fall through to
+// $DOCKER_HOST, otherwise empty (which lets client.FromEnv pick the
+// platform default unix socket). Extracted so newDockerClient and
+// decideRemote agree on the resolved value, and so a future audit
+// can grep one place for the precedence.
+func resolveDockerHost(opt string) string {
+	if opt != "" {
+		return opt
+	}
+	return os.Getenv("DOCKER_HOST")
 }
 
 // daemonInfoer is the slice of the moby client.Client API that
@@ -171,9 +192,17 @@ func decideRemote(mode, dockerHost string, info daemonInfoer) (bool, error) {
 // Phase 3 (volume staging) and for tests.
 func (b *Backend) IsRemote() bool { return b.remote }
 
-// newDockerClient builds a moby client honoring DOCKER_HOST including
-// the ssh:// scheme — which client.FromEnv alone does not understand.
-// For unix:// and tcp:// the moby SDK's normal env handling is used.
+// newDockerClient builds a moby client for the resolved daemon
+// address. Handles three cases:
+//
+//   - ssh:// — in-tree dialer (Phase 1) wraps a unix-socket-shaped
+//     transport. client.FromEnv alone does not understand this scheme.
+//   - any other non-empty value — passed via client.WithHost so an
+//     Options.Host override (Phase 4 --docker-host) wins over
+//     $DOCKER_HOST without process-wide setenv.
+//   - empty — fall through to client.FromEnv so the moby SDK picks
+//     the platform default unix socket. Same behavior the binary
+//     had before Options.Host existed.
 func newDockerClient(dockerHost string) (*client.Client, error) {
 	if strings.HasPrefix(dockerHost, "ssh://") {
 		dialer, err := newSSHDialer(dockerHost)
@@ -190,7 +219,13 @@ func newDockerClient(dockerHost string) (*client.Client, error) {
 		}
 		return cli, nil
 	}
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	opts := []client.Opt{client.WithAPIVersionNegotiation()}
+	if dockerHost != "" {
+		opts = append(opts, client.WithHost(dockerHost))
+	} else {
+		opts = append(opts, client.FromEnv)
+	}
+	cli, err := client.NewClientWithOpts(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
