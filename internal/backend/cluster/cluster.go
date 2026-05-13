@@ -55,7 +55,7 @@ func New(opt Options) *Backend {
 		opt.Runner = cmdrunner.New()
 	}
 	if opt.TektonVersion == "" {
-		opt.TektonVersion = "v0.65.0"
+		opt.TektonVersion = tekton.DefaultTektonVersion
 	}
 	return &Backend{opt: opt}
 }

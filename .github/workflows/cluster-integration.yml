@@ -38,12 +38,24 @@ permissions:
 
 jobs:
   e2e:
-    name: k3d e2e (-tags cluster)
+    name: k3d e2e (-tags cluster) — Tekton ${{ matrix.tekton-version }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Oldest still-supported LTS + newest LTS (Tekton's support window
+        # is 12 months from release). Keep this list aligned with
+        # https://github.com/tektoncd/pipeline/blob/main/releases.md and
+        # bump per the policy in
+        # docs/superpowers/specs/2026-05-13-tekton-bump-and-matrix-design.md.
+        tekton-version:
+          - v1.3.0
+          - v1.12.0
     env:
       K3D_VERSION: v5.7.4
       KUBECTL_VERSION: v1.31.0
+      TKN_ACT_TEKTON_VERSION: ${{ matrix.tekton-version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

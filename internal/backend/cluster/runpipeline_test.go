@@ -886,11 +886,12 @@ func TestRunPipelineSurfacesResults(t *testing.T) {
 // hand-written conversion can't silently drop these fields.
 //
 // Step-level displayName / description are intentionally NOT carried
-// onto the inlined PipelineRun: Tekton v1 Step (as of v0.65) has no
-// such fields, and the admission webhook rejects unknown fields. We
-// consume them locally for the docker backend and on the JSON event
-// stream; the cluster backend strips them in taskSpecToMap before
-// submission. This test asserts the strip happens.
+// onto the inlined PipelineRun: through v1.12 (current LTS pin) Step
+// has at most displayName (no description), and historically v0.65
+// had neither. The admission webhook strict-decodes and rejects
+// unknown fields. We consume both locally for the docker backend and
+// on the JSON event stream; the cluster backend strips them in
+// taskSpecToMap before submission. This test asserts the strip happens.
 func TestBuildPipelineRunRoundTripsDisplayName(t *testing.T) {
 	be, _, _, _, _ := fakeBackend(t)
 

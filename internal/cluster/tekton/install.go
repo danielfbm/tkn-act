@@ -15,12 +15,21 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
+// DefaultTektonVersion is the Tekton Pipelines release that
+// `tkn-act cluster up` installs when neither `--tekton-version` nor
+// `TKN_ACT_TEKTON_VERSION` is set. Bump in lock-step with the
+// cluster-integration CI matrix in
+// `.github/workflows/cluster-integration.yml`. See
+// `docs/superpowers/specs/2026-05-13-tekton-bump-and-matrix-design.md`
+// for the LTS-pinning policy.
+const DefaultTektonVersion = "v1.12.0"
+
 type Options struct {
 	Kubeconfig string
 	Runner     cmdrunner.Runner
 	Apiext     apiextclient.Interface
 	Kube       kubernetes.Interface
-	Version    string // e.g. "v0.65.0"
+	Version    string // e.g. "v1.12.0"; empty defaults to DefaultTektonVersion
 	Timeout    time.Duration
 }
 
@@ -30,7 +39,7 @@ type Installer struct {
 
 func New(opt Options) *Installer {
 	if opt.Version == "" {
-		opt.Version = "v0.65.0"
+		opt.Version = DefaultTektonVersion
 	}
 	if opt.Timeout == 0 {
 		opt.Timeout = 180 * time.Second
@@ -54,7 +63,10 @@ func (i *Installer) Install(ctx context.Context) error {
 			return fmt.Errorf("check tekton CRD: %w", err)
 		}
 	}
-	url := fmt.Sprintf("https://storage.googleapis.com/tekton-releases/pipeline/previous/%s/release.yaml", i.opt.Version)
+	// GitHub Releases carries both v0.x and v1.x release.yaml assets.
+	// The legacy `storage.googleapis.com/tekton-releases/pipeline/previous/`
+	// bucket does not populate v1.x, so we use GitHub uniformly.
+	url := fmt.Sprintf("https://github.com/tektoncd/pipeline/releases/download/%s/release.yaml", i.opt.Version)
 	if _, err := i.opt.Runner.Output(ctx, "kubectl", "--kubeconfig", i.opt.Kubeconfig, "apply", "-f", url); err != nil {
 		return fmt.Errorf("apply tekton release: %w", err)
 	}
@@ -84,9 +96,11 @@ func (i *Installer) enableFeatureFlags(ctx context.Context) error {
 	//   enable-step-actions  — Track 1 #8 (StepAction step references)
 	//   enable-api-fields    — `alpha` widens result-reference syntax,
 	//                          including the matrix-result `[*]` pipeline-
-	//                          level aggregation (Track 1 #3). v0.65 ships
+	//                          level aggregation (Track 1 #3). Tekton ships
 	//                          matrix as GA but pipeline-result `[*]` over
-	//                          a matrix-fanned task still gates on `alpha`.
+	//                          a matrix-fanned task gated on `alpha` through
+	//                          at least v1.12. Future LTS versions may
+	//                          graduate this; the flag is harmless when set.
 	flags := map[string]string{
 		"enable-step-actions": "true",
 		"enable-api-fields":   "alpha",
