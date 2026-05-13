@@ -46,6 +46,11 @@ type globalFlags struct {
 	// decision. Phase 3 will switch the docker backend's staging
 	// strategy when this resolves to "on".
 	remoteDocker string
+	// pauseImage overrides the per-Task pause / stager image used by
+	// the docker backend. Empty falls back to $TKN_ACT_PAUSE_IMAGE and
+	// then to the built-in default. Air-gap-friendly: an internal
+	// mirror tag goes here once and both consumers pick it up.
+	pauseImage string
 }
 
 var gf globalFlags
@@ -111,6 +116,10 @@ Designed for both humans and AI agents:
 	cmd.PersistentFlags().DurationVar(&gf.sidecarStopGrace, "sidecar-stop-grace", 30*time.Second, "SIGTERM-then-SIGKILL window when stopping sidecars at end of Task (matches upstream Tekton's terminationGracePeriodSeconds)")
 	// Remote-docker daemon mode (env: TKN_ACT_REMOTE_DOCKER).
 	cmd.PersistentFlags().StringVar(&gf.remoteDocker, "remote-docker", "auto", "remote docker daemon mode: auto | on | off (env: "+envRemoteDocker+")")
+	// Pause/stager image override (env: TKN_ACT_PAUSE_IMAGE). Used by
+	// the docker backend's per-Task netns owner and (Phase 3 onwards)
+	// the remote-mode volume stager. Air-gap mirrors set this once.
+	cmd.PersistentFlags().StringVar(&gf.pauseImage, "pause-image", "", "override the docker backend's pause/stager image (env: "+envPauseImage+"; default registry.k8s.io/pause:3.9)")
 
 	cmd.AddCommand(newRunCmd())
 	cmd.AddCommand(newListCmd())

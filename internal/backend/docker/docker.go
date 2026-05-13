@@ -45,6 +45,13 @@ type Options struct {
 	// Phase 2 wires the detection only — Backend.remote is set but
 	// not yet consumed by the Step/Sidecar code paths.
 	Remote string
+
+	// PauseImage overrides the per-Task pause container image used for
+	// netns ownership (and, in Phase 3 remote mode, for the volume
+	// stager). Empty falls back to defaultPauseImage. Air-gap users
+	// point this at an internal-mirror tag like
+	// "registry.internal/pause:3.9".
+	PauseImage string
 }
 
 type Backend struct {
@@ -55,6 +62,10 @@ type Backend struct {
 	// of the client's (so bind mounts of local paths won't work).
 	// Set during New(). Phase 3 will switch staging accordingly.
 	remote bool
+	// pauseImg is the resolved pause/stager image (Options.PauseImage
+	// or defaultPauseImage). Captured at New() so air-gap overrides
+	// don't have to round-trip through Options at every call site.
+	pauseImg string
 }
 
 func New(opts Options) (*Backend, error) {
@@ -76,7 +87,18 @@ func New(opts Options) (*Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Backend{cli: cli, opts: opts, remote: remote}, nil
+	return &Backend{cli: cli, opts: opts, remote: remote, pauseImg: resolvePauseImage(opts.PauseImage)}, nil
+}
+
+// resolvePauseImage returns the pause/stager image the Backend should
+// use, applying the built-in default when Options.PauseImage is empty.
+// Extracted so the override-vs-default decision is unit-testable
+// without a real daemon.
+func resolvePauseImage(opt string) string {
+	if opt == "" {
+		return defaultPauseImage
+	}
+	return opt
 }
 
 // daemonInfoer is the slice of the moby client.Client API that

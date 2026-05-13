@@ -17,12 +17,13 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
-// pauseImage is the per-Task netns owner. Tiny (~700KB), cached
-// forever after first pull, blocks on pause(2) until killed. See
-// the design spec §3.1 for provenance and rationale (chosen over
-// "first-sidecar-as-netns-owner" so any sidecar can crash without
-// taking the netns down).
-const pauseImage = "registry.k8s.io/pause:3.9"
+// defaultPauseImage is the per-Task netns owner used when
+// Options.PauseImage is empty. Tiny (~700KB), cached forever after
+// first pull, blocks on pause(2) until killed. Air-gap users override
+// it via --pause-image / TKN_ACT_PAUSE_IMAGE so the binary doesn't
+// have to reach registry.k8s.io. See spec §3.1 for the netns-owner
+// rationale.
+const defaultPauseImage = "registry.k8s.io/pause:3.9"
 
 // sidecarStdout / sidecarStderr are the fine-grained Stream values
 // emitted on EvtSidecarLog so consumers can filter sidecar logs
@@ -66,14 +67,14 @@ type runningSidecar struct {
 }
 
 // startPause creates and starts the per-Task pause container that
-// owns the netns. Returns the container ID. Pulls pauseImage with
+// owns the netns. Returns the container ID. Pulls b.pauseImg with
 // IfNotPresent — the image is tiny and cached forever after first
 // pull, so subsequent Tasks pay zero pull cost.
 func (b *Backend) startPause(ctx context.Context, inv backend.TaskInvocation) (string, error) {
-	if err := b.ensureImage(ctx, pauseImage, "IfNotPresent"); err != nil {
+	if err := b.ensureImage(ctx, b.pauseImg, "IfNotPresent"); err != nil {
 		return "", fmt.Errorf("pull pause image: %w", err)
 	}
-	cfg := &container.Config{Image: pauseImage}
+	cfg := &container.Config{Image: b.pauseImg}
 	hostConf := &container.HostConfig{AutoRemove: false}
 	name := pauseContainerName(inv.RunID, inv.TaskRunName)
 	created, err := b.cli.ContainerCreate(ctx, cfg, hostConf, nil, nil, name)

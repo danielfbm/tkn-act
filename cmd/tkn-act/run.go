@@ -216,6 +216,7 @@ func runWith(rf runFlags) error {
 			SidecarStartGrace: gf.sidecarStartGrace,
 			SidecarStopGrace:  gf.sidecarStopGrace,
 			Remote:            mode,
+			PauseImage:        resolvePauseImage(gf.pauseImage),
 		})
 		if err != nil {
 			return exitcode.Wrap(exitcode.Env, fmt.Errorf("docker backend: %w", err))
