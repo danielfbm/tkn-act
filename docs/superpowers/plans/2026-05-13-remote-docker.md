@@ -88,54 +88,62 @@ the moby SDK `client.WithDialContext` hook, the existing
 
 ---
 
-## Phase 3 — Per-Task volume staging (Step path)
+## Phase 3 — Per-run volume staging (Step + Sidecar paths)
 
-**Files:** `internal/backend/docker/staging.go` (new — extracted
-helper),
-`internal/backend/docker/docker.go` (call sites at lines 302-370),
-`internal/backend/docker/staging_test.go`.
+**Status:** ✅ landed in PR #40 (commits `923446b` air-gap pause-image,
+`0c26322` per-run staging). The "Per-Task volume" sketch in the
+original plan was revised to **per-run** during design — see Discord
+discussion 2026-05-13. The volume lives for the whole Pipeline run
+so Pipeline-shared workspaces (`testdata/e2e/workspaces/`) flow
+between Tasks without per-Task `cp` round-trips.
 
-- [ ] New helper `Backend.stage(ctx, runID, taskName, items []stageItem) (volumeName string, err error)`:
-      - `items` are `(localPath, key)` pairs.
-      - Creates a volume `tkn-act-<runID>-<taskName>` with labels
-        `tkn-act.run=<runID>` and `tkn-act.task=<taskName>` if not
-        present.
-      - Spawns a stager container with the volume mounted at
-        `/staged` and command `sleep infinity`.
-      - `cli.CopyToContainer(stagerID, "/staged", tar(items))` —
-        bundle all items into one tar stream and ship in a single
-        round-trip.
-      - Caches the stager ID on the `Backend` keyed by `taskName`
-        so subsequent stage calls within the same Task reuse it.
-- [ ] At the Step container build site in `docker.go:302-370`, when
-      `b.remote == true`:
-      - Replace `mount.Mount{Type: Bind, Source: script.sh path, ...}`
-        with `mount.Mount{Type: Volume, Source: vol, Target: "/tekton/scripts/script.sh"}`.
-      - Same for workspace mounts (still backed by the same volume).
-      - Same for results dir, step-results dirs, volume sources
-        (configmap/secret).
-- [ ] At Task end, before tearing the stager down, call
-      `cli.CopyFromContainer(stagerID, "/staged/results")` to pull
-      results back to `inv.ResultsHost`. Same for step-results dirs.
-- [ ] Tear down: `cli.ContainerKill(stagerID, "KILL")` then
-      `cli.VolumeRemove(volName)` after pulling outputs.
-- [ ] Unit tests using moby's fake client: assert stager is reused,
-      assert volume is labeled with `tkn-act.run`, assert tar
-      contents match input bytes.
+**Files (as landed):** `internal/backend/docker/staging.go` (new),
+`internal/backend/docker/docker.go` (Prepare/Cleanup hooks +
+remote-mode mount branching in `runStep`),
+`internal/backend/docker/sidecars.go` (sidecar mount branching),
+`internal/backend/docker/staging_test.go` (pure helpers),
+`internal/backend/docker/staging_integration_test.go` (forced-remote
+hello / results / step-results).
 
-**Gate:** unit tests green; one fixture (`hello`) passes
-end-to-end against a local daemon with `--remote-docker=on`.
+- [x] Per-run volume `tkn-act-<runID>` + long-lived stager started in
+      `Backend.startRemoteStaging` (called by `Prepare`). Stager
+      mounts the whole volume at `/staged` so any subpath is
+      reachable via `CopyToContainer` / `CopyFromContainer`.
+- [x] `runStep` builds subpath volume mounts when `b.remote == true`:
+      `scripts/<taskRun>-<step>.sh`, `workspaces/<wsName>`,
+      `results/<taskRun>`, `results/<taskRun>/steps/<step>`,
+      `volumes/<taskRun>/<volName>`. Local-bind path unchanged.
+- [x] Per-Task `pushTaskVolumeHosts` seeds materialised
+      configMap/secret/emptyDir into `volumes/<taskRun>/<volName>/`
+      before the Step loop.
+- [x] Per-step pull (`pullStepResults`) right after each Step exits,
+      so existing per-step substitution reads from disk unchanged.
+      End-of-Task pull (`pullTaskResults`) before the Task-results
+      file read.
+- [x] Sidecars use the same subpath layout (Q3 from design review:
+      bundle in this PR, free with the same helpers).
+- [x] `Backend.stopRemoteStaging` (called by `Cleanup`) pulls
+      workspaces back to host, then `ContainerStop` + `ContainerRemove`
+      + `VolumeRemove` on background context.
+- [x] Pause/stager image overridable via `--pause-image` /
+      `TKN_ACT_PAUSE_IMAGE` for air-gap mirrors (commit `923446b`).
+- [x] Unit tests: helpers + tar/untar round trip + Pipeline-name
+      reverse lookup. Integration tests behind `-tags integration`:
+      hello fixture + Task-results round trip + inter-step result
+      substitution forced through the volume path.
+
+**Gate:** unit tests green; integration tests forced-remote pass on
+local daemon. Confirmed in CI on PR #40.
 
 ---
 
-## Phase 4 — Sidecars + `--docker-host` flag
+## Phase 4 — `--docker-host` flag
 
-**Files:** `internal/backend/docker/sidecars.go` (call sites at
-lines 185-234), `cmd/tkn-act/run.go`.
+**Files:** `cmd/tkn-act/run.go`.
 
-- [ ] Sidecar mounts: same volume reuse as Step path. Sidecars live
-      for the whole Task, so they mount the per-Task volume from the
-      same `tkn-act-<runID>-<taskName>` name.
+Sidecar mounts already moved to Phase 3 (see Q3 above), so this
+phase is just the per-invocation `DOCKER_HOST` override.
+
 - [ ] Add `--docker-host` flag on `tkn-act run` (string, defaults
       to `""`). When set, overrides `DOCKER_HOST` for this invocation
       only (set via `os.Setenv` before `Backend.New`, restore in
@@ -143,8 +151,7 @@ lines 185-234), `cmd/tkn-act/run.go`.
 - [ ] Unit test asserting `--docker-host ssh://fake@host` is honored
       and the SSH dialer is reached.
 
-**Gate:** unit tests green; `sidecars` fixture passes end-to-end
-with `--remote-docker=on`.
+**Gate:** unit tests green.
 
 ---
 
