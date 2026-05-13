@@ -185,38 +185,64 @@ func (b *Backend) startOneSidecar(ctx context.Context, inv backend.TaskInvocatio
 	args := sc.Args
 	var extraMounts []mount.Mount
 
-	// Script-mode mirrors the Step path: write the body to scriptDir
-	// and bind-mount it. Sidecars live for the whole Task so the
-	// script file is OK to leave in place; Cleanup removes scriptDir
-	// at end of run.
+	// Script-mode mirrors the Step path: stage the body either via
+	// scriptDir (local bind) or via scripts/<taskRun>-sidecar-<name>.sh
+	// in the per-run volume (remote). Sidecars live for the whole
+	// Task so the script body sits in place until Cleanup.
 	if sc.Script != "" {
 		body := sc.Script
 		if !strings.HasPrefix(body, "#!") {
 			body = "#!/bin/sh\nset -e\n" + body
 		}
-		host := filepath.Join(b.scriptDir, fmt.Sprintf("%s-sidecar-%s.sh", inv.TaskRunName, sc.Name))
-		if err := os.WriteFile(host, []byte(body), 0o755); err != nil {
-			return "", err
-		}
 		cmd = []string{"/tekton/scripts/script.sh"}
 		args = nil
-		extraMounts = append(extraMounts, mount.Mount{
-			Type:     mount.TypeBind,
-			Source:   host,
-			Target:   "/tekton/scripts/script.sh",
-			ReadOnly: true,
-		})
+		base := sidecarScriptBase(inv.TaskRunName, sc.Name)
+		if b.remote {
+			if err := b.pushScript(ctx, base, []byte(body)); err != nil {
+				return "", err
+			}
+			extraMounts = append(extraMounts, b.remoteVolumeMount(
+				"/tekton/scripts/script.sh",
+				filepath.Join(stageScripts, base+".sh"),
+				true,
+			))
+		} else {
+			host := filepath.Join(b.scriptDir, base+".sh")
+			if err := os.WriteFile(host, []byte(body), 0o755); err != nil {
+				return "", err
+			}
+			extraMounts = append(extraMounts, mount.Mount{
+				Type:     mount.TypeBind,
+				Source:   host,
+				Target:   "/tekton/scripts/script.sh",
+				ReadOnly: true,
+			})
+		}
 	}
 
 	// Workspace mounts — same path layout as Steps so a sidecar
-	// can co-operate with the Task on the workspace.
+	// can co-operate with the Task on the workspace. Remote mode
+	// subpaths into the same Pipeline-name buckets as Steps so a
+	// sidecar's writes are visible to subsequent Tasks too.
 	for tName, wm := range inv.Workspaces {
-		extraMounts = append(extraMounts, mount.Mount{
-			Type:     mount.TypeBind,
-			Source:   wm.HostPath,
-			Target:   "/workspace/" + tName,
-			ReadOnly: wm.ReadOnly,
-		})
+		if b.remote {
+			pipelineName, ok := b.pipelineWorkspaceName(wm.HostPath)
+			if !ok {
+				return "", fmt.Errorf("sidecar %q workspace %q: cannot map host path %q to a Pipeline workspace name", sc.Name, tName, wm.HostPath)
+			}
+			extraMounts = append(extraMounts, b.remoteVolumeMount(
+				"/workspace/"+tName,
+				filepath.Join(stageWorkspaces, pipelineName),
+				wm.ReadOnly,
+			))
+		} else {
+			extraMounts = append(extraMounts, mount.Mount{
+				Type:     mount.TypeBind,
+				Source:   wm.HostPath,
+				Target:   "/workspace/" + tName,
+				ReadOnly: wm.ReadOnly,
+			})
+		}
 	}
 
 	// Sidecar volumeMounts from the Task's volumes set.
@@ -225,16 +251,24 @@ func (b *Backend) startOneSidecar(ctx context.Context, inv backend.TaskInvocatio
 		if !ok {
 			return "", fmt.Errorf("volumeMount %q: no host path for volume", vm.Name)
 		}
-		src := hostPath
-		if vm.SubPath != "" {
-			src = filepath.Join(hostPath, vm.SubPath)
+		if b.remote {
+			sub := filepath.Join(stageVolumes, inv.TaskRunName, vm.Name)
+			if vm.SubPath != "" {
+				sub = filepath.Join(sub, vm.SubPath)
+			}
+			extraMounts = append(extraMounts, b.remoteVolumeMount(vm.MountPath, sub, vm.ReadOnly))
+		} else {
+			src := hostPath
+			if vm.SubPath != "" {
+				src = filepath.Join(hostPath, vm.SubPath)
+			}
+			extraMounts = append(extraMounts, mount.Mount{
+				Type:     mount.TypeBind,
+				Source:   src,
+				Target:   vm.MountPath,
+				ReadOnly: vm.ReadOnly,
+			})
 		}
-		extraMounts = append(extraMounts, mount.Mount{
-			Type:     mount.TypeBind,
-			Source:   src,
-			Target:   vm.MountPath,
-			ReadOnly: vm.ReadOnly,
-		})
 	}
 
 	env := make([]string, 0, len(sc.Env))
