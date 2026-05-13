@@ -50,6 +50,12 @@ func fakeBackend(t *testing.T, prObjs ...runtime.Object) (*cluster.Backend, *dyn
 	// automatically; the fake clientset does not. Install a reactor
 	// that satisfies the wait by returning a synthetic SA for any
 	// namespace.
+	//
+	// NOTE: a test asserting that `waitForDefaultServiceAccount`
+	// actually times out / errors when the SA is missing MUST NOT use
+	// this helper — the reactor here would silently satisfy the wait.
+	// `run_namespace_test.go` constructs its own kubefake clientset
+	// (and optionally a NotFound reactor) for that scenario.
 	kube.PrependReactor("get", "serviceaccounts", func(action clienttesting.Action) (bool, runtime.Object, error) {
 		ga := action.(clienttesting.GetAction)
 		if ga.GetName() == "default" {

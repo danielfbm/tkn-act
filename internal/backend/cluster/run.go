@@ -56,11 +56,14 @@ func (b *Backend) ensureNamespace(ctx context.Context, name string) error {
 	}
 	// Wait for the default ServiceAccount to be provisioned by the
 	// service-account controller before submitting the PipelineRun.
-	// Without this, Tekton v1.12+ races the SA controller and the
-	// TaskRun pod creation fails with `serviceaccounts "default" not
-	// found. Maybe invalid TaskSpec`. v0.65 and v1.3.0 happened to be
-	// slow enough to never hit the race; v1.12.0 exposed it on
-	// cluster-CI. 30s matches Tekton's own integration tests.
+	// Kubernetes' SA controller is asynchronous, and Tekton's
+	// reconciler does not wait — TaskRun pod creation fails with
+	// `serviceaccounts "default" not found. Maybe invalid TaskSpec`
+	// whenever the reconciler is faster than the SA controller. The
+	// 2026-05-13 cluster-CI matrix surfaced this against Tekton
+	// v1.12.0; older pins (v0.65, v1.3.0) happened to never race in
+	// practice, but the gap is timing, not version-specific. 30s
+	// matches Tekton's own integration tests.
 	return b.waitForDefaultServiceAccount(ctx, name, 30*time.Second)
 }
 

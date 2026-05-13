@@ -62,6 +62,7 @@ For machine-readable output (CI, agents, scripts):
 
 ```sh
 tkn-act cluster up                         # one-time, ~30-60s
+tkn-act cluster up --tekton-version v1.3.0 # or pin a specific LTS (env: TKN_ACT_TEKTON_VERSION)
 tkn-act run --cluster -f pipeline.yaml
 tkn-act cluster status
 tkn-act cluster down -y

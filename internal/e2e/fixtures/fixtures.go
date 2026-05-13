@@ -257,24 +257,23 @@ func All() []Fixture {
 			WantResults: map[string]any{
 				"tags": []any{"linux-1.21", "linux-1.22", "darwin-1.21", "darwin-1.22"},
 			},
-			// DockerOnly (pending matrix-CI verification): historically
-			// Tekton v0.65 did not surface matrix-fanned task results as
-			// pipeline-level results when referenced via
-			// $(tasks.X.results.Y[*]), even with enable-api-fields=alpha —
-			// the controller emitted CouldntGetPipelineResult: "the
-			// referenced results don't exist". The matrix expansion
-			// itself + per-TaskRun reconstruction via param-hash works on
-			// cluster (every expansion succeeds; events carry
-			// MatrixInfo); only the pipeline-level [*] aggregation was
-			// missing controller-side. Cluster-mode coverage of the
-			// per-TaskRun event path is provided by
-			// internal/backend/cluster/run_test.go::
-			// TestMatchMatrixRowFromTaskRun*. The 2026-05-13 Tekton bump
-			// (default → v1.12.0; CI matrix v1.3.0 + v1.12.0) may resolve
-			// this; first PR with the matrix decides whether DockerOnly
-			// can be dropped.
+			// DockerOnly: historically Tekton v0.65 did not surface
+			// matrix-fanned task results as pipeline-level results when
+			// referenced via $(tasks.X.results.Y[*]), even with
+			// enable-api-fields=alpha — the controller emitted
+			// CouldntGetPipelineResult: "the referenced results don't
+			// exist". The matrix expansion itself + per-TaskRun
+			// reconstruction via param-hash works on cluster (every
+			// expansion succeeds; events carry MatrixInfo); only the
+			// pipeline-level [*] aggregation is missing controller-side.
+			// Cluster-mode coverage of the per-TaskRun event path is
+			// provided by internal/backend/cluster/run_test.go::
+			// TestMatchMatrixRowFromTaskRun*. Re-validate against the
+			// newest LTS in a follow-up PR by temporarily dropping
+			// DockerOnly on a probe branch; if the cluster leg of the
+			// CI matrix passes, this row can flip to cross-backend.
 			DockerOnly:  true,
-			Description: "matrix-fanned task results not exposed as pipeline results (gated on cluster matrix-CI; bumped from v0.65 to v1.12 LTS)",
+			Description: "matrix-fanned task results not exposed as pipeline results (DockerOnly; revisit in a probe PR against the cluster-CI matrix)",
 		},
 		{
 			Dir: "resolver-git", Pipeline: "resolver-git", WantStatus: "succeeded",
@@ -328,16 +327,16 @@ func All() []Fixture {
 			WantResults: map[string]any{
 				"tags": []any{"linux-amd64", "linux-arm64", "linux-armv7"},
 			},
-			// DockerOnly (pending matrix-CI verification): historically
-			// the same v0.65 limitation as `matrix`, plus include row
-			// semantics differed — v0.65 didn't emit TaskRuns for
-			// include-only-introduced params (rows without an overlapping
-			// cross-product param). The 2026-05-13 Tekton bump (default
-			// → v1.12.0; CI matrix v1.3.0 + v1.12.0) may resolve both.
-			// Re-validate via the cluster-integration matrix; drop
-			// DockerOnly if it passes.
+			// DockerOnly: same historical limitation as `matrix`, plus
+			// include-row semantics differed — v0.65 didn't emit
+			// TaskRuns for include-only-introduced params (rows without
+			// an overlapping cross-product param). The newer LTS pins
+			// (v1.3 / v1.12) may resolve either or both. Re-validate by
+			// temporarily dropping DockerOnly on a probe branch and
+			// reading the cluster-integration matrix output; if both
+			// legs pass, flip this row to cross-backend.
 			DockerOnly:  true,
-			Description: "matrix.include row TaskRun creation + matrix-fanned PipelineResult (gated on cluster matrix-CI; bumped from v0.65 to v1.12 LTS)",
+			Description: "matrix.include row TaskRun creation + matrix-fanned PipelineResult (DockerOnly; revisit in a probe PR against the cluster-CI matrix)",
 		},
 	}
 }

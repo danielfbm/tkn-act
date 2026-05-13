@@ -239,6 +239,20 @@ tkn-act run --cluster -f pipeline.yaml -o json
 tkn-act cluster down -y
 ```
 
+`tkn-act cluster up` installs Tekton Pipelines at the version baked into
+the binary (the current default tracks the newest supported LTS). To
+pin a different version — for example to match an environment that
+ships an older LTS — pass `--tekton-version`:
+
+```sh
+tkn-act cluster up --tekton-version v1.3.0
+```
+
+The `TKN_ACT_TEKTON_VERSION` environment variable is honored when the
+flag is unset, which is the form CI matrices use. Precedence is flag
+> env > built-in default. Supported values are any Tekton Pipelines
+release tag the public installer URL resolves to.
+
 ### 4. Discover what's in a repo
 
 ```sh
