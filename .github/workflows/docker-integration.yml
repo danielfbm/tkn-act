@@ -47,8 +47,17 @@ jobs:
       - name: docker info (sanity)
         run: docker info >/dev/null && echo "docker ok"
       - name: warm image cache
-        # Pre-pull the only image the fixtures use, so test wall time is
+        # Pre-pull the images the fixtures use, so test wall time is
         # dominated by Tekton work rather than registry latency.
-        run: docker pull alpine:3
+        # registry.k8s.io/pause:3.9 backs the per-Task netns owner AND
+        # (Phase 3 onwards) the remote-mode volume stager.
+        run: |
+          docker pull alpine:3
+          docker pull registry.k8s.io/pause:3.9
       - name: go test -tags integration ./internal/e2e/...
         run: go test -tags integration -count=1 -timeout 15m ./internal/e2e/...
+      - name: go test -tags integration ./internal/backend/docker/...
+        # Phase 3 staging tests live here (forced --remote-docker=on against
+        # the runner's local daemon) — they exercise the per-run volume +
+        # stager path that ./internal/e2e/... can't reach.
+        run: go test -tags integration -count=1 -timeout 15m ./internal/backend/docker/...

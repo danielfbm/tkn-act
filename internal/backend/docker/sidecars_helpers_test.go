@@ -20,11 +20,13 @@ func TestPauseContainerName(t *testing.T) {
 	}
 }
 
-func TestPauseImage(t *testing.T) {
+func TestDefaultPauseImage(t *testing.T) {
 	// Pinned to upstream Kubernetes' pause image; ~700KB; cached
 	// forever after first pull. See spec §3.1 and Open Question #3.
-	if pauseImage != "registry.k8s.io/pause:3.9" {
-		t.Errorf("pauseImage = %q; pin must match the spec exactly", pauseImage)
+	// Air-gap users override via Options.PauseImage / --pause-image;
+	// the default below is what an unconfigured tkn-act reaches for.
+	if defaultPauseImage != "registry.k8s.io/pause:3.9" {
+		t.Errorf("defaultPauseImage = %q; pin must match the spec exactly", defaultPauseImage)
 	}
 }
 

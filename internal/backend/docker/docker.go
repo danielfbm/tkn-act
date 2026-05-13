@@ -45,6 +45,13 @@ type Options struct {
 	// Phase 2 wires the detection only — Backend.remote is set but
 	// not yet consumed by the Step/Sidecar code paths.
 	Remote string
+
+	// PauseImage overrides the per-Task pause container image used for
+	// netns ownership (and, in Phase 3 remote mode, for the volume
+	// stager). Empty falls back to defaultPauseImage. Air-gap users
+	// point this at an internal-mirror tag like
+	// "registry.internal/pause:3.9".
+	PauseImage string
 }
 
 type Backend struct {
@@ -55,6 +62,26 @@ type Backend struct {
 	// of the client's (so bind mounts of local paths won't work).
 	// Set during New(). Phase 3 will switch staging accordingly.
 	remote bool
+	// pauseImg is the resolved pause/stager image (Options.PauseImage
+	// or defaultPauseImage). Captured at New() so air-gap overrides
+	// don't have to round-trip through Options at every call site.
+	pauseImg string
+
+	// Remote-mode (Phase 3) staging state. Populated by startRemoteStaging
+	// in Prepare and drained by stopRemoteStaging in Cleanup; unused on
+	// the local-bind path. Keeping them on the Backend lets RunTask
+	// stay oblivious to the per-run lifecycle.
+	//
+	// Lifecycle invariant: each resource is gated on its own field so
+	// stopRemoteStaging can safely run after a partial Prepare (e.g.
+	// volume created but stager start failed) — see the deferred
+	// unwind in startRemoteStaging.
+	runID               string
+	volName             string
+	volumeCreated       bool
+	stagerID            string
+	userWorkspaces      map[string]string
+	workspaceByHostPath map[string]string
 }
 
 func New(opts Options) (*Backend, error) {
@@ -76,7 +103,18 @@ func New(opts Options) (*Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Backend{cli: cli, opts: opts, remote: remote}, nil
+	return &Backend{cli: cli, opts: opts, remote: remote, pauseImg: resolvePauseImage(opts.PauseImage)}, nil
+}
+
+// resolvePauseImage returns the pause/stager image the Backend should
+// use, applying the built-in default when Options.PauseImage is empty.
+// Extracted so the override-vs-default decision is unit-testable
+// without a real daemon.
+func resolvePauseImage(opt string) string {
+	if opt == "" {
+		return defaultPauseImage
+	}
+	return opt
 }
 
 // daemonInfoer is the slice of the moby client.Client API that
@@ -170,10 +208,24 @@ func (b *Backend) Prepare(ctx context.Context, run backend.RunSpec) error {
 			return err
 		}
 	}
+	if b.remote {
+		if err := b.startRemoteStaging(ctx, run.RunID, run.Workspaces); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func (b *Backend) Cleanup(ctx context.Context) error {
+	if b.remote {
+		// Best-effort: surface the first failure but always continue
+		// to scriptDir cleanup so a stager teardown error doesn't
+		// strand a local tempdir. Returning the error preserves the
+		// engine's existing "ignore Cleanup err" semantics — the
+		// caller logs nothing — while still leaving a hook for tests
+		// that want to assert cleanup succeeded.
+		_ = b.stopRemoteStaging()
+	}
 	if b.scriptDir != "" {
 		_ = os.RemoveAll(b.scriptDir)
 	}
@@ -226,6 +278,27 @@ func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (back
 		}
 	}
 
+	// Remote mode: pre-create the per-Task subpath chains in the
+	// volume that Step containers will subpath-mount. Engine v25+
+	// resolves VolumeOptions.Subpath via openat2 which ENOENTs on a
+	// missing entry, so the dirs must exist on the volume *before*
+	// the first ContainerCreate that targets them. Same call also
+	// seeds materialised configMap/secret/emptyDir host paths.
+	if b.remote {
+		if err := b.mkdirInVolume(ctx, filepath.ToSlash(filepath.Join(stageResults, inv.TaskRunName))); err != nil {
+			res.Status = backend.TaskInfraFailed
+			res.Err = fmt.Errorf("mkdir results dir on stage volume: %w", err)
+			res.Ended = time.Now()
+			return res, nil
+		}
+		if err := b.pushTaskVolumeHosts(ctx, inv.TaskRunName, inv.VolumeHosts); err != nil {
+			res.Status = backend.TaskInfraFailed
+			res.Err = err
+			res.Ended = time.Now()
+			return res, nil
+		}
+	}
+
 	// stepResults accumulates as each step finishes. Earlier steps are
 	// substituted into later steps' refs ($(steps.<step>.results.<name>)).
 	stepResults := map[string]map[string]string{}
@@ -265,6 +338,18 @@ func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (back
 			res.Ended = time.Now()
 			return res, nil
 		}
+		// Same dir on the volume in remote mode — Engine v25+ subpath
+		// resolution ENOENTs without it. The walk-results-dir code in
+		// runStep that mounts every earlier step's subdir also needs
+		// each entry to already exist on the volume.
+		if b.remote {
+			if err := b.mkdirInVolume(ctx, filepath.ToSlash(filepath.Join(stageResults, inv.TaskRunName, "steps", step.Name))); err != nil {
+				res.Status = backend.TaskInfraFailed
+				res.Err = fmt.Errorf("step %q: mkdir step results on stage volume: %w", step.Name, err)
+				res.Ended = time.Now()
+				return res, nil
+			}
+		}
 
 		exitCode, err := b.runStep(ctx, inv, step, pauseID)
 		stepRes.ExitCode = exitCode
@@ -276,6 +361,21 @@ func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (back
 			res.Steps = append(res.Steps, stepRes)
 			res.Ended = time.Now()
 			return res, nil
+		}
+
+		// Remote mode: pull this step's per-step results dir back to
+		// the host so the existing per-step substitution (which reads
+		// off disk) keeps working unchanged. Local mode wrote there
+		// directly via the bind mount.
+		if b.remote {
+			if perr := b.pullStepResults(ctx, inv.TaskRunName, step.Name, stepResultsHost); perr != nil {
+				res.Status = backend.TaskInfraFailed
+				res.Err = fmt.Errorf("step %q: pull results: %w", step.Name, perr)
+				stepRes.Status = backend.StepFailed
+				res.Steps = append(res.Steps, stepRes)
+				res.Ended = time.Now()
+				return res, nil
+			}
 		}
 
 		// Read this step's declared per-step results so later steps in the
@@ -317,6 +417,19 @@ func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (back
 				res.Ended = time.Now()
 				return res, nil
 			}
+		}
+	}
+
+	// Remote mode: pull the whole Task results subtree back to the
+	// host before reading. This is a superset of the per-step pulls
+	// already done — overwriting them with identical content is fine
+	// and lets us use a single shared read path below.
+	if b.remote {
+		if perr := b.pullTaskResults(ctx, inv.TaskRunName, inv.ResultsHost); perr != nil {
+			res.Status = backend.TaskInfraFailed
+			res.Err = fmt.Errorf("pull task results: %w", perr)
+			res.Ended = time.Now()
+			return res, nil
 		}
 	}
 
@@ -397,45 +510,89 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 	cmd := step.Command
 	args := step.Args
 
-	// Script support: write to scriptDir, mount, exec.
+	// Script support: stage the body either to scriptDir (local bind)
+	// or to scripts/<taskRun>-<step>.sh in the per-run volume (remote).
+	// Both paths set Cmd to /tekton/scripts/script.sh — the call sites
+	// downstream don't have to care which staging path produced it.
 	var extraMounts []mount.Mount
 	if step.Script != "" {
 		body := step.Script
 		if !strings.HasPrefix(body, "#!") {
 			body = "#!/bin/sh\nset -e\n" + body
 		}
-		host := filepath.Join(b.scriptDir, fmt.Sprintf("%s-%s.sh", inv.TaskRunName, step.Name))
-		if err := os.WriteFile(host, []byte(body), 0o755); err != nil {
-			return 0, err
-		}
 		cmd = []string{"/tekton/scripts/script.sh"}
 		args = nil
-		extraMounts = append(extraMounts, mount.Mount{
-			Type:     mount.TypeBind,
-			Source:   host,
-			Target:   "/tekton/scripts/script.sh",
-			ReadOnly: true,
-		})
+		if b.remote {
+			base := stepScriptBase(inv.TaskRunName, step.Name)
+			if err := b.pushScript(ctx, base, []byte(body)); err != nil {
+				return 0, err
+			}
+			extraMounts = append(extraMounts, b.remoteVolumeMount(
+				"/tekton/scripts/script.sh",
+				filepath.Join(stageScripts, base+".sh"),
+				true,
+			))
+		} else {
+			host := filepath.Join(b.scriptDir, fmt.Sprintf("%s-%s.sh", inv.TaskRunName, step.Name))
+			if err := os.WriteFile(host, []byte(body), 0o755); err != nil {
+				return 0, err
+			}
+			extraMounts = append(extraMounts, mount.Mount{
+				Type:     mount.TypeBind,
+				Source:   host,
+				Target:   "/tekton/scripts/script.sh",
+				ReadOnly: true,
+			})
+		}
 	}
 
-	// Workspace mounts.
+	// Workspace mounts. Remote mode subpaths into workspaces/<wsName>
+	// keyed by the Pipeline workspace name so writes from Task A are
+	// visible to Task B (the PVC-equivalent semantics). The host-path
+	// reverse lookup is what joins inv.Workspaces[tName].HostPath
+	// (Task-local key) to the Pipeline name buckets in the volume.
 	for tName, wm := range inv.Workspaces {
-		extraMounts = append(extraMounts, mount.Mount{
-			Type:     mount.TypeBind,
-			Source:   wm.HostPath,
-			Target:   "/workspace/" + tName,
-			ReadOnly: wm.ReadOnly,
-		})
+		if b.remote {
+			pipelineName, ok := b.pipelineWorkspaceName(wm.HostPath)
+			if !ok {
+				return 0, fmt.Errorf("step %q workspace %q: cannot map host path %q to a Pipeline workspace name", step.Name, tName, wm.HostPath)
+			}
+			extraMounts = append(extraMounts, b.remoteVolumeMount(
+				"/workspace/"+tName,
+				filepath.Join(stageWorkspaces, pipelineName),
+				wm.ReadOnly,
+			))
+		} else {
+			extraMounts = append(extraMounts, mount.Mount{
+				Type:     mount.TypeBind,
+				Source:   wm.HostPath,
+				Target:   "/workspace/" + tName,
+				ReadOnly: wm.ReadOnly,
+			})
+		}
 	}
 
 	// Task-level results mount.
-	extraMounts = append(extraMounts, mount.Mount{
-		Type:   mount.TypeBind,
-		Source: inv.ResultsHost,
-		Target: "/tekton/results",
-	})
+	if b.remote {
+		extraMounts = append(extraMounts, b.remoteVolumeMount(
+			"/tekton/results",
+			filepath.Join(stageResults, inv.TaskRunName),
+			false,
+		))
+	} else {
+		extraMounts = append(extraMounts, mount.Mount{
+			Type:   mount.TypeBind,
+			Source: inv.ResultsHost,
+			Target: "/tekton/results",
+		})
+	}
 
 	// Per-step results: this step's own dir RW, every earlier step's RO.
+	// In local mode we walk the host's results-dir for already-existing
+	// step subdirs. In remote mode the same dirs were created on the
+	// host by RunTask (mkdir for current step, plus pulled subdirs for
+	// earlier steps), so the same walk works — only the mount type
+	// flips.
 	stepsRoot := filepath.Join(inv.ResultsHost, "steps")
 	if entries, err := os.ReadDir(stepsRoot); err == nil {
 		for _, ent := range entries {
@@ -443,32 +600,50 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 				continue
 			}
 			ro := ent.Name() != step.Name
-			extraMounts = append(extraMounts, mount.Mount{
-				Type:     mount.TypeBind,
-				Source:   filepath.Join(stepsRoot, ent.Name()),
-				Target:   "/tekton/steps/" + ent.Name() + "/results",
-				ReadOnly: ro,
-			})
+			if b.remote {
+				extraMounts = append(extraMounts, b.remoteVolumeMount(
+					"/tekton/steps/"+ent.Name()+"/results",
+					filepath.Join(stageResults, inv.TaskRunName, "steps", ent.Name()),
+					ro,
+				))
+			} else {
+				extraMounts = append(extraMounts, mount.Mount{
+					Type:     mount.TypeBind,
+					Source:   filepath.Join(stepsRoot, ent.Name()),
+					Target:   "/tekton/steps/" + ent.Name() + "/results",
+					ReadOnly: ro,
+				})
+			}
 		}
 	}
 
-	// Step volumeMounts. Each one references a Task-level volume that the
-	// engine has already materialised onto a host path.
+	// Step volumeMounts. Each one references a Task-level Volume the
+	// engine has already materialised onto a host path; in remote mode
+	// the host path was previously seeded into volumes/<taskRun>/<vol>/
+	// via pushTaskVolumeHosts.
 	for _, vm := range step.VolumeMounts {
 		hostPath, ok := inv.VolumeHosts[vm.Name]
 		if !ok {
 			return 0, fmt.Errorf("step %q volumeMount %q: no host path for volume", step.Name, vm.Name)
 		}
-		src := hostPath
-		if vm.SubPath != "" {
-			src = filepath.Join(hostPath, vm.SubPath)
+		if b.remote {
+			sub := filepath.Join(stageVolumes, inv.TaskRunName, vm.Name)
+			if vm.SubPath != "" {
+				sub = filepath.Join(sub, vm.SubPath)
+			}
+			extraMounts = append(extraMounts, b.remoteVolumeMount(vm.MountPath, sub, vm.ReadOnly))
+		} else {
+			src := hostPath
+			if vm.SubPath != "" {
+				src = filepath.Join(hostPath, vm.SubPath)
+			}
+			extraMounts = append(extraMounts, mount.Mount{
+				Type:     mount.TypeBind,
+				Source:   src,
+				Target:   vm.MountPath,
+				ReadOnly: vm.ReadOnly,
+			})
 		}
-		extraMounts = append(extraMounts, mount.Mount{
-			Type:     mount.TypeBind,
-			Source:   src,
-			Target:   vm.MountPath,
-			ReadOnly: vm.ReadOnly,
-		})
 	}
 
 	env := make([]string, 0, len(step.Env))
