@@ -1,5 +1,13 @@
 # StepActions (`tekton.dev/v1beta1`) — Implementation Plan
 
+> **Migration note (2026-05-13):** This plan was authored before the
+> agent-guide folder split (spec `2026-05-13-agent-guide-folder-design.md`).
+> Wherever it says "update `AGENTS.md` / mirror to `agentguide_data.md`",
+> read that as: edit the matching file in `docs/agent-guide/` and re-run
+> `go generate ./cmd/tkn-act/` (or `make agentguide`) so
+> `cmd/tkn-act/agentguide_data/` mirrors it. AGENTS.md is now the
+> contributor guide and is no longer mirrored into the binary.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Honor Tekton's `StepAction` (`apiVersion: tekton.dev/v1beta1`,

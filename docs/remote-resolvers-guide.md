@@ -11,7 +11,7 @@ any resolver the remote Tekton controller already has installed
 the cluster operator has registered).
 
 For the design background and the catalog of direct resolvers, see
-[`AGENTS.md`](../AGENTS.md#resolvers-track-1-9-shipped) and
+[`docs/agent-guide/resolvers.md`](agent-guide/resolvers.md) and
 [`docs/superpowers/plans/2026-05-04-resolvers.md`](superpowers/plans/2026-05-04-resolvers.md).
 
 ---
@@ -356,7 +356,7 @@ controller has registered.
 
 ## See also
 
-- [`AGENTS.md`](../AGENTS.md#resolvers-track-1-9-shipped) — full
+- [`docs/agent-guide/resolvers.md`](agent-guide/resolvers.md) — full
   field-by-field semantics, including direct-mode resolver tables.
 - [`docs/superpowers/plans/2026-05-04-resolvers.md`](superpowers/plans/2026-05-04-resolvers.md)
   — implementation plan for all six resolver phases.

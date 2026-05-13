@@ -49,7 +49,7 @@ func newHelpJSONCmd() *cobra.Command {
 in the tkn-act CLI. AI agents can use this to construct correct invocations
 without scraping the human-facing --help output.
 
-The shape is documented in AGENTS.md and is part of tkn-act's public contract.`,
+The shape is documented under docs/agent-guide/ and is part of tkn-act's public contract.`,
 		Example: `  tkn-act help-json | jq '.commands[] | .path'`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			root := cmd.Root()

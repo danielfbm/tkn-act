@@ -8,8 +8,10 @@
 #
 #   make quickstart   # doctor -> build -> cluster-up -> hello-cluster
 #
-# See `make help` for the full menu and AGENTS.md for the agent / JSON
-# contract.
+# See `make help` for the full menu. AGENTS.md is the contributor
+# guide (merge policy, test/coverage gates, doc-sync rule). The user
+# guide for AI agents / scripts using tkn-act lives under
+# docs/agent-guide/ (also printed by `tkn-act agent-guide`).
 
 GO         ?= go
 BIN_DIR    ?= bin
@@ -42,14 +44,15 @@ build: agentguide
 	@mkdir -p $(BIN_DIR)
 	CGO_ENABLED=0 $(GO) build -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/tkn-act
 
-## agentguide: Refresh cmd/tkn-act/agentguide_data.md from AGENTS.md.
+## agentguide: Refresh cmd/tkn-act/agentguide_data/ from docs/agent-guide/.
 agentguide:
-	@cp AGENTS.md cmd/tkn-act/agentguide_data.md
+	@$(GO) generate ./cmd/tkn-act/
 
-## check-agentguide: Fail if the embedded agent guide drifted from AGENTS.md.
+## check-agentguide: Fail if the embedded agent-guide tree drifted from docs/agent-guide/.
 check-agentguide:
-	@cmp -s AGENTS.md cmd/tkn-act/agentguide_data.md || \
-	  (echo "cmd/tkn-act/agentguide_data.md is out of sync with AGENTS.md; run 'make agentguide'" >&2; exit 1)
+	@$(GO) generate ./cmd/tkn-act/
+	@git diff --quiet -- cmd/tkn-act/agentguide_data/ || \
+	  (echo "cmd/tkn-act/agentguide_data/ is out of sync with docs/agent-guide/; run 'make agentguide' and commit" >&2; exit 1)
 
 ## doctor: Check docker/k3d/kubectl on PATH and run `tkn-act doctor`.
 doctor: build
@@ -85,7 +88,7 @@ quickstart: doctor build cluster-up hello-cluster
 	@echo "Quickstart complete. Next steps:"
 	@echo "  - Browse targets:        make help"
 	@echo "  - Try other commands:    ./$(BINARY) {run,validate,list} --help"
-	@echo "  - JSON / agent contract: see AGENTS.md (or ./$(BINARY) agent-guide)"
+	@echo "  - JSON / agent contract: see docs/agent-guide/ (or ./$(BINARY) agent-guide)"
 	@echo "  - When done, tear down:  make cluster-down"
 
 ## test: Run unit tests (race detector, no caching).
