@@ -106,6 +106,11 @@ see section names, and --section <name> to print one section.`,
 	return cmd
 }
 
+// runListSections renders the curated section list. The `-o json`
+// branch reads `gf.output` (set by the persistent root flag) rather
+// than a per-command flag — matches the pattern every other command
+// in this package follows. Tests that exercise the JSON branch must
+// set `gf.output = "json"` and restore it on cleanup.
 func runListSections(out io.Writer) error {
 	sections := AgentGuideSections()
 	if gf.output == "json" {

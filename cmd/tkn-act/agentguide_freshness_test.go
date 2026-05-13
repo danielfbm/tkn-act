@@ -4,42 +4,39 @@ import (
 	"bytes"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/danielfbm/tkn-act/cmd/tkn-act/internal/agentguide"
 )
 
-// TestAgentGuideFreshness re-runs the generator into a tempdir and
-// compares the result against the checked-in cmd/tkn-act/agentguide_data
-// tree. A mismatch means somebody edited docs/agent-guide/ without
-// running `go generate ./cmd/tkn-act/` (or `make agentguide`).
+// TestAgentGuideFreshness regenerates the embedded agent-guide tree
+// into a tempdir using the same library function the `agentguide-gen`
+// binary calls (no `go run` shell-out), then compares the result
+// against the checked-in cmd/tkn-act/agentguide_data/ tree. A
+// mismatch means somebody edited docs/agent-guide/ without running
+// `go generate ./cmd/tkn-act/` (or `make agentguide`).
 //
 // This test lives in the default test set so the existing
-// `tests-required` and `coverage` CI gates catch the drift.
+// `tests-required` and `coverage` CI gates catch drift.
 func TestAgentGuideFreshness(t *testing.T) {
 	repoRoot, err := findRepoRoot()
 	if err != nil {
-		t.Skipf("cannot locate repo root: %v", err)
+		t.Fatalf("locate repo root: %v", err)
 	}
 	src := filepath.Join(repoRoot, "docs", "agent-guide")
 	if _, err := os.Stat(src); err != nil {
-		t.Skipf("docs/agent-guide not present at %s: %v", src, err)
+		// Hard failure: a missing source folder is a refactor break,
+		// not an environmental skip.
+		t.Fatalf("docs/agent-guide not present at %s: %v", src, err)
 	}
 
 	dst := t.TempDir()
-
-	cmd := exec.Command("go", "run", "./internal/agentguide-gen",
-		"-src", src,
-		"-dst", dst,
-	)
-	cmd.Dir = filepath.Join(repoRoot, "cmd", "tkn-act")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("regenerate: %v\noutput:\n%s", err, out)
+	if err := agentguide.Generate(src, dst); err != nil {
+		t.Fatalf("regenerate: %v", err)
 	}
 
-	// Diff dst (freshly generated) against the embedded tree.
 	embeddedDir := filepath.Join(repoRoot, "cmd", "tkn-act", agentGuideDataDir)
 	diffs := compareTrees(t, dst, embeddedDir)
 	if len(diffs) > 0 {

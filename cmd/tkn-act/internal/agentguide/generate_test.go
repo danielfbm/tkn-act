@@ -1,4 +1,4 @@
-package main
+package agentguide
 
 import (
 	"os"
@@ -6,19 +6,18 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/danielfbm/tkn-act/cmd/tkn-act/internal/agentguide"
 )
 
-// writeSrc lays down a src tree with one file per entry in
-// agentguide.Order, content = section name. README.md for "overview".
+// writeSrc lays down a src tree with one file per entry in Order
+// (README.md for "overview"). Body marks each section so tests can
+// confirm content lands in the right place.
 func writeSrc(t *testing.T, root string) {
 	t.Helper()
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, section := range agentguide.Order {
-		path := filepath.Join(root, agentguide.FileName(section))
+	for _, section := range Order {
+		path := filepath.Join(root, FileName(section))
 		body := "## " + section + "\n\nhello from " + section + "\n"
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
@@ -26,18 +25,18 @@ func writeSrc(t *testing.T, root string) {
 	}
 }
 
-func TestRunHappyPath(t *testing.T) {
+func TestGenerateHappyPath(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	dst := filepath.Join(root, "dst")
 	writeSrc(t, src)
 
-	if err := run(src, dst); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := Generate(src, dst); err != nil {
+		t.Fatalf("Generate: %v", err)
 	}
 
-	for _, section := range agentguide.Order {
-		path := filepath.Join(dst, agentguide.FileName(section))
+	for _, section := range Order {
+		path := filepath.Join(dst, FileName(section))
 		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
@@ -54,31 +53,29 @@ func TestRunHappyPath(t *testing.T) {
 	}
 }
 
-func TestRunIdempotent(t *testing.T) {
+func TestGenerateIdempotent(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	dst := filepath.Join(root, "dst")
 	writeSrc(t, src)
 
-	if err := run(src, dst); err != nil {
-		t.Fatalf("run #1: %v", err)
+	if err := Generate(src, dst); err != nil {
+		t.Fatalf("Generate #1: %v", err)
 	}
-	// Backdate the destination files; the generator should skip the
-	// rewrite on the second run because source bytes are unchanged.
 	stale := time.Unix(1700000000, 0)
-	for _, section := range agentguide.Order {
-		path := filepath.Join(dst, agentguide.FileName(section))
+	for _, section := range Order {
+		path := filepath.Join(dst, FileName(section))
 		if err := os.Chtimes(path, stale, stale); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if err := run(src, dst); err != nil {
-		t.Fatalf("run #2: %v", err)
+	if err := Generate(src, dst); err != nil {
+		t.Fatalf("Generate #2: %v", err)
 	}
 
-	for _, section := range agentguide.Order {
-		path := filepath.Join(dst, agentguide.FileName(section))
+	for _, section := range Order {
+		path := filepath.Join(dst, FileName(section))
 		info, err := os.Stat(path)
 		if err != nil {
 			t.Fatal(err)
@@ -89,19 +86,18 @@ func TestRunIdempotent(t *testing.T) {
 	}
 }
 
-func TestRunMissingSourceFile(t *testing.T) {
+func TestGenerateMissingSourceFile(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	dst := filepath.Join(root, "dst")
 	writeSrc(t, src)
 
-	// Delete one expected file.
-	target := filepath.Join(src, agentguide.FileName("matrix"))
+	target := filepath.Join(src, FileName("matrix"))
 	if err := os.Remove(target); err != nil {
 		t.Fatal(err)
 	}
 
-	err := run(src, dst)
+	err := Generate(src, dst)
 	if err == nil {
 		t.Fatal("expected error for missing file; got nil")
 	}
@@ -110,19 +106,18 @@ func TestRunMissingSourceFile(t *testing.T) {
 	}
 }
 
-func TestRunExtraSourceFile(t *testing.T) {
+func TestGenerateExtraSourceFile(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	dst := filepath.Join(root, "dst")
 	writeSrc(t, src)
 
-	// Add an extra .md not in the order.
 	extra := filepath.Join(src, "extra-section.md")
 	if err := os.WriteFile(extra, []byte("## extra\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	err := run(src, dst)
+	err := Generate(src, dst)
 	if err == nil {
 		t.Fatal("expected error for extra file; got nil")
 	}
@@ -131,7 +126,7 @@ func TestRunExtraSourceFile(t *testing.T) {
 	}
 }
 
-func TestRunRemovesStaleDstFile(t *testing.T) {
+func TestGenerateRemovesStaleDstMD(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	dst := filepath.Join(root, "dst")
@@ -145,35 +140,69 @@ func TestRunRemovesStaleDstFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := run(src, dst); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := Generate(src, dst); err != nil {
+		t.Fatalf("Generate: %v", err)
 	}
 
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Errorf("stale file %s should have been removed; stat err=%v", stale, err)
+		t.Errorf("stale .md file %s should have been removed; stat err=%v", stale, err)
 	}
 }
 
-func TestRunNormalizesTrailingWhitespace(t *testing.T) {
+func TestGenerateRemovesStaleDstNonMD(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	writeSrc(t, src)
+
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	junk := filepath.Join(dst, "leftover.txt")
+	if err := os.WriteFile(junk, []byte("scratch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	junkDir := filepath.Join(dst, "abandoned-subdir")
+	if err := os.MkdirAll(junkDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	junkChild := filepath.Join(junkDir, "child.md")
+	if err := os.WriteFile(junkChild, []byte("## child\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Generate(src, dst); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	if _, err := os.Stat(junk); !os.IsNotExist(err) {
+		t.Errorf("non-md leftover should be swept; %s still present (err=%v)", junk, err)
+	}
+	if _, err := os.Stat(junkDir); !os.IsNotExist(err) {
+		t.Errorf("leftover subdirectory should be swept; %s still present (err=%v)", junkDir, err)
+	}
+}
+
+func TestGenerateNormalizesTrailingWhitespace(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	dst := filepath.Join(root, "dst")
 	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, section := range agentguide.Order {
-		path := filepath.Join(src, agentguide.FileName(section))
-		body := "## " + section + "\n\nhello\n\n\n   \n" // extra trailing whitespace
+	for _, section := range Order {
+		path := filepath.Join(src, FileName(section))
+		body := "## " + section + "\n\nhello\n\n\n   \n"
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if err := run(src, dst); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := Generate(src, dst); err != nil {
+		t.Fatalf("Generate: %v", err)
 	}
 
-	path := filepath.Join(dst, agentguide.FileName("overview"))
+	path := filepath.Join(dst, FileName("overview"))
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
