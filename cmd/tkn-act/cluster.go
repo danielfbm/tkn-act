@@ -9,10 +9,32 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/danielfbm/tkn-act/internal/backend"
+	clusterbe "github.com/danielfbm/tkn-act/internal/backend/cluster"
 	"github.com/danielfbm/tkn-act/internal/cluster/k3d"
+	"github.com/danielfbm/tkn-act/internal/cluster/tekton"
 	"github.com/danielfbm/tkn-act/internal/exitcode"
 	"github.com/spf13/cobra"
 )
+
+// envTektonVersion is the environment variable that overrides the
+// built-in Tekton install version when the user hasn't passed
+// `--tekton-version`. The CI cluster-integration matrix sets this per
+// matrix leg; on-prem operators can set it once in their shell.
+const envTektonVersion = "TKN_ACT_TEKTON_VERSION"
+
+// resolveTektonVersion picks the Tekton version to install on
+// `tkn-act cluster up`. Precedence (highest first): the explicit flag,
+// then $TKN_ACT_TEKTON_VERSION, then the in-binary default.
+func resolveTektonVersion(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	if v := os.Getenv(envTektonVersion); v != "" {
+		return v
+	}
+	return tekton.DefaultTektonVersion
+}
 
 type clusterStatus struct {
 	Name       string `json:"name"`
@@ -38,20 +60,36 @@ Requires k3d and kubectl on PATH; run 'tkn-act doctor' to verify.`,
 }
 
 func newClusterUpCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:     "up",
-		Short:   "Create the local cluster and install Tekton (idempotent)",
-		Example: `  tkn-act cluster up`,
+	var tektonVersion string
+	cmd := &cobra.Command{
+		Use:   "up",
+		Short: "Create the local cluster and install Tekton (idempotent)",
+		Example: `  # install the default Tekton LTS
+  tkn-act cluster up
+
+  # pin to a specific Tekton release (also reads $TKN_ACT_TEKTON_VERSION)
+  tkn-act cluster up --tekton-version v1.3.0`,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			ctx := context.Background()
 			drv := newDriver()
-			if err := drv.Ensure(context.Background()); err != nil {
+			version := resolveTektonVersion(tektonVersion)
+			cb := clusterbe.New(clusterbe.Options{
+				CacheDir:      cacheDir(),
+				Driver:        drv,
+				TektonVersion: version,
+			})
+			if err := cb.Prepare(ctx, backend.RunSpec{}); err != nil {
 				return exitcode.Wrap(exitcode.Env, err)
 			}
-			fmt.Println("cluster ready:", drv.Name())
-			fmt.Println("kubeconfig:", drv.Kubeconfig())
+			fmt.Println("cluster ready:   ", drv.Name())
+			fmt.Println("kubeconfig:      ", drv.Kubeconfig())
+			fmt.Println("tekton version:  ", version)
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&tektonVersion, "tekton-version", "",
+		"Tekton Pipelines version to install (env: "+envTektonVersion+"; default: "+tekton.DefaultTektonVersion+")")
+	return cmd
 }
 
 func newClusterDownCmd() *cobra.Command {

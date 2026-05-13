@@ -15,6 +15,38 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
+// TestNewDefaultVersion: tekton.New with empty Options.Version picks up
+// DefaultTektonVersion. Guards against accidental drift between the
+// exported constant and the in-binary default.
+func TestNewDefaultVersion(t *testing.T) {
+	apiextCli := apiextfake.NewSimpleClientset()
+	kube := fake.NewSimpleClientset(readyControllerDeployment(), readyWebhookDeployment())
+	runner := cmdrunner.NewFake()
+	expected := "kubectl --kubeconfig /tmp/kc apply -f https://github.com/tektoncd/pipeline/releases/download/" + tekton.DefaultTektonVersion + "/release.yaml"
+	runner.Set(expected, []byte("ok"), nil)
+	inst := tekton.New(tekton.Options{
+		Kubeconfig: "/tmp/kc",
+		Runner:     runner.Runner(),
+		Apiext:     apiextCli,
+		Kube:       kube,
+		// Version intentionally left empty — must default.
+	})
+	if err := inst.Install(context.Background()); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	var found bool
+	for _, c := range runner.Calls() {
+		if c == expected {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("installer did not call kubectl apply with DefaultTektonVersion (%q); calls=%v",
+			tekton.DefaultTektonVersion, runner.Calls())
+	}
+}
+
 func TestSkipsIfCRDPresent(t *testing.T) {
 	apiextCli := apiextfake.NewSimpleClientset(&apiext.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{Name: "pipelines.tekton.dev"},
@@ -27,7 +59,7 @@ func TestSkipsIfCRDPresent(t *testing.T) {
 		Runner:     runner.Runner(),
 		Apiext:     apiextCli,
 		Kube:       kube,
-		Version:    "v0.65.0",
+		Version:    tekton.DefaultTektonVersion,
 	})
 	if err := inst.Install(context.Background()); err != nil {
 		t.Fatalf("install: %v", err)
@@ -43,13 +75,13 @@ func TestAppliesIfCRDMissing(t *testing.T) {
 	apiextCli := apiextfake.NewSimpleClientset()
 	kube := fake.NewSimpleClientset(readyControllerDeployment(), readyWebhookDeployment())
 	runner := cmdrunner.NewFake()
-	runner.Set("kubectl --kubeconfig /tmp/kc apply -f https://storage.googleapis.com/tekton-releases/pipeline/previous/v0.65.0/release.yaml", []byte("ok"), nil)
+	runner.Set("kubectl --kubeconfig /tmp/kc apply -f https://github.com/tektoncd/pipeline/releases/download/"+tekton.DefaultTektonVersion+"/release.yaml", []byte("ok"), nil)
 	inst := tekton.New(tekton.Options{
 		Kubeconfig: "/tmp/kc",
 		Runner:     runner.Runner(),
 		Apiext:     apiextCli,
 		Kube:       kube,
-		Version:    "v0.65.0",
+		Version:    tekton.DefaultTektonVersion,
 	})
 	if err := inst.Install(context.Background()); err != nil {
 		t.Fatalf("install: %v", err)
@@ -60,13 +92,13 @@ func TestApplyFailureBubbles(t *testing.T) {
 	apiextCli := apiextfake.NewSimpleClientset()
 	kube := fake.NewSimpleClientset()
 	runner := cmdrunner.NewFake()
-	runner.Set("kubectl --kubeconfig /tmp/kc apply -f https://storage.googleapis.com/tekton-releases/pipeline/previous/v0.65.0/release.yaml", nil, errors.New("boom"))
+	runner.Set("kubectl --kubeconfig /tmp/kc apply -f https://github.com/tektoncd/pipeline/releases/download/"+tekton.DefaultTektonVersion+"/release.yaml", nil, errors.New("boom"))
 	inst := tekton.New(tekton.Options{
 		Kubeconfig: "/tmp/kc",
 		Runner:     runner.Runner(),
 		Apiext:     apiextCli,
 		Kube:       kube,
-		Version:    "v0.65.0",
+		Version:    tekton.DefaultTektonVersion,
 	})
 	if err := inst.Install(context.Background()); err == nil {
 		t.Fatal("expected error")
@@ -88,13 +120,13 @@ func TestEnablesStepActionsFlag(t *testing.T) {
 		},
 	)
 	runner := cmdrunner.NewFake()
-	runner.Set("kubectl --kubeconfig /tmp/kc apply -f https://storage.googleapis.com/tekton-releases/pipeline/previous/v0.65.0/release.yaml", []byte("ok"), nil)
+	runner.Set("kubectl --kubeconfig /tmp/kc apply -f https://github.com/tektoncd/pipeline/releases/download/"+tekton.DefaultTektonVersion+"/release.yaml", []byte("ok"), nil)
 	inst := tekton.New(tekton.Options{
 		Kubeconfig: "/tmp/kc",
 		Runner:     runner.Runner(),
 		Apiext:     apiextCli,
 		Kube:       kube,
-		Version:    "v0.65.0",
+		Version:    tekton.DefaultTektonVersion,
 	})
 	if err := inst.Install(context.Background()); err != nil {
 		t.Fatalf("install: %v", err)
@@ -118,13 +150,13 @@ func TestEnablesStepActionsFlagCreatesIfMissing(t *testing.T) {
 	apiextCli := apiextfake.NewSimpleClientset()
 	kube := fake.NewSimpleClientset(readyControllerDeployment(), readyWebhookDeployment())
 	runner := cmdrunner.NewFake()
-	runner.Set("kubectl --kubeconfig /tmp/kc apply -f https://storage.googleapis.com/tekton-releases/pipeline/previous/v0.65.0/release.yaml", []byte("ok"), nil)
+	runner.Set("kubectl --kubeconfig /tmp/kc apply -f https://github.com/tektoncd/pipeline/releases/download/"+tekton.DefaultTektonVersion+"/release.yaml", []byte("ok"), nil)
 	inst := tekton.New(tekton.Options{
 		Kubeconfig: "/tmp/kc",
 		Runner:     runner.Runner(),
 		Apiext:     apiextCli,
 		Kube:       kube,
-		Version:    "v0.65.0",
+		Version:    tekton.DefaultTektonVersion,
 	})
 	if err := inst.Install(context.Background()); err != nil {
 		t.Fatalf("install: %v", err)

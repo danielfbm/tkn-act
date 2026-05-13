@@ -63,16 +63,22 @@ func (s *captureSink) snapshot() []reporter.Event {
 // table — the per-fixture cost should be one PipelineRun, not a fresh
 // cluster bring-up. Each subtest creates an ephemeral namespace inside
 // that shared cluster.
+//
+// The `TKN_ACT_TEKTON_VERSION` env var, when set, overrides the
+// in-binary `DefaultTektonVersion`. The cluster-integration CI workflow
+// sets it per matrix leg so each LTS leg runs the full fixture table
+// against the requested Tekton release.
 func TestClusterE2E(t *testing.T) {
 	dir := t.TempDir()
 	kubecfg := filepath.Join(dir, "kubeconfig")
 	cmStore := volumes.NewStore("")
 	secStore := volumes.NewStore("")
 	cb := clusterbe.New(clusterbe.Options{
-		CacheDir:   dir,
-		Driver:     k3d.New(k3d.Options{ClusterName: "tkn-act-e2e", KubeconfigPath: kubecfg}),
-		ConfigMaps: cmStore,
-		Secrets:    secStore,
+		CacheDir:      dir,
+		Driver:        k3d.New(k3d.Options{ClusterName: "tkn-act-e2e", KubeconfigPath: kubecfg}),
+		ConfigMaps:    cmStore,
+		Secrets:       secStore,
+		TektonVersion: os.Getenv("TKN_ACT_TEKTON_VERSION"),
 	})
 	t.Cleanup(func() { _ = cb.Cleanup(context.Background()) })
 

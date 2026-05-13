@@ -55,7 +55,7 @@ func New(opt Options) *Backend {
 		opt.Runner = cmdrunner.New()
 	}
 	if opt.TektonVersion == "" {
-		opt.TektonVersion = "v0.65.0"
+		opt.TektonVersion = tekton.DefaultTektonVersion
 	}
 	return &Backend{opt: opt}
 }
@@ -74,6 +74,13 @@ func NewWithClientsAndStores(cb ClientBundle, cm, sec *volumes.Store) *Backend {
 // driving the full RunPipeline watch loop.
 func (b *Backend) ApplyVolumeSourcesForTest(ctx context.Context, in backend.PipelineRunInvocation, ns string) error {
 	return b.applyVolumeSources(ctx, in, ns)
+}
+
+// WaitForDefaultServiceAccountForTest re-exposes the package-private SA
+// wait used by ensureNamespace so the run_namespace_test can drive it
+// against a fake client.
+func (b *Backend) WaitForDefaultServiceAccountForTest(ctx context.Context, ns string, timeout time.Duration) error {
+	return b.waitForDefaultServiceAccount(ctx, ns, timeout)
 }
 
 // CollectTaskOutcomesForTest re-exposes collectTaskOutcomes so the

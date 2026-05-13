@@ -54,7 +54,40 @@ func (b *Backend) ensureNamespace(ctx context.Context, name string) error {
 	if err != nil && !strings.Contains(err.Error(), "already exists") {
 		return fmt.Errorf("create namespace %q: %w", name, err)
 	}
-	return nil
+	// Wait for the default ServiceAccount to be provisioned by the
+	// service-account controller before submitting the PipelineRun.
+	// Kubernetes' SA controller is asynchronous, and Tekton's
+	// reconciler does not wait — TaskRun pod creation fails with
+	// `serviceaccounts "default" not found. Maybe invalid TaskSpec`
+	// whenever the reconciler is faster than the SA controller. The
+	// 2026-05-13 cluster-CI matrix surfaced this against Tekton
+	// v1.12.0; older pins (v0.65, v1.3.0) happened to never race in
+	// practice, but the gap is timing, not version-specific. 30s
+	// matches Tekton's own integration tests.
+	return b.waitForDefaultServiceAccount(ctx, name, 30*time.Second)
+}
+
+// waitForDefaultServiceAccount polls the namespace until the `default`
+// ServiceAccount exists (created by Kubernetes' SA controller) or the
+// timeout elapses. 100ms poll interval matches the cadence used by
+// Tekton's e2e tests; raising it would slow per-fixture turn-around
+// in the common case where the SA appears within a few hundred ms.
+func (b *Backend) waitForDefaultServiceAccount(ctx context.Context, ns string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		_, err := b.client.Kube.CoreV1().ServiceAccounts(ns).Get(ctx, "default", metav1.GetOptions{})
+		if err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("default ServiceAccount not provisioned in namespace %q within %v: %w", ns, timeout, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 // buildPipelineRun returns a fully populated unstructured PipelineRun with
@@ -207,13 +240,16 @@ func taskSpecToMap(ts tektontypes.TaskSpec) map[string]any {
 	if m == nil {
 		m = map[string]any{}
 	}
-	// Tekton v1 Step (as of v0.65) has no `displayName` or `description`
-	// fields — only Pipeline.spec, PipelineTask, and TaskSpec do. The
-	// admission webhook strict-decodes the inlined PipelineRun and
-	// rejects unknown fields, so strip them from the serialised steps
-	// before submission. tkn-act's docker backend consumes Step.
-	// DisplayName / Description locally; cluster mode doesn't need to
-	// round-trip them through the Tekton controller.
+	// Strip Step.displayName / Step.description before submission.
+	// History: Tekton v0.65 (tkn-act's first cluster pin) had neither
+	// field on Step — only Pipeline.spec, PipelineTask, and TaskSpec
+	// did. As of v1.12 (current LTS pin) Step.displayName exists but
+	// Step.description still doesn't, so a wholesale strip is still
+	// defensive. The admission webhook strict-decodes the inlined
+	// PipelineRun and rejects unknown fields. tkn-act's docker backend
+	// is the source of truth for both: it consumes Step.DisplayName /
+	// Description locally, so cluster mode doesn't need to round-trip
+	// them through the Tekton controller.
 	if steps, ok := m["steps"].([]any); ok {
 		for i, s := range steps {
 			sm, ok := s.(map[string]any)

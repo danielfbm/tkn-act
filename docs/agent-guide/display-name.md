@@ -21,10 +21,13 @@ consumed in two places: the `step-log` JSON event (above) and pretty
 output's log-line prefix.
 
 In cluster mode, `Step.displayName` and `Step.description` are
-**stripped** from the inlined PipelineRun before submission to Tekton
-— the upstream Tekton v1 `Step` schema (as of v0.65) has no such
-fields, and the admission webhook rejects unknown fields on strict
-decode. The fields still surface on tkn-act's JSON event stream and
+**stripped** from the inlined PipelineRun before submission to Tekton.
+History: through v0.65 (tkn-act's first cluster pin) the upstream `Step`
+schema had neither field; as of v1.12 (current LTS default)
+`Step.displayName` is supported but `Step.description` still isn't.
+The admission webhook strict-decodes and rejects unknown fields, so
+stripping both is defensive across the matrix of supported Tekton
+versions. The fields still surface on tkn-act's JSON event stream and
 pretty output the same way they do under docker, since cluster mode
 reads them from the input bundle (not the controller verdict) when
 emitting events. Pipeline-, PipelineTask-, and TaskSpec-level

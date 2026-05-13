@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	clienttesting "k8s.io/client-go/testing"
 )
 
 // gvrFor* mirror the production constants in run.go but live in the
@@ -43,6 +44,27 @@ func fakeBackend(t *testing.T, prObjs ...runtime.Object) (*cluster.Backend, *dyn
 	}
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, gvrToList, prObjs...)
 	kube := kubefake.NewSimpleClientset()
+	// Production `ensureNamespace` now waits for the default
+	// ServiceAccount before submitting the PipelineRun (Tekton v1.12+
+	// races the SA controller). Real kube clusters create it
+	// automatically; the fake clientset does not. Install a reactor
+	// that satisfies the wait by returning a synthetic SA for any
+	// namespace.
+	//
+	// NOTE: a test asserting that `waitForDefaultServiceAccount`
+	// actually times out / errors when the SA is missing MUST NOT use
+	// this helper — the reactor here would silently satisfy the wait.
+	// `run_namespace_test.go` constructs its own kubefake clientset
+	// (and optionally a NotFound reactor) for that scenario.
+	kube.PrependReactor("get", "serviceaccounts", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		ga := action.(clienttesting.GetAction)
+		if ga.GetName() == "default" {
+			return true, &corev1.ServiceAccount{
+				ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: ga.GetNamespace()},
+			}, nil
+		}
+		return false, nil, nil
+	})
 	cm := volumes.NewStore("")
 	sec := volumes.NewStore("")
 	be := cluster.NewWithClientsAndStores(cluster.ClientBundle{Dynamic: dyn, Kube: kube}, cm, sec)
@@ -886,11 +908,12 @@ func TestRunPipelineSurfacesResults(t *testing.T) {
 // hand-written conversion can't silently drop these fields.
 //
 // Step-level displayName / description are intentionally NOT carried
-// onto the inlined PipelineRun: Tekton v1 Step (as of v0.65) has no
-// such fields, and the admission webhook rejects unknown fields. We
-// consume them locally for the docker backend and on the JSON event
-// stream; the cluster backend strips them in taskSpecToMap before
-// submission. This test asserts the strip happens.
+// onto the inlined PipelineRun: through v1.12 (current LTS pin) Step
+// has at most displayName (no description), and historically v0.65
+// had neither. The admission webhook strict-decodes and rejects
+// unknown fields. We consume both locally for the docker backend and
+// on the JSON event stream; the cluster backend strips them in
+// taskSpecToMap before submission. This test asserts the strip happens.
 func TestBuildPipelineRunRoundTripsDisplayName(t *testing.T) {
 	be, _, _, _, _ := fakeBackend(t)
 
