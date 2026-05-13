@@ -59,7 +59,7 @@ func newSSHDialer(dockerHost string) (func(ctx context.Context, network, addr st
 		return nil, err
 	}
 	if len(auths) == 0 {
-		return nil, fmt.Errorf("no SSH authentication available for %s: try `ssh-add <key>` or set SSH_AUTH_SOCK", dockerHost)
+		return nil, fmt.Errorf("no SSH authentication available for %s: try `ssh-add <key>` or set SSH_AUTH_SOCK", redactURL(dockerHost))
 	}
 
 	hostKey, err := loadHostKeyCallback()
