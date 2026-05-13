@@ -44,9 +44,9 @@ type Backend struct {
 }
 
 func New(opts Options) (*Backend, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := newDockerClient(os.Getenv("DOCKER_HOST"))
 	if err != nil {
-		return nil, fmt.Errorf("docker client: %w", err)
+		return nil, err
 	}
 	if _, err := cli.Ping(context.Background()); err != nil {
 		return nil, fmt.Errorf("docker daemon not reachable: %w", err)
@@ -58,6 +58,32 @@ func New(opts Options) (*Backend, error) {
 		opts.SidecarStopGrace = 30 * time.Second
 	}
 	return &Backend{cli: cli, opts: opts}, nil
+}
+
+// newDockerClient builds a moby client honoring DOCKER_HOST including
+// the ssh:// scheme — which client.FromEnv alone does not understand.
+// For unix:// and tcp:// the moby SDK's normal env handling is used.
+func newDockerClient(dockerHost string) (*client.Client, error) {
+	if strings.HasPrefix(dockerHost, "ssh://") {
+		dialer, err := newSSHDialer(dockerHost)
+		if err != nil {
+			return nil, fmt.Errorf("ssh transport: %w", err)
+		}
+		cli, err := client.NewClientWithOpts(
+			client.WithAPIVersionNegotiation(),
+			client.WithHost("unix://"+remoteSocketPath()),
+			client.WithDialContext(dialer),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("docker client (ssh): %w", err)
+		}
+		return cli, nil
+	}
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, fmt.Errorf("docker client: %w", err)
+	}
+	return cli, nil
 }
 
 func (b *Backend) Prepare(ctx context.Context, run backend.RunSpec) error {
