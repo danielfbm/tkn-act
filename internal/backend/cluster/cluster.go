@@ -76,6 +76,13 @@ func (b *Backend) ApplyVolumeSourcesForTest(ctx context.Context, in backend.Pipe
 	return b.applyVolumeSources(ctx, in, ns)
 }
 
+// WaitForDefaultServiceAccountForTest re-exposes the package-private SA
+// wait used by ensureNamespace so the run_namespace_test can drive it
+// against a fake client.
+func (b *Backend) WaitForDefaultServiceAccountForTest(ctx context.Context, ns string, timeout time.Duration) error {
+	return b.waitForDefaultServiceAccount(ctx, ns, timeout)
+}
+
 // CollectTaskOutcomesForTest re-exposes collectTaskOutcomes so the
 // retries_test can drive the per-TaskRun walk against pre-seeded fake
 // objects without going through Create+Watch.

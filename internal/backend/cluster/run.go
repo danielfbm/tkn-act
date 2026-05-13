@@ -54,7 +54,37 @@ func (b *Backend) ensureNamespace(ctx context.Context, name string) error {
 	if err != nil && !strings.Contains(err.Error(), "already exists") {
 		return fmt.Errorf("create namespace %q: %w", name, err)
 	}
-	return nil
+	// Wait for the default ServiceAccount to be provisioned by the
+	// service-account controller before submitting the PipelineRun.
+	// Without this, Tekton v1.12+ races the SA controller and the
+	// TaskRun pod creation fails with `serviceaccounts "default" not
+	// found. Maybe invalid TaskSpec`. v0.65 and v1.3.0 happened to be
+	// slow enough to never hit the race; v1.12.0 exposed it on
+	// cluster-CI. 30s matches Tekton's own integration tests.
+	return b.waitForDefaultServiceAccount(ctx, name, 30*time.Second)
+}
+
+// waitForDefaultServiceAccount polls the namespace until the `default`
+// ServiceAccount exists (created by Kubernetes' SA controller) or the
+// timeout elapses. 100ms poll interval matches the cadence used by
+// Tekton's e2e tests; raising it would slow per-fixture turn-around
+// in the common case where the SA appears within a few hundred ms.
+func (b *Backend) waitForDefaultServiceAccount(ctx context.Context, ns string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		_, err := b.client.Kube.CoreV1().ServiceAccounts(ns).Get(ctx, "default", metav1.GetOptions{})
+		if err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("default ServiceAccount not provisioned in namespace %q within %v: %w", ns, timeout, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 // buildPipelineRun returns a fully populated unstructured PipelineRun with
