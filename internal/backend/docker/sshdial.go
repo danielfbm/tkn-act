@@ -98,29 +98,48 @@ func newSSHDialer(dockerHost string) (func(ctx context.Context, network, addr st
 
 // parseSSHDockerHost extracts the SSH user and host:port from a
 // DOCKER_HOST=ssh://[user@]host[:port] URL.
+//
+// Errors quote the URL with userinfo redacted (url.URL.Redacted) so a
+// password or token in `ssh://user:secret@host` does not surface in
+// logs / shell history. The dialer is publickey-only so a password
+// URL never authenticates anyway, but echoing it back is dodgy
+// — Phase 4 made `--docker-host` a CLI flag, which puts URLs in
+// shell history and `ps`, so the redaction is worth the cost here.
 func parseSSHDockerHost(dockerHost string) (user, hostport string, err error) {
 	u, err := url.Parse(dockerHost)
 	if err != nil {
-		return "", "", fmt.Errorf("parse DOCKER_HOST %q: %w", dockerHost, err)
+		return "", "", fmt.Errorf("parse DOCKER_HOST %q: %w", redactURL(dockerHost), err)
 	}
 	if u.Scheme != "ssh" {
-		return "", "", fmt.Errorf("not an ssh URL: %q", dockerHost)
+		return "", "", fmt.Errorf("not an ssh URL: %q", u.Redacted())
 	}
 	if u.Hostname() == "" {
-		return "", "", fmt.Errorf("DOCKER_HOST %q: missing host", dockerHost)
+		return "", "", fmt.Errorf("DOCKER_HOST %q: missing host", u.Redacted())
 	}
 	user = u.User.Username()
 	if user == "" {
 		user = os.Getenv("USER")
 	}
 	if user == "" {
-		return "", "", fmt.Errorf("DOCKER_HOST %q: no SSH user (set user@host or $USER)", dockerHost)
+		return "", "", fmt.Errorf("DOCKER_HOST %q: no SSH user (set user@host or $USER)", u.Redacted())
 	}
 	port := u.Port()
 	if port == "" {
 		port = "22"
 	}
 	return user, net.JoinHostPort(u.Hostname(), port), nil
+}
+
+// redactURL returns the input with any URL userinfo replaced by
+// "xxxxx" (matches net/url.URL.Redacted). Used for the parse-failure
+// branch where url.Parse itself returned an error so we can't call
+// u.Redacted(); falls through to the raw string when redaction
+// can't safely apply.
+func redactURL(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.User != nil {
+		return u.Redacted()
+	}
+	return raw
 }
 
 // loadSSHAuthMethods builds publickey AuthMethods from the agent (if

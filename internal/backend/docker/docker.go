@@ -145,11 +145,12 @@ type daemonInfoer interface {
 	Info(ctx context.Context) (system.Info, error)
 }
 
-// decideRemote resolves the Options.Remote setting plus DOCKER_HOST
-// and (for "auto") a one-shot cli.Info() probe into a single bool.
-// Extracted so the policy is testable without a real daemon.
+// decideRemote resolves the Options.Remote setting plus the daemon
+// address (resolveDockerHost output: Options.Host > $DOCKER_HOST >
+// "") and (for "auto") a one-shot cli.Info() probe into a single
+// bool. Extracted so the policy is testable without a real daemon.
 //
-// Auto-detection rules: unix:// (or unset DOCKER_HOST) is local. Any
+// Auto-detection rules: unix:// (or empty dockerHost) is local. Any
 // other scheme triggers the Info probe — matching hostnames mean
 // local, mismatching mean remote, and any ambiguity (Info error,
 // empty daemon Name, missing client hostname) is reported as remote.
@@ -197,9 +198,12 @@ func (b *Backend) IsRemote() bool { return b.remote }
 //
 //   - ssh:// — in-tree dialer (Phase 1) wraps a unix-socket-shaped
 //     transport. client.FromEnv alone does not understand this scheme.
-//   - any other non-empty value — passed via client.WithHost so an
-//     Options.Host override (Phase 4 --docker-host) wins over
-//     $DOCKER_HOST without process-wide setenv.
+//   - any other non-empty value — host comes from the override,
+//     but $DOCKER_TLS_VERIFY / $DOCKER_CERT_PATH / $DOCKER_API_VERSION
+//     are still honored (matches what the agent-guide promises and
+//     what the env-only path does). client.FromEnv composes
+//     {host, tls, version}; we layer WithHost AFTER it so the host
+//     wins but the TLS+version loaders still apply.
 //   - empty — fall through to client.FromEnv so the moby SDK picks
 //     the platform default unix socket. Same behavior the binary
 //     had before Options.Host existed.
@@ -219,11 +223,13 @@ func newDockerClient(dockerHost string) (*client.Client, error) {
 		}
 		return cli, nil
 	}
-	opts := []client.Opt{client.WithAPIVersionNegotiation()}
+	// FromEnv first → applies host (if env-set), TLS, version;
+	// WithHost(dockerHost) last → overrides the host without
+	// disturbing the TLS/version loaders. When dockerHost is empty
+	// we skip the override and let FromEnv's host stand.
+	opts := []client.Opt{client.WithAPIVersionNegotiation(), client.FromEnv}
 	if dockerHost != "" {
 		opts = append(opts, client.WithHost(dockerHost))
-	} else {
-		opts = append(opts, client.FromEnv)
 	}
 	cli, err := client.NewClientWithOpts(opts...)
 	if err != nil {
