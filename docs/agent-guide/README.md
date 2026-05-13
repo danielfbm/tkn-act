@@ -157,7 +157,23 @@ esac
 - `XDG_CACHE_HOME` — base for the cache dir. Default
   `$HOME/.cache/tkn-act`. Holds workspace tmpdirs, kubeconfig, etc.
 - `DOCKER_HOST` / `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` — standard Docker
-  client env. Honored via `client.FromEnv`.
+  client env. Honored via `client.FromEnv`. `ssh://[user@]host[:port]`
+  is also supported via an in-tree dialer (publickey only —
+  `SSH_AUTH_SOCK` plus `~/.ssh/id_ed25519` / `id_rsa`; `~/.ssh/known_hosts`
+  is honored unless `TKN_ACT_SSH_INSECURE=1`). The remote daemon
+  socket defaults to `/var/run/docker.sock`; override with
+  `TKN_ACT_DOCKER_SOCKET`.
+- `TKN_ACT_REMOTE_DOCKER` — `auto` (default) | `on` | `off`. Forces
+  the docker backend's remote-mode detection. `on` switches to
+  per-run docker volume staging instead of bind-mounting host paths
+  the daemon can't see. `--remote-docker` is the per-invocation flag
+  (precedence: flag > env > `auto`).
+- `TKN_ACT_PAUSE_IMAGE` — overrides the per-Task pause container
+  image (and, in remote mode, the volume stager). Air-gap users
+  point this at an internal mirror tag like
+  `registry.internal/pause:3.9`. Default
+  `registry.k8s.io/pause:3.9`. `--pause-image` is the per-invocation
+  flag (precedence: flag > env > built-in default).
 - `KUBECONFIG` — used only by `--cluster` mode for kubectl interactions; the
   cluster driver writes its own kubeconfig under the cache dir.
 - `NO_COLOR` — any non-empty value disables color in pretty output (per

@@ -4,6 +4,8 @@ package docker_test
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +15,20 @@ import (
 	"github.com/danielfbm/tkn-act/internal/backend/docker"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 )
+
+// uniqueRunID returns a per-test RunID of the form "<prefix>-<hex>".
+// Fixed RunIDs would conflict on stager container name and volume
+// name across reruns when a previous test leaked resources (which
+// the per-run volume design is supposed to make impossible, but we
+// don't rely on that in test harnesses).
+func uniqueRunID(t *testing.T, prefix string) string {
+	t.Helper()
+	var buf [4]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		t.Fatalf("rand: %v", err)
+	}
+	return prefix + "-" + hex.EncodeToString(buf[:])
+}
 
 // TestRemoteStaging_ForcedOn_Hello runs the canonical hello-fixture
 // through the volume-staging path against the local daemon by forcing
@@ -29,14 +45,15 @@ func TestRemoteStaging_ForcedOn_Hello(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = be.Cleanup(ctx) })
 
-	if err := be.Prepare(ctx, backend.RunSpec{RunID: "stage-hello", Images: []string{"alpine:3"}}); err != nil {
+	runID := uniqueRunID(t, "stage-hello")
+	if err := be.Prepare(ctx, backend.RunSpec{RunID: runID, Images: []string{"alpine:3"}}); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 
 	logs := &captureLogs{}
 	resultsDir := t.TempDir()
 	res, err := be.RunTask(ctx, backend.TaskInvocation{
-		RunID: "stage-hello", TaskRunName: "tr-hello",
+		RunID: runID, TaskRunName: "tr-hello",
 		ResultsHost: resultsDir,
 		LogSink:     logs,
 		Task: tektontypes.TaskSpec{
@@ -78,13 +95,14 @@ func TestRemoteStaging_ForcedOn_ResultsRoundtrip(t *testing.T) {
 		t.Skipf("docker not available: %v", err)
 	}
 	t.Cleanup(func() { _ = be.Cleanup(ctx) })
-	if err := be.Prepare(ctx, backend.RunSpec{RunID: "stage-results", Images: []string{"alpine:3"}}); err != nil {
+	runID := uniqueRunID(t, "stage-results")
+	if err := be.Prepare(ctx, backend.RunSpec{RunID: runID, Images: []string{"alpine:3"}}); err != nil {
 		t.Fatal(err)
 	}
 
 	resultsDir := t.TempDir()
 	res, err := be.RunTask(ctx, backend.TaskInvocation{
-		RunID: "stage-results", TaskRunName: "tr-r",
+		RunID: runID, TaskRunName: "tr-r",
 		ResultsHost: resultsDir,
 		LogSink:     &captureLogs{},
 		Task: tektontypes.TaskSpec{
@@ -130,13 +148,14 @@ func TestRemoteStaging_ForcedOn_StepResultsBetweenSteps(t *testing.T) {
 		t.Skipf("docker not available: %v", err)
 	}
 	t.Cleanup(func() { _ = be.Cleanup(ctx) })
-	if err := be.Prepare(ctx, backend.RunSpec{RunID: "stage-step-r", Images: []string{"alpine:3"}}); err != nil {
+	runID := uniqueRunID(t, "stage-step-r")
+	if err := be.Prepare(ctx, backend.RunSpec{RunID: runID, Images: []string{"alpine:3"}}); err != nil {
 		t.Fatal(err)
 	}
 
 	logs := &captureLogs{}
 	res, err := be.RunTask(ctx, backend.TaskInvocation{
-		RunID: "stage-step-r", TaskRunName: "tr-sr",
+		RunID: runID, TaskRunName: "tr-sr",
 		ResultsHost: t.TempDir(),
 		LogSink:     logs,
 		Task: tektontypes.TaskSpec{

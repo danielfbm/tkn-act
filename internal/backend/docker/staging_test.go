@@ -43,10 +43,11 @@ func TestScriptBaseHelpers(t *testing.T) {
 }
 
 func TestPipelineWorkspaceName(t *testing.T) {
-	b := &Backend{userWorkspaces: map[string]string{
+	ws := map[string]string{
 		"shared":    "/tmp/run-1/workspaces/shared",
 		"artifacts": "/tmp/run-1/workspaces/artifacts",
-	}}
+	}
+	b := &Backend{userWorkspaces: ws, workspaceByHostPath: buildHostPathIndex(ws)}
 	if name, ok := b.pipelineWorkspaceName("/tmp/run-1/workspaces/shared"); !ok || name != "shared" {
 		t.Errorf("pipelineWorkspaceName(shared) = (%q, %v); want (shared, true)", name, ok)
 	}
@@ -55,6 +56,21 @@ func TestPipelineWorkspaceName(t *testing.T) {
 	}
 	if _, ok := b.pipelineWorkspaceName("/tmp/run-1/workspaces/missing"); ok {
 		t.Error("pipelineWorkspaceName(missing) ok = true; want false")
+	}
+}
+
+func TestPipelineWorkspaceName_AmbiguousHostPath(t *testing.T) {
+	// Two pipeline workspaces sharing the same HostPath must NOT
+	// resolve to a non-deterministic single name. The lookup returns
+	// (false) so the call site raises an explicit error rather than
+	// silently bucketing one Step into the wrong slice.
+	ws := map[string]string{
+		"shared":  "/tmp/dup",
+		"shared2": "/tmp/dup",
+	}
+	b := &Backend{userWorkspaces: ws, workspaceByHostPath: buildHostPathIndex(ws)}
+	if name, ok := b.pipelineWorkspaceName("/tmp/dup"); ok {
+		t.Errorf("pipelineWorkspaceName(dup) = (%q, true); want (\"\", false) on collision", name)
 	}
 }
 
@@ -194,6 +210,113 @@ func wrapTarUnder(t *testing.T, src io.Reader, prefix string) io.Reader {
 	}
 	return &out
 }
+
+// TestUntarToDir_PathTraversalRejected feeds untarToDir a hand-built
+// tar whose entries try to escape the destination via `../` chains
+// and absolute paths. Each escape attempt must be silently dropped
+// while legitimate names containing `..` (e.g. `package..json`) must
+// extract normally — the substring `..` check the BLOCKING-3 review
+// caught would have lost the latter.
+func TestUntarToDir_PathTraversalRejected(t *testing.T) {
+	dst := t.TempDir()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	good := map[string][]byte{
+		"package..json": []byte("v1\n"),
+		"lib...so":      []byte("ELF\n"),
+	}
+	bad := []string{
+		"../escape.txt",
+		"sub/../../escape.txt",
+	}
+	for name, body := range good {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range bad {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: 0, Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := untarToDir(&buf, dst, ""); err != nil {
+		t.Fatalf("untarToDir: %v", err)
+	}
+	for name, want := range good {
+		got, err := os.ReadFile(filepath.Join(dst, name))
+		if err != nil {
+			t.Errorf("missing legitimate %q: %v", name, err)
+			continue
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%q: got %q, want %q", name, got, want)
+		}
+	}
+	// Belt-and-braces: nothing landed in the parent of dst.
+	parent := filepath.Dir(dst)
+	if _, err := os.Stat(filepath.Join(parent, "escape.txt")); err == nil {
+		t.Errorf("path-traversal succeeded: escape.txt landed in %q", parent)
+	}
+}
+
+// TestPathContainedIn covers the prefix-with-cleaning logic so a
+// reviewer can read the table instead of the regex. Each row is
+// (candidate, root, want).
+func TestPathContainedIn(t *testing.T) {
+	cases := []struct {
+		name      string
+		candidate string
+		root      string
+		want      bool
+	}{
+		{"identical", "/x", "/x", true},
+		{"child", "/x/y", "/x", true},
+		{"grandchild after clean", "/x/./y/../z", "/x", true},
+		{"sibling", "/x2/y", "/x", false},
+		{"escape via ..", "/x/../y", "/x", false},
+		{"prefix not boundary", "/xy", "/x", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pathContainedIn(tc.candidate, filepath.Clean(tc.root)); got != tc.want {
+				t.Errorf("pathContainedIn(%q, %q) = %v, want %v", tc.candidate, tc.root, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBuildHostPathIndex covers the deterministic reverse-lookup
+// builder. Distinct host paths each map to their pipeline name; a
+// shared host path is recorded as the ambiguous-marker sentinel.
+func TestBuildHostPathIndex(t *testing.T) {
+	got := buildHostPathIndex(map[string]string{
+		"shared":    "/tmp/a",
+		"artifacts": "/tmp/b",
+	})
+	if got["/tmp/a"] != "shared" {
+		t.Errorf("got[/tmp/a] = %q, want shared", got["/tmp/a"])
+	}
+	if got["/tmp/b"] != "artifacts" {
+		t.Errorf("got[/tmp/b] = %q, want artifacts", got["/tmp/b"])
+	}
+
+	dup := buildHostPathIndex(map[string]string{
+		"shared":  "/tmp/x",
+		"shared2": "/tmp/x",
+	})
+	if !startsWith(dup["/tmp/x"], ambiguousMarker) {
+		t.Errorf("collision should record ambiguous marker; got %q", dup["/tmp/x"])
+	}
+}
+
+// startsWith is the tiny test-only check; not worth importing strings.
+func startsWith(s, prefix string) bool { return len(s) >= len(prefix) && s[:len(prefix)] == prefix }
 
 // Test that the volume layout constants stay stable. They're
 // implementation detail today but a future refactor that renames

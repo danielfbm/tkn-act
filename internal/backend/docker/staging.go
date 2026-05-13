@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
@@ -77,28 +78,40 @@ const stagerMountPoint = "/staged"
 // Saves run.Workspaces on the Backend so Cleanup can pull post-run
 // contents back to the same host paths, matching the local-bind
 // semantics where every Task write is visible on the host afterwards.
-func (b *Backend) startRemoteStaging(ctx context.Context, runID string, workspaces map[string]string) error {
+//
+// Self-cleaning on partial failure: the engine only defers Cleanup
+// once Prepare has returned nil, so any error after VolumeCreate must
+// unwind the resources we already created — otherwise a label-tagged
+// volume and a half-started stager would survive the process.
+func (b *Backend) startRemoteStaging(ctx context.Context, runID string, workspaces map[string]string) (err error) {
 	b.runID = runID
 	b.volName = runVolumeName(runID)
 	b.userWorkspaces = workspaces
+	b.workspaceByHostPath = buildHostPathIndex(workspaces)
 
-	if _, err := b.cli.VolumeCreate(ctx, volume.CreateOptions{
+	defer func() {
+		if err != nil {
+			_ = b.stopRemoteStaging()
+		}
+	}()
+
+	if _, vErr := b.cli.VolumeCreate(ctx, volume.CreateOptions{
 		Name: b.volName,
 		Labels: map[string]string{
-			"tkn-act.run":      runID,
-			"tkn-act.purpose":  "stage",
-			"tkn-act.makeshift": "true",
+			"tkn-act.run":     runID,
+			"tkn-act.purpose": "stage",
 		},
-	}); err != nil {
-		return fmt.Errorf("create stage volume %q: %w", b.volName, err)
+	}); vErr != nil {
+		return fmt.Errorf("create stage volume %q: %w", b.volName, vErr)
 	}
+	b.volumeCreated = true
 
-	if err := b.ensureImage(ctx, b.pauseImg, "IfNotPresent"); err != nil {
-		return fmt.Errorf("pull stager image %q: %w", b.pauseImg, err)
+	if iErr := b.ensureImage(ctx, b.pauseImg, "IfNotPresent"); iErr != nil {
+		return fmt.Errorf("pull stager image %q: %w", b.pauseImg, iErr)
 	}
 
 	stagerName := stagerContainerName(runID)
-	created, err := b.cli.ContainerCreate(ctx,
+	created, cErr := b.cli.ContainerCreate(ctx,
 		&container.Config{Image: b.pauseImg},
 		&container.HostConfig{
 			AutoRemove: false,
@@ -108,13 +121,13 @@ func (b *Backend) startRemoteStaging(ctx context.Context, runID string, workspac
 				Target: stagerMountPoint,
 			}},
 		}, nil, nil, stagerName)
-	if err != nil {
-		return fmt.Errorf("create stager %q: %w", stagerName, err)
+	if cErr != nil {
+		return fmt.Errorf("create stager %q: %w", stagerName, cErr)
 	}
 	b.stagerID = created.ID
 
-	if err := b.cli.ContainerStart(ctx, b.stagerID, container.StartOptions{}); err != nil {
-		return fmt.Errorf("start stager %q: %w", stagerName, err)
+	if sErr := b.cli.ContainerStart(ctx, b.stagerID, container.StartOptions{}); sErr != nil {
+		return fmt.Errorf("start stager %q: %w", stagerName, sErr)
 	}
 
 	// Seed each declared workspace (auto-allocated dirs are empty;
@@ -122,12 +135,41 @@ func (b *Backend) startRemoteStaging(ctx context.Context, runID string, workspac
 	// are pushed too so the workspace subpath exists for subpath
 	// mounts to attach to before any Task writes.
 	for name, hostPath := range workspaces {
-		if err := b.pushHostDir(ctx, hostPath, filepath.ToSlash(filepath.Join(stageWorkspaces, name))); err != nil {
-			return fmt.Errorf("seed workspace %q from %q: %w", name, hostPath, err)
+		if pErr := b.pushHostDir(ctx, hostPath, filepath.ToSlash(filepath.Join(stageWorkspaces, name))); pErr != nil {
+			return fmt.Errorf("seed workspace %q from %q: %w", name, hostPath, pErr)
 		}
 	}
 	return nil
 }
+
+// buildHostPathIndex inverts the pipeline-name → host-path map into
+// a host-path → pipeline-name index, deterministically rejecting any
+// HostPath shared by two pipeline workspaces. The reverse lookup
+// (pipelineWorkspaceName) calls this once at Prepare time so per-Step
+// mount construction doesn't iterate the map (which Go randomises)
+// and so collisions surface as an obvious, reproducible startup error
+// rather than nondeterministic mount targets.
+func buildHostPathIndex(workspaces map[string]string) map[string]string {
+	out := make(map[string]string, len(workspaces))
+	collisions := map[string][]string{}
+	for name, hostPath := range workspaces {
+		if existing, dup := out[hostPath]; dup {
+			collisions[hostPath] = append(collisions[hostPath], existing, name)
+			continue
+		}
+		out[hostPath] = name
+	}
+	// On collision, emit a sentinel so pipelineWorkspaceName can
+	// detect it deterministically. The sentinel is a slash-prefixed
+	// string ("__ambiguous__:<paths>"), guaranteed not to be a real
+	// pipeline workspace name. Aggregate-style fail-loud later.
+	for hostPath, names := range collisions {
+		out[hostPath] = ambiguousMarker + ":" + strings.Join(names, ",")
+	}
+	return out
+}
+
+const ambiguousMarker = "__ambiguous__"
 
 // pushTaskVolumeHosts seeds the per-Task materialised volumes
 // (configMap / secret / emptyDir) from inv.VolumeHosts host paths
@@ -199,32 +241,43 @@ func (b *Backend) remoteVolumeMount(target, subpath string, readOnly bool) mount
 }
 
 // pipelineWorkspaceName reverse-looks-up the Pipeline-level workspace
-// name by host path. The engine's TaskInvocation.Workspaces keys by
-// the Task-local workspace name (e.g. "data"), but the per-run volume
-// layout buckets by Pipeline name (e.g. "shared") because that's what
-// makes a write from one Task visible to the next. Both sides hold
-// the same HostPath string the manager produced, so a HostPath equality
-// match is the canonical join.
+// name by host path against the precomputed index built at Prepare
+// time (b.workspaceByHostPath). The engine's TaskInvocation.Workspaces
+// keys by the Task-local workspace name (e.g. "data"), but the per-run
+// volume layout buckets by Pipeline name (e.g. "shared") because
+// that's what makes a write from one Task visible to the next.
+//
+// Returns (name, true) on a unique hit; ("", false) on miss; an
+// error-return path is intentionally absent — collisions are flagged
+// at lookup time by the ambiguousMarker sentinel and surface as a
+// clear mount-construction failure at the call site.
 func (b *Backend) pipelineWorkspaceName(hostPath string) (string, bool) {
-	for name, p := range b.userWorkspaces {
-		if p == hostPath {
-			return name, true
-		}
+	name, ok := b.workspaceByHostPath[hostPath]
+	if !ok {
+		return "", false
 	}
-	return "", false
+	if strings.HasPrefix(name, ambiguousMarker) {
+		// Collision: same HostPath registered for multiple workspace
+		// names. Returning "" forces the caller into the not-found
+		// branch which raises an actionable error mentioning the
+		// HostPath.
+		return "", false
+	}
+	return name, true
 }
 
-// stopRemoteStaging is called by Cleanup. Pulls workspace contents back
-// to the host paths the user supplied (so post-run state is visible
-// just like the local-bind path), then tears the stager and volume
-// down. Errors are logged via the returned aggregate error but never
-// short-circuit cleanup — the volume removal must be attempted even
-// if a workspace pull failed.
+// stopRemoteStaging is called by Cleanup, and also by
+// startRemoteStaging on partial failure. Each resource is gated on
+// its own field so a half-built run (volume created but stager start
+// failed) still gets the volume removed.
+//
+// Uses a fresh background context capped at stagerStopBudget so a
+// hung remote daemon can't strand the process forever — the cancel-
+// immune property survives a cancelled run context, but the absolute
+// ceiling means worst-case latency stays bounded.
 func (b *Backend) stopRemoteStaging() error {
-	if b.stagerID == "" {
-		return nil
-	}
-	bg := context.Background()
+	bg, cancel := context.WithTimeout(context.Background(), stagerStopBudget)
+	defer cancel()
 
 	var first error
 	captureErr := func(err error) {
@@ -233,27 +286,41 @@ func (b *Backend) stopRemoteStaging() error {
 		}
 	}
 
-	for name, hostPath := range b.userWorkspaces {
-		captureErr(b.pullHostDir(bg, filepath.ToSlash(filepath.Join(stageWorkspaces, name)), hostPath))
-	}
+	if b.stagerID != "" {
+		// Pull workspaces back BEFORE the stager dies so the daemon
+		// can still service CopyFromContainer. Failures here capture
+		// the first error but never short-circuit teardown.
+		for name, hostPath := range b.userWorkspaces {
+			captureErr(b.pullHostDir(bg, filepath.ToSlash(filepath.Join(stageWorkspaces, name)), hostPath))
+		}
 
-	timeoutSecs := 1
-	if err := b.cli.ContainerStop(bg, b.stagerID, container.StopOptions{Timeout: &timeoutSecs}); err != nil {
-		captureErr(fmt.Errorf("stop stager: %w", err))
+		timeoutSecs := 1
+		if err := b.cli.ContainerStop(bg, b.stagerID, container.StopOptions{Timeout: &timeoutSecs}); err != nil {
+			captureErr(fmt.Errorf("stop stager: %w", err))
+		}
+		if err := b.cli.ContainerRemove(bg, b.stagerID, container.RemoveOptions{Force: true}); err != nil {
+			captureErr(fmt.Errorf("remove stager: %w", err))
+		}
+		b.stagerID = ""
 	}
-	if err := b.cli.ContainerRemove(bg, b.stagerID, container.RemoveOptions{Force: true}); err != nil {
-		captureErr(fmt.Errorf("remove stager: %w", err))
-	}
-	if b.volName != "" {
+	if b.volumeCreated && b.volName != "" {
 		if err := b.cli.VolumeRemove(bg, b.volName, true); err != nil {
 			captureErr(fmt.Errorf("remove stage volume %q: %w", b.volName, err))
 		}
+		b.volumeCreated = false
+		b.volName = ""
 	}
-	b.stagerID = ""
-	b.volName = ""
 	b.userWorkspaces = nil
+	b.workspaceByHostPath = nil
 	return first
 }
+
+// stagerStopBudget caps total Cleanup time on the remote-staging path.
+// Workspace pulls dominate when -w name=/big/path was used; 2 minutes
+// covers GB-scale workspaces over a typical SSH tunnel while still
+// guaranteeing the process exits in bounded time on a half-broken
+// daemon.
+const stagerStopBudget = 2 * time.Minute
 
 // pushHostDir tar-streams a host directory's contents into the stager
 // at /staged/<destSubpath>/. Empty directories produce a tar with one
@@ -319,28 +386,51 @@ func (b *Backend) pullHostDir(ctx context.Context, srcSubpath, hostDir string) e
 	return untarToDir(rc, hostDir, filepath.Base(src))
 }
 
-// ensureStagerDir creates the destination directory inside the stager
-// before the first CopyToContainer targeted at it. Using a tar header
-// with TypeDir is cheap and works on every Engine version.
+// ensureStagerDir creates dirPath (and every ancestor below
+// stagerMountPoint) inside the stager. moby's CopyToContainer
+// requires the destination directory to already exist on the daemon
+// side — without this, the first push to e.g. /staged/workspaces/foo
+// would fail because /staged/workspaces doesn't exist yet. We emit
+// one tar with a TypeDir entry per ancestor segment, rooted at
+// stagerMountPoint, so a single CopyToContainer call materialises
+// the whole chain.
 func (b *Backend) ensureStagerDir(ctx context.Context, dirPath string) error {
-	parent, base := filepath.Split(strings.TrimSuffix(dirPath, "/"))
-	parent = strings.TrimSuffix(parent, "/")
-	if parent == "" || parent == stagerMountPoint {
-		parent = stagerMountPoint
+	rel := strings.TrimPrefix(dirPath, stagerMountPoint)
+	rel = strings.TrimPrefix(rel, "/")
+	rel = strings.Trim(rel, "/")
+	if rel == "" {
+		return nil // /staged itself always exists (it's the volume mount point).
 	}
+	segments := strings.Split(rel, "/")
+
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	if err := tw.WriteHeader(&tar.Header{
-		Name:     base + "/",
-		Mode:     0o755,
-		Typeflag: tar.TypeDir,
-	}); err != nil {
-		return err
+	for i := range segments {
+		entry := strings.Join(segments[:i+1], "/") + "/"
+		if err := tw.WriteHeader(&tar.Header{
+			Name:     entry,
+			Mode:     0o755,
+			Typeflag: tar.TypeDir,
+		}); err != nil {
+			return err
+		}
 	}
 	if err := tw.Close(); err != nil {
 		return err
 	}
-	return b.cli.CopyToContainer(ctx, b.stagerID, parent, &buf, container.CopyToContainerOptions{})
+	return b.cli.CopyToContainer(ctx, b.stagerID, stagerMountPoint, &buf, container.CopyToContainerOptions{})
+}
+
+// mkdirInVolume materialises the volume-relative subpath inside the
+// stager (i.e. /staged/<subpath>) so subsequent containers can
+// VolumeOptions.Subpath into it. Engine v25+ resolves subpath via
+// openat2, which ENOENTs on a missing entry — call this for any
+// subpath the run will mount before the first ContainerCreate that
+// targets it. Cheap (single CopyToContainer of an empty tar header
+// chain) and idempotent per ensureStagerDir's tar-merge semantics.
+func (b *Backend) mkdirInVolume(ctx context.Context, subpath string) error {
+	full := stagerMountPoint + "/" + strings.TrimPrefix(filepath.ToSlash(subpath), "/")
+	return b.ensureStagerDir(ctx, full)
 }
 
 // tarHostDir packs hostDir into a tar stream with paths relative to
@@ -422,7 +512,15 @@ func tarHostDir(hostDir string) (io.Reader, error) {
 // wraps every entry under the basename of the source path; stripPrefix
 // (set to that basename) is removed before reconstructing the host
 // layout. Unknown header types are skipped.
+//
+// Path-safety: every resolved target must stay under filepath.Clean(dstDir).
+// Substring `..` matching would silently drop legitimate names like
+// `package..json.bak` or `lib...so`; the prefix check below catches
+// real escape attempts (`../foo`, `a/../../b`) without dropping valid
+// content. Symlink Linkname gets the same check so a malicious entry
+// can't redirect a subsequent file write outside the destination.
 func untarToDir(r io.Reader, dstDir, stripPrefix string) error {
+	cleanRoot := filepath.Clean(dstDir)
 	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
@@ -438,20 +536,16 @@ func untarToDir(r io.Reader, dstDir, stripPrefix string) error {
 		if name == "" {
 			continue
 		}
-		// Defend against tar entries that climb out of the destination
-		// directory. CopyFromContainer is internal traffic but the
-		// stager mounts a writable volume the daemon could in principle
-		// be tricked into populating with crafted entries.
-		if strings.Contains(name, "..") {
+		target := filepath.Join(dstDir, filepath.FromSlash(name))
+		if !pathContainedIn(target, cleanRoot) {
 			continue
 		}
-		target := filepath.Join(dstDir, filepath.FromSlash(name))
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, os.FileMode(hdr.Mode)&0o777); err != nil {
 				return err
 			}
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg:
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
@@ -467,6 +561,18 @@ func untarToDir(r io.Reader, dstDir, stripPrefix string) error {
 				return err
 			}
 		case tar.TypeSymlink:
+			// Resolve the symlink target as the kernel would on follow
+			// and ensure that resolved path stays inside the dstDir.
+			// Absolute Linknames and relative ones both go through
+			// filepath.Join so an Linkname like "../../etc/passwd"
+			// gets the same prefix check as the entry name.
+			linkResolved := hdr.Linkname
+			if !filepath.IsAbs(linkResolved) {
+				linkResolved = filepath.Join(filepath.Dir(target), linkResolved)
+			}
+			if !pathContainedIn(linkResolved, cleanRoot) {
+				continue
+			}
 			_ = os.Remove(target)
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
@@ -476,4 +582,18 @@ func untarToDir(r io.Reader, dstDir, stripPrefix string) error {
 			}
 		}
 	}
+}
+
+// pathContainedIn reports whether candidate sits inside (or equal to)
+// the cleaned root. Used to reject tar entries and symlink targets
+// that would land outside dstDir, which is the canonical CVE class
+// for tar extractors. Both sides are cleaned to normalise `./` and
+// `..` segments before the prefix compare.
+func pathContainedIn(candidate, cleanRoot string) bool {
+	cleaned := filepath.Clean(candidate)
+	if cleaned == cleanRoot {
+		return true
+	}
+	prefix := cleanRoot + string(os.PathSeparator)
+	return strings.HasPrefix(cleaned, prefix)
 }

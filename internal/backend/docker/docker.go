@@ -71,10 +71,17 @@ type Backend struct {
 	// in Prepare and drained by stopRemoteStaging in Cleanup; unused on
 	// the local-bind path. Keeping them on the Backend lets RunTask
 	// stay oblivious to the per-run lifecycle.
-	runID          string
-	volName        string
-	stagerID       string
-	userWorkspaces map[string]string
+	//
+	// Lifecycle invariant: each resource is gated on its own field so
+	// stopRemoteStaging can safely run after a partial Prepare (e.g.
+	// volume created but stager start failed) — see the deferred
+	// unwind in startRemoteStaging.
+	runID               string
+	volName             string
+	volumeCreated       bool
+	stagerID            string
+	userWorkspaces      map[string]string
+	workspaceByHostPath map[string]string
 }
 
 func New(opts Options) (*Backend, error) {
@@ -271,11 +278,19 @@ func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (back
 		}
 	}
 
-	// Remote mode: seed the per-Task materialised volumes
-	// (configMap/secret/emptyDir) into the per-run stage volume so the
-	// upcoming Step containers can subpath-mount them. Local mode bind
-	// mounts the host paths directly and skips this.
+	// Remote mode: pre-create the per-Task subpath chains in the
+	// volume that Step containers will subpath-mount. Engine v25+
+	// resolves VolumeOptions.Subpath via openat2 which ENOENTs on a
+	// missing entry, so the dirs must exist on the volume *before*
+	// the first ContainerCreate that targets them. Same call also
+	// seeds materialised configMap/secret/emptyDir host paths.
 	if b.remote {
+		if err := b.mkdirInVolume(ctx, filepath.ToSlash(filepath.Join(stageResults, inv.TaskRunName))); err != nil {
+			res.Status = backend.TaskInfraFailed
+			res.Err = fmt.Errorf("mkdir results dir on stage volume: %w", err)
+			res.Ended = time.Now()
+			return res, nil
+		}
 		if err := b.pushTaskVolumeHosts(ctx, inv.TaskRunName, inv.VolumeHosts); err != nil {
 			res.Status = backend.TaskInfraFailed
 			res.Err = err
@@ -322,6 +337,18 @@ func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (back
 			res.Err = fmt.Errorf("step %q: mkdir step results: %w", step.Name, err)
 			res.Ended = time.Now()
 			return res, nil
+		}
+		// Same dir on the volume in remote mode — Engine v25+ subpath
+		// resolution ENOENTs without it. The walk-results-dir code in
+		// runStep that mounts every earlier step's subdir also needs
+		// each entry to already exist on the volume.
+		if b.remote {
+			if err := b.mkdirInVolume(ctx, filepath.ToSlash(filepath.Join(stageResults, inv.TaskRunName, "steps", step.Name))); err != nil {
+				res.Status = backend.TaskInfraFailed
+				res.Err = fmt.Errorf("step %q: mkdir step results on stage volume: %w", step.Name, err)
+				res.Ended = time.Now()
+				return res, nil
+			}
 		}
 
 		exitCode, err := b.runStep(ctx, inv, step, pauseID)
