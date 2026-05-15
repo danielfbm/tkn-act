@@ -59,7 +59,7 @@ func newSSHDialer(dockerHost string) (func(ctx context.Context, network, addr st
 		return nil, err
 	}
 	if len(auths) == 0 {
-		return nil, fmt.Errorf("no SSH authentication available for %s: try `ssh-add <key>` or set SSH_AUTH_SOCK", dockerHost)
+		return nil, fmt.Errorf("no SSH authentication available for %s: try `ssh-add <key>` or set SSH_AUTH_SOCK", redactURL(dockerHost))
 	}
 
 	hostKey, err := loadHostKeyCallback()
@@ -96,31 +96,55 @@ func newSSHDialer(dockerHost string) (func(ctx context.Context, network, addr st
 	}, nil
 }
 
-// parseSSHDockerHost extracts the SSH user and host:port from a
-// DOCKER_HOST=ssh://[user@]host[:port] URL.
+// parseSSHDockerHost extracts the SSH user and host:port from an
+// ssh://[user@]host[:port] URL coming from either --docker-host or
+// the standard $DOCKER_HOST env var (whichever resolveDockerHost
+// returned).
+//
+// Errors quote the URL with the password redacted (url.URL.Redacted)
+// so a token in `ssh://user:secret@host` does not surface in logs
+// or shell history. The dialer is publickey-only so a password URL
+// never authenticates anyway, but echoing it back is dodgy — Phase 4
+// made `--docker-host` a CLI flag, which puts URLs in shell history
+// and `ps` listings, so the redaction is worth the cost here.
 func parseSSHDockerHost(dockerHost string) (user, hostport string, err error) {
 	u, err := url.Parse(dockerHost)
 	if err != nil {
-		return "", "", fmt.Errorf("parse DOCKER_HOST %q: %w", dockerHost, err)
+		return "", "", fmt.Errorf("parse DOCKER_HOST %q: %w", redactURL(dockerHost), err)
 	}
 	if u.Scheme != "ssh" {
-		return "", "", fmt.Errorf("not an ssh URL: %q", dockerHost)
+		return "", "", fmt.Errorf("not an ssh URL: %q", u.Redacted())
 	}
 	if u.Hostname() == "" {
-		return "", "", fmt.Errorf("DOCKER_HOST %q: missing host", dockerHost)
+		return "", "", fmt.Errorf("DOCKER_HOST %q: missing host", u.Redacted())
 	}
 	user = u.User.Username()
 	if user == "" {
 		user = os.Getenv("USER")
 	}
 	if user == "" {
-		return "", "", fmt.Errorf("DOCKER_HOST %q: no SSH user (set user@host or $USER)", dockerHost)
+		return "", "", fmt.Errorf("DOCKER_HOST %q: no SSH user (set user@host or $USER)", u.Redacted())
 	}
 	port := u.Port()
 	if port == "" {
 		port = "22"
 	}
 	return user, net.JoinHostPort(u.Hostname(), port), nil
+}
+
+// redactURL returns the input with any URL password component
+// replaced by "xxxxx", matching net/url.URL.Redacted's behaviour.
+// The username is left intact — usernames are not sensitive, and
+// dropping them would obscure useful diagnostics (e.g. "no SSH
+// authentication available for ssh://root@host"). Used when the
+// caller has only the raw string (e.g. before parse, or in a
+// parse-failure error wrap); returns the raw string unchanged when
+// url.Parse fails or when there's no userinfo to redact.
+func redactURL(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.User != nil {
+		return u.Redacted()
+	}
+	return raw
 }
 
 // loadSSHAuthMethods builds publickey AuthMethods from the agent (if

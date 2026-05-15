@@ -51,6 +51,11 @@ type globalFlags struct {
 	// then to the built-in default. Air-gap-friendly: an internal
 	// mirror tag goes here once and both consumers pick it up.
 	pauseImage string
+	// dockerHost overrides the daemon address for this invocation.
+	// Empty falls through to $DOCKER_HOST, then to the moby SDK
+	// default unix socket. Lets a single CLI invocation target a
+	// different daemon without mutating process-wide env.
+	dockerHost string
 }
 
 var gf globalFlags
@@ -120,6 +125,10 @@ Designed for both humans and AI agents:
 	// the docker backend's per-Task netns owner and (Phase 3 onwards)
 	// the remote-mode volume stager. Air-gap mirrors set this once.
 	cmd.PersistentFlags().StringVar(&gf.pauseImage, "pause-image", "", "override the docker backend's pause/stager image (env: "+envPauseImage+"; default registry.k8s.io/pause:3.9)")
+	// Per-invocation daemon-address override. Wins over $DOCKER_HOST
+	// without mutating process env. Same scheme set as DOCKER_HOST:
+	// unix:// | tcp:// | ssh://. Empty falls through to $DOCKER_HOST.
+	cmd.PersistentFlags().StringVar(&gf.dockerHost, "docker-host", "", "override the docker daemon address for this invocation (overrides $DOCKER_HOST; same scheme set: unix:// | tcp:// | ssh://)")
 
 	cmd.AddCommand(newRunCmd())
 	cmd.AddCommand(newListCmd())

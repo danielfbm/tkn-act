@@ -58,19 +58,26 @@ func TestParseSSHDockerHost(t *testing.T) {
 }
 
 // TestNewSSHDialer_NoAuth verifies the dialer fails fast with an
-// actionable message when no SSH key material is available.
+// actionable message when no SSH key material is available, and that
+// any userinfo present in DOCKER_HOST is redacted out of the error
+// (the URL goes through shell history / `ps` once Phase 4 made
+// `--docker-host` a CLI flag).
 func TestNewSSHDialer_NoAuth(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("SSH_AUTH_SOCK", "")
 	t.Setenv(envSSHInsecure, "1")
 
-	_, err := newSSHDialer("ssh://user@host:22")
+	_, err := newSSHDialer("ssh://user:s3cret@host:22")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "ssh-add") {
+	msg := err.Error()
+	if !strings.Contains(msg, "ssh-add") {
 		t.Errorf("err = %v, want substr about ssh-add", err)
+	}
+	if strings.Contains(msg, "s3cret") {
+		t.Errorf("err = %v leaks userinfo password", err)
 	}
 }
 

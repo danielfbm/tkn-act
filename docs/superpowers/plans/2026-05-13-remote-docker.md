@@ -139,17 +139,29 @@ local daemon. Confirmed in CI on PR #40.
 
 ## Phase 4 — `--docker-host` flag
 
-**Files:** `cmd/tkn-act/run.go`.
+**Status:** ✅ landed in PR #41.
 
-Sidecar mounts already moved to Phase 3 (see Q3 above), so this
-phase is just the per-invocation `DOCKER_HOST` override.
+**Files:** `cmd/tkn-act/root.go` (flag), `cmd/tkn-act/run.go` (wire),
+`internal/backend/docker/docker.go` (`Options.Host` +
+`resolveDockerHost` + `newDockerClient` accepts the resolved value),
+`internal/backend/docker/docker_host_test.go` (precedence + ssh
+routing).
 
-- [ ] Add `--docker-host` flag on `tkn-act run` (string, defaults
-      to `""`). When set, overrides `DOCKER_HOST` for this invocation
-      only (set via `os.Setenv` before `Backend.New`, restore in
-      defer).
-- [ ] Unit test asserting `--docker-host ssh://fake@host` is honored
-      and the SSH dialer is reached.
+- [x] `--docker-host` flag added on the root command (also visible
+      to bare `tkn-act` invocation). Empty falls through to
+      `$DOCKER_HOST`, then to the moby SDK default unix socket.
+      Implementation passes via `docker.Options.Host` rather than
+      `os.Setenv` — cleaner, no process-wide env mutation, no
+      defer-restore window.
+- [x] `newDockerClient` now uses `client.WithHost(...)` when a
+      resolved host is non-empty so the override works for any
+      scheme (ssh:// / tcp:// / unix://). `client.FromEnv` is
+      retained as the empty-host fallback.
+- [x] Unit test `TestNew_HostOptionRoutesSSH` asserts an
+      `Options.Host` of `ssh://...` reaches `newSSHDialer` (a
+      regression that re-routed to FromEnv would error with "docker
+      daemon not reachable" instead of an SSH-flavoured message).
+      `TestResolveDockerHost` covers the precedence table.
 
 **Gate:** unit tests green.
 
