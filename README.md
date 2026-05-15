@@ -68,6 +68,28 @@ tkn-act cluster status
 tkn-act cluster down -y
 ```
 
+The docker backend can also target a **remote** daemon (since v1.7),
+which is useful for dev sandboxes without a local daemon, Codespaces,
+or CI workers that already have `DOCKER_HOST` pointed somewhere:
+
+```sh
+# Per-invocation, no env mutation
+tkn-act run --docker-host ssh://root@build-vm.example -f pipeline.yaml
+
+# Or the standard Docker client env (honored when --docker-host is unset)
+DOCKER_HOST=ssh://root@build-vm.example tkn-act run -f pipeline.yaml
+
+# Air-gapped daemon that can't reach registry.k8s.io for the pause image:
+TKN_ACT_PAUSE_IMAGE=registry.internal/pause:3.9 \
+DOCKER_HOST=ssh://root@build-vm.example tkn-act run -f pipeline.yaml
+```
+
+When the daemon is remote, workspaces and per-Task results are
+staged on a per-run docker volume instead of bind-mounted from the
+host. See [`docs/agent-guide/docker-backend.md`](docs/agent-guide/docker-backend.md)
+for the full story (SSH key requirements, `--remote-docker={auto|on|off}`,
+subpath-mount engine requirement, common gotchas).
+
 Cross-backend fixtures in [`internal/e2e/fixtures`](internal/e2e/fixtures/fixtures.go)
 are exercised by both backends in CI — divergences are explicit
 `DockerOnly` / `ClusterOnly` flags, never silent omissions.

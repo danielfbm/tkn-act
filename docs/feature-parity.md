@@ -1,6 +1,6 @@
 # Tekton feature parity
 
-Last updated: 2026-05-13 (default Tekton install bumped from v0.65.0 → v1.12.0 LTS; cluster-CI runs a `{v1.3.0, v1.12.0}` matrix).
+Last updated: 2026-05-15 (docker backend gained remote-daemon support — `ssh://` / `tcp://` `DOCKER_HOST`, `--docker-host`, per-run volume staging — in v1.7; see [`docs/agent-guide/docker-backend.md`](agent-guide/docker-backend.md)).
 
 This document is the **canonical scoreboard** for what `tkn-act` does and
 doesn't support from upstream Tekton, and what proves it. It's read by
