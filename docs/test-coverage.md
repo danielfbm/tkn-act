@@ -1,6 +1,6 @@
 # Test coverage — what CI runs and what it doesn't
 
-Last updated: 2026-05-13 (post Tekton bump to v1.12 LTS + cluster-CI matrix; covers through v1.6).
+Last updated: 2026-05-15 (post Phase 5 of the remote-docker rollout — `remote-docker-integration.yml` added).
 
 This document inventories what the GitHub Actions pipelines and the
 test suite cover today, and — equally important — what they do not. It
@@ -11,12 +11,13 @@ behavior I changed is exercised."
 
 ## 1. Workflows
 
-Five workflows live under `.github/workflows/`:
+Six workflows live under `.github/workflows/`:
 
 | File | When it runs | What it runs |
 |---|---|---|
 | `ci.yml` | every push, every PR | `go vet`, `go build`, `go test -race -count=1 ./...` (untagged), `tkn-act help-json` smoke; matrix: ubuntu-latest + macos-latest. PR-only `tests-required`, `coverage`, `parity-check`, and `agentguide-freshness` jobs. |
 | `docker-integration.yml` | `push` to `main`/`release/**` always; PR only when paths in its filter changed | `go test -tags integration -count=1 -timeout 15m ./internal/e2e/...` on ubuntu-latest. Pre-pulls `alpine:3`. |
+| `remote-docker-integration.yml` | same trigger pattern | Same fixture table as `docker-integration.yml`, but against a `docker:28-dind` service container (`DOCKER_HOST=tcp://localhost:2375`, `TKN_ACT_REMOTE_DOCKER=on`). Exercises the Phase 1–4 remote-daemon path end-to-end (auto-detect → Phase 3 per-run volume staging instead of bind mounts). A regression in the staging path that the local-daemon workflow would silently miss surfaces here because the dind daemon's filesystem can't see the runner's bind sources. `go test -tags integration -count=1 -timeout 20m ./internal/e2e/...`. |
 | `cluster-integration.yml` | same trigger pattern | installs `kubectl` + `k3d`, then `go test -tags cluster -count=1 -timeout 25m ./internal/clustere2e/...` on ubuntu-latest. **Matrix over Tekton LTS versions** (`v1.3.0` + `v1.12.0` as of 2026-05-13); each leg sets `TKN_ACT_TEKTON_VERSION` and runs the full fixture table. `fail-fast: false` so each leg reports independently. Dumps cluster state on failure. |
 | `cli-e2e.yml` | same trigger pattern | builds `tkn-act` and exercises it as a subprocess against `testdata/e2e/` fixtures (no Go-level harness — verifies the binary's actual CLI surface, exit codes, and `-o json` shape). |
 | `cli-self-build.yml` | same trigger pattern | runs `tkn-act` against its own `pipelines/` so the project dog-foods every release. |
@@ -63,6 +64,7 @@ shortcut.
 | Workflow | Triggers when these change |
 |---|---|
 | `docker-integration` | `cmd/tkn-act/**`, `internal/backend/{backend.go,docker/**}`, `internal/{engine,exitcode,loader,reporter,resolver,tektontypes,validator,volumes,workspace}/**`, `internal/e2e/**`, `testdata/e2e/**`, `go.mod`, `go.sum`, the workflow file itself |
+| `remote-docker-integration` | identical set to `docker-integration` (same fixture surface, different daemon location), plus its own workflow file |
 | `cluster-integration` | `cmd/tkn-act/{cluster*.go,doctor*.go}`, `internal/backend/{backend.go,cluster/**}`, `internal/cluster/**`, `internal/clustere2e/**`, `internal/cmdrunner/**`, `internal/{engine,loader,tektontypes,validator}/**`, `testdata/e2e/**`, `go.mod`, `go.sum`, the workflow file itself |
 
 Pushes to `main` or `release/**` ignore the path filter and always run

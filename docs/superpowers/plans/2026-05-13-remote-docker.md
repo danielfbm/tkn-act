@@ -174,33 +174,31 @@ routing).
 **Files:** `.github/workflows/remote-docker-integration.yml` (new),
 `internal/e2e/fixtures` consumer.
 
-- [ ] New workflow `remote-docker-integration.yml`:
-      ```yaml
-      services:
-        dind:
-          image: docker:28-dind
-          options: --privileged
-          ports: ['2376:2376']
-          env:
-            DOCKER_TLS_CERTDIR: ''
-      env:
-        DOCKER_HOST: tcp://localhost:2376
-        TKN_ACT_REMOTE_DOCKER: 'on'
-      ```
-- [ ] Job runs `go test -tags integration ./internal/dockere2e/...`
-      across the full `fixtures.All()` table.
-- [ ] Skip-list any fixture that genuinely cannot work remotely
-      (none expected, but reserve the mechanism with a documented
-      reason like the `DockerOnly` flag).
-- [ ] Add a `docs/test-coverage.md` row for the new workflow.
+- [x] New workflow `remote-docker-integration.yml` with a
+      `docker:28-dind` service, `DOCKER_HOST=tcp://localhost:2375`,
+      `TKN_ACT_REMOTE_DOCKER=on`, same path filter as
+      `docker-integration.yml`. Port `2375` (not `2376`) because
+      `DOCKER_TLS_CERTDIR=''` opens the insecure listener.
+- [x] Job runs `go test -tags integration ./internal/e2e/...`
+      across the full `fixtures.All()` table. The e2e harness reads
+      `TKN_ACT_REMOTE_DOCKER` and passes it as `Options.Remote` so
+      the env var pins the path rather than relying on auto-detect.
+- [x] No `RemoteSkip` mechanism added — YAGNI. If a fixture ever
+      genuinely cannot run remotely, add the flag on the Fixture
+      struct alongside `DockerOnly` / `ClusterOnly` at that point.
+- [x] Added a `docs/test-coverage.md` row for the new workflow.
 
 ### P5b — `ssh://` transport unit coverage
 
-- [ ] Reuse Phase 1's stub SSH server in a higher-level test:
-      one `Backend.New(...)` call against `ssh://test@127.0.0.1:<port>`
-      asserts the moby SDK reaches the stub and round-trips a
-      `cli.Ping` call. No e2e fixture needed at this layer — the
-      dind workflow already covers volume staging.
+- [x] `TestSSHTransport_BackendNew_RoundTripsAPI` in
+      `internal/backend/docker/sshdial_test.go` composes the Phase 1
+      SSH stub with an in-process `http.Server` (handles `/_ping`
+      and `/info`, plus a `/v1.NN/`-prefix stripper for moby's
+      version-negotiated paths). The SSH stub bridges
+      `direct-streamlocal@openssh.com` channel bytes to the HTTP
+      listener. A single `New(Options{Host: "ssh://test@..."})` call
+      drives the full `dial → SSH handshake → Ping → Info → Close`
+      chain end-to-end without a real daemon.
 
 **Gate:** workflow green on a probe PR; one fixture exercised in
 the workflow.

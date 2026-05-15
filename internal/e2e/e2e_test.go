@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -85,7 +86,15 @@ func runFixtureDocker(t *testing.T, f fixtures.Fixture) {
 		return mgr.ProvisionResultsDir(taskName)
 	})
 
-	be, err := docker.New(docker.Options{})
+	// The remote-docker-integration workflow runs this same fixture
+	// table against a dind service container with $DOCKER_HOST set
+	// and TKN_ACT_REMOTE_DOCKER=on. Auto-detect would also classify
+	// remote in that environment, but the env var is honored here so
+	// a regression in auto-detect doesn't silently flip to bind mounts
+	// (which the dind daemon's filesystem can't see). Empty env →
+	// "" → "auto" inside decideRemote, matching the prior behaviour
+	// of the docker-integration workflow.
+	be, err := docker.New(docker.Options{Remote: os.Getenv("TKN_ACT_REMOTE_DOCKER")})
 	if err != nil {
 		t.Skipf("docker: %v", err)
 	}
