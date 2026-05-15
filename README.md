@@ -7,10 +7,18 @@ No production Kubernetes required. Inspired by
 
 ## Status
 
-v1.4 — `tekton.dev/v1` Pipelines and Tasks run locally with two
+v1.7 — `tekton.dev/v1` Pipelines and Tasks run locally with two
 backends, structured JSON output, and stable exit codes for CI/agents.
-See [`docs/feature-parity.md`](docs/feature-parity.md) for the full
-shipped/in-progress/gap scoreboard.
+Adds since v1.4: `Pipeline.spec.results` and `displayName` /
+`description` on every level (v1.5); `Task.sidecars`, `PipelineTask.matrix`,
+`StepAction`, and resolvers (`git` / `hub` / `http` / `bundles` /
+`cluster`, plus Mode B remote resolution via `ResolutionRequest`)
+with offline mode and an on-disk cache (v1.6); remote docker daemon
+support for `--docker` (ssh:// / tcp:// `DOCKER_HOST`, `--docker-host`,
+per-run volume staging instead of bind mounts) plus a dedicated
+`remote-docker-integration` CI workflow (v1.7). See
+[`docs/feature-parity.md`](docs/feature-parity.md) for the full
+shipped / in-progress / gap scoreboard.
 
 ## Quickstart
 
