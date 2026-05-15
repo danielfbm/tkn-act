@@ -211,6 +211,53 @@ func wrapTarUnder(t *testing.T, src io.Reader, prefix string) io.Reader {
 	return &out
 }
 
+// TestUntarToDir_PrefixCollisionWithFilename asserts that a file whose
+// own name happens to start with stripPrefix is NOT corrupted by an
+// over-eager prefix strip. CopyFromContainer wraps every entry under
+// the basename of the source path; the wrapper is "greet/", and a
+// child file named "greeting" must extract as "greeting" — not as
+// "ing" (which an unguarded TrimPrefix(name, "greet") would produce).
+//
+// This is the bug the Phase 5 dind workflow surfaced: the
+// step-actions fixture writes step result "greeting" inside step
+// "greet", and the existing unit tests (StripPrefix above) only
+// covered files whose names didn't collide with the prefix string.
+func TestUntarToDir_PrefixCollisionWithFilename(t *testing.T) {
+	src := t.TempDir()
+	// "greeting" — starts with the strip prefix "greet"; this is the
+	// canonical collision case.
+	if err := os.WriteFile(filepath.Join(src, "greeting"), []byte("hello tekton"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Also include a file whose name happens to equal the strip
+	// prefix entirely (`greet`) — this MUST extract as `greet`, not
+	// be silently dropped as if it were the dir-self entry.
+	if err := os.WriteFile(filepath.Join(src, "greet"), []byte("exact-match"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rc, err := tarHostDir(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := wrapTarUnder(t, rc, "greet")
+
+	dst := t.TempDir()
+	if err := untarToDir(wrapped, dst, "greet"); err != nil {
+		t.Fatalf("untarToDir: %v", err)
+	}
+
+	if got, err := os.ReadFile(filepath.Join(dst, "greeting")); err != nil {
+		t.Errorf("greeting: %v (regression — file likely extracted as 'ing' under unguarded TrimPrefix)", err)
+	} else if string(got) != "hello tekton" {
+		t.Errorf("greeting = %q, want %q", got, "hello tekton")
+	}
+	if got, err := os.ReadFile(filepath.Join(dst, "greet")); err != nil {
+		t.Errorf("greet: %v (regression — file equal to strip prefix was dropped)", err)
+	} else if string(got) != "exact-match" {
+		t.Errorf("greet = %q, want %q", got, "exact-match")
+	}
+}
+
 // TestUntarToDir_PathTraversalRejected feeds untarToDir a hand-built
 // tar whose entries try to escape the destination via `../` chains
 // and absolute paths. Each escape attempt must be silently dropped

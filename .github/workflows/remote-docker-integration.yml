@@ -1,0 +1,103 @@
+name: remote-docker-integration
+
+# Runs the docker-backend end-to-end suite against a docker-in-docker
+# service container, exercising the Phase 1-4 remote-daemon path
+# (ssh:// / tcp:// resolveDockerHost → auto-detected remote=true →
+# Phase 3 per-run volume staging instead of bind mounts).
+#
+# Same fixture set as docker-integration.yml; the difference is the
+# daemon: dind sits in a separate container with its own filesystem,
+# so the bind-mount path would silently fail. If anything regresses
+# in the staging path this job goes red without needing a real remote
+# host.
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+  pull_request:
+    paths:
+      - 'cmd/tkn-act/**'
+      - 'internal/backend/backend.go'
+      - 'internal/backend/docker/**'
+      - 'internal/engine/**'
+      - 'internal/exitcode/**'
+      - 'internal/loader/**'
+      - 'internal/reporter/**'
+      - 'internal/resolver/**'
+      - 'internal/tektontypes/**'
+      - 'internal/validator/**'
+      - 'internal/volumes/**'
+      - 'internal/workspace/**'
+      - 'internal/e2e/**'
+      - 'testdata/e2e/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/remote-docker-integration.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: remote docker e2e (dind, -tags integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      dind:
+        image: docker:28-dind
+        # `-e DOCKER_TLS_CERTDIR=` (in options, not `env:`) is the
+        # only reliable way to pass an empty-string env var to the
+        # service container. GitHub Actions' `env:` block renders as
+        # `-e VAR` (no `=value`) which inherits the host's value;
+        # since the runner doesn't set DOCKER_TLS_CERTDIR, the
+        # container sees it UNSET — which dind treats as the default
+        # /certs TLS mode, not insecure. Setting it explicitly to ""
+        # via -e DOCKER_TLS_CERTDIR= tells dind to listen on 2375
+        # insecure. The daemon is on the same runner, not exposed to
+        # the network, so the simpler insecure path is fine.
+        options: >-
+          --privileged
+          -e DOCKER_TLS_CERTDIR=
+          --health-cmd "docker info"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+        ports:
+          - 2375:2375
+    env:
+      # Point the moby SDK at the dind service. resolveDockerHost picks
+      # this up via client.FromEnv; auto-detect would also classify
+      # remote, but TKN_ACT_REMOTE_DOCKER pins it so a regression in
+      # auto-detect doesn't silently flip back to bind mounts.
+      DOCKER_HOST: tcp://localhost:2375
+      TKN_ACT_REMOTE_DOCKER: 'on'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: dind info (sanity)
+        run: docker info
+      - name: warm dind image cache
+        # Pre-pull onto the dind daemon, not the runner's local docker
+        # (the env above redirects the client). registry.k8s.io/pause:3.9
+        # backs the per-Task netns owner AND the remote-mode volume
+        # stager (Phase 3).
+        run: |
+          docker pull alpine:3
+          docker pull registry.k8s.io/pause:3.9
+      - name: go test -tags integration ./internal/e2e/...
+        run: go test -tags integration -count=1 -timeout 20m ./internal/e2e/...
+      - name: go test -tags integration ./internal/backend/docker/...
+        # staging_integration_test.go lives here — it asserts the
+        # per-run volume + stager unit-level invariants directly,
+        # which the e2e suite covers only end-to-end. Running it
+        # against dind (rather than docker-integration.yml's local
+        # daemon) is the point of this workflow: a staging
+        # regression against an actual remote daemon shows up here
+        # without depending on a fixture-level failure to surface
+        # it.
+        run: go test -tags integration -count=1 -timeout 10m ./internal/backend/docker/...

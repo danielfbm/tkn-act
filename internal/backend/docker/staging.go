@@ -530,8 +530,25 @@ func untarToDir(r io.Reader, dstDir, stripPrefix string) error {
 		if err != nil {
 			return err
 		}
-		name := strings.TrimPrefix(hdr.Name, stripPrefix+"/")
-		name = strings.TrimPrefix(name, stripPrefix)
+		// CopyFromContainer wraps every entry under the basename of the
+		// source path. Two shapes are possible:
+		//   "greet/"           — the dir-itself entry (TypeDir)
+		//   "greet"            — the same dir-itself entry without
+		//                        trailing slash (some tar producers
+		//                        do this)
+		//   "greet/greeting"   — files inside the dir
+		// Strip the wrapper only when it's the literal prefix. Using
+		// `TrimPrefix(name, stripPrefix)` unguarded would also chop the
+		// prefix off any file whose own name happens to start with it
+		// (e.g. a result called `greeting` inside step `greet` ended
+		// up extracted as `ing` — Phase 5 hit this against dind).
+		name := hdr.Name
+		switch {
+		case name == stripPrefix, name == stripPrefix+"/":
+			name = ""
+		case strings.HasPrefix(name, stripPrefix+"/"):
+			name = name[len(stripPrefix)+1:]
+		}
 		name = strings.TrimPrefix(name, "/")
 		if name == "" {
 			continue
