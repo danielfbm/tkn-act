@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -79,5 +80,44 @@ func TestNew_HostOptionRoutesTCP(t *testing.T) {
 	}
 	if !strings.Contains(msg, "127.0.0.1:1") {
 		t.Errorf("ping error %q does not mention 127.0.0.1:1; Options.Host may not have steered the client", err)
+	}
+}
+
+// TestNew_HostOptionFlowsIntoDecideRemote covers the wired path
+//
+//	Options.Host (tcp://) -> resolveDockerHost -> decideRemote
+//
+// which the per-piece tests above do not assert together. A
+// regression that dropped the resolved value before reaching
+// decideRemote (e.g. passing opts.Host directly instead of the
+// resolved one, or short-circuiting on the env-empty branch)
+// would silently misclassify a tcp:// daemon as local in Phase 3,
+// flipping the staging path back to bind mounts the remote daemon
+// cannot see.
+//
+// We compose the two functions directly with a stub daemonInfoer
+// because New() also pings the daemon and we don't want this test
+// to depend on one being reachable.
+func TestNew_HostOptionFlowsIntoDecideRemote(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "") // no env interference
+
+	clientHost, err := os.Hostname()
+	if err != nil || clientHost == "" {
+		t.Skip("os.Hostname unavailable")
+	}
+
+	const optHost = "tcp://remote.example:2375"
+	resolved := resolveDockerHost(optHost)
+	if resolved != optHost {
+		t.Fatalf("resolveDockerHost(%q) = %q, want %q (Options.Host should pass through unchanged)", optHost, resolved, optHost)
+	}
+
+	// fakeInfoer is defined in remote_test.go (same package).
+	remote, err := decideRemote("", resolved, fakeInfoer{name: "definitely-not-" + clientHost})
+	if err != nil {
+		t.Fatalf("decideRemote: %v", err)
+	}
+	if !remote {
+		t.Errorf("Options.Host=%q + non-matching daemon Name should classify remote=true, got false", optHost)
 	}
 }

@@ -96,15 +96,17 @@ func newSSHDialer(dockerHost string) (func(ctx context.Context, network, addr st
 	}, nil
 }
 
-// parseSSHDockerHost extracts the SSH user and host:port from a
-// DOCKER_HOST=ssh://[user@]host[:port] URL.
+// parseSSHDockerHost extracts the SSH user and host:port from an
+// ssh://[user@]host[:port] URL coming from either --docker-host or
+// the standard $DOCKER_HOST env var (whichever resolveDockerHost
+// returned).
 //
-// Errors quote the URL with userinfo redacted (url.URL.Redacted) so a
-// password or token in `ssh://user:secret@host` does not surface in
-// logs / shell history. The dialer is publickey-only so a password
-// URL never authenticates anyway, but echoing it back is dodgy
-// — Phase 4 made `--docker-host` a CLI flag, which puts URLs in
-// shell history and `ps`, so the redaction is worth the cost here.
+// Errors quote the URL with the password redacted (url.URL.Redacted)
+// so a token in `ssh://user:secret@host` does not surface in logs
+// or shell history. The dialer is publickey-only so a password URL
+// never authenticates anyway, but echoing it back is dodgy — Phase 4
+// made `--docker-host` a CLI flag, which puts URLs in shell history
+// and `ps` listings, so the redaction is worth the cost here.
 func parseSSHDockerHost(dockerHost string) (user, hostport string, err error) {
 	u, err := url.Parse(dockerHost)
 	if err != nil {
@@ -130,11 +132,14 @@ func parseSSHDockerHost(dockerHost string) (user, hostport string, err error) {
 	return user, net.JoinHostPort(u.Hostname(), port), nil
 }
 
-// redactURL returns the input with any URL userinfo replaced by
-// "xxxxx" (matches net/url.URL.Redacted). Used for the parse-failure
-// branch where url.Parse itself returned an error so we can't call
-// u.Redacted(); falls through to the raw string when redaction
-// can't safely apply.
+// redactURL returns the input with any URL password component
+// replaced by "xxxxx", matching net/url.URL.Redacted's behaviour.
+// The username is left intact — usernames are not sensitive, and
+// dropping them would obscure useful diagnostics (e.g. "no SSH
+// authentication available for ssh://root@host"). Used when the
+// caller has only the raw string (e.g. before parse, or in a
+// parse-failure error wrap); returns the raw string unchanged when
+// url.Parse fails or when there's no userinfo to redact.
 func redactURL(raw string) string {
 	if u, err := url.Parse(raw); err == nil && u.User != nil {
 		return u.Redacted()
