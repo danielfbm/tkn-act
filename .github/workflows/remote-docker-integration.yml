@@ -85,3 +85,13 @@ jobs:
           docker pull registry.k8s.io/pause:3.9
       - name: go test -tags integration ./internal/e2e/...
         run: go test -tags integration -count=1 -timeout 20m ./internal/e2e/...
+      - name: go test -tags integration ./internal/backend/docker/...
+        # staging_integration_test.go lives here — it asserts the
+        # per-run volume + stager unit-level invariants directly,
+        # which the e2e suite covers only end-to-end. Running it
+        # against dind (rather than docker-integration.yml's local
+        # daemon) is the point of this workflow: a staging
+        # regression against an actual remote daemon shows up here
+        # without depending on a fixture-level failure to surface
+        # it.
+        run: go test -tags integration -count=1 -timeout 10m ./internal/backend/docker/...

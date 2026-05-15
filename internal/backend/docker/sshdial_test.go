@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -266,6 +267,12 @@ func TestSSHTransport_BackendNew_RoundTripsAPI(t *testing.T) {
 	t.Setenv(envSSHInsecure, "1")
 	t.Setenv(envRemoteDockerSocket, "/var/run/docker.sock")
 	t.Setenv("DOCKER_HOST", "")
+	// USER pinned even though the URL below carries an explicit
+	// "test@" — defensively prevents the test from silently depending
+	// on the runner's $USER if the URL is ever simplified to
+	// ssh://<addr> (which would exercise parseSSHDockerHost's USER
+	// fallback path).
+	t.Setenv("USER", "test")
 
 	clientPub, clientPriv := mustGenEd25519(t)
 	sshDir := filepath.Join(tmp, ".ssh")
@@ -333,8 +340,13 @@ func TestSSHTransport_BackendNew_RoundTripsAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer httpLn.Close()
-	httpSrv := &http.Server{Handler: mux}
-	go httpSrv.Serve(httpLn)
+	httpSrv := &http.Server{
+		Handler: mux,
+		// Suppress "http: Server closed" on Close() so it doesn't
+		// noise up test output when the goroutine drains.
+		ErrorLog: log.New(io.Discard, "", 0),
+	}
+	go func() { _ = httpSrv.Serve(httpLn) }() // ErrServerClosed expected on teardown
 	defer httpSrv.Close()
 
 	sshLn, err := net.Listen("tcp", "127.0.0.1:0")
@@ -398,7 +410,11 @@ func TestSSHTransport_BackendNew_RoundTripsAPI(t *testing.T) {
 
 	// Re-Ping through the live client to confirm the transport remains
 	// usable after New's internal Ping. A regression that closed the
-	// channel after the first request would fail here.
+	// channel after the first request would fail here. Accesses the
+	// unexported be.cli directly because Backend has no public method
+	// that takes a ctx and re-pings — this test lives in `package
+	// docker` precisely so the in-process round-trip can be asserted
+	// without growing the public API surface.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := be.cli.Ping(ctx); err != nil {
