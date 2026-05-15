@@ -13,6 +13,7 @@ package agentguide
 // matching the existing in-section separators in the source files.
 var Order = []string{
 	"overview",
+	"docker-backend",
 	"step-template",
 	"sidecars",
 	"step-actions",

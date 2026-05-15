@@ -209,22 +209,33 @@ the workflow.
 
 **Files:**
 
-- `docs/agent-guide/docker-backend.md` — new "Remote docker
-  daemons" section: auto-detect behavior, `--remote-docker` flag,
-  volume-staging trade-off, SSH key requirements.
-- `docs/agent-guide/README.md` — bullet under "Operational flags"
-  for `--remote-docker` + `--docker-host`.
-- `README.md` — example using `DOCKER_HOST=ssh://...`.
-- `docs/feature-parity.md` — header note "Docker backend supports
-  remote daemons since v1.7." Bump `Last updated:`.
-- `docs/test-coverage.md` — `remote-docker-integration` workflow
-  row.
-- `AGENTS.md` — public-contract-stability rows for `--remote-docker`,
-  `--docker-host`, `TKN_ACT_REMOTE_DOCKER`, `TKN_ACT_SSH_INSECURE`.
+- [x] `docs/agent-guide/docker-backend.md` — new dedicated section:
+      default behavior, remote-daemon targeting (`--docker-host` /
+      `$DOCKER_HOST` precedence), SSH transport (publickey only,
+      key lookup, known_hosts, MaxAuthTries footgun),
+      remote-mode volume staging lifecycle, `--remote-docker={auto|on|off}`
+      semantics with the strict-flag-tolerant-env pattern, air-gap
+      via `--pause-image`, and common gotchas.
+- [x] `docs/agent-guide/README.md` — env-var stanza already
+      covered this in Phases 2-3 (lines 159-179); no additional
+      change needed in Phase 6.
+- [x] `README.md` — new example block for remote daemon (ssh:// +
+      env-var variant + air-gap pause-image override) with a
+      pointer to `docs/agent-guide/docker-backend.md`.
+- [x] `docs/feature-parity.md` — `Last updated:` stamp bumped with a
+      note that the docker backend supports remote daemons since v1.7.
+- [x] `docs/test-coverage.md` — `remote-docker-integration` workflow
+      row landed in Phase 5.
+- [x] `AGENTS.md` — public-contract-stability rows extended:
+      CLI-flag row lists `--remote-docker` / `--docker-host` /
+      `--pause-image` / `--sidecar-start-grace` /
+      `--sidecar-stop-grace`; env-var row lists
+      `TKN_ACT_REMOTE_DOCKER` / `TKN_ACT_SSH_INSECURE` /
+      `TKN_ACT_DOCKER_SOCKET` / `TKN_ACT_PAUSE_IMAGE`.
 
-- [ ] `go generate ./cmd/tkn-act/` — refresh embedded agent-guide tree.
-- [ ] `make check-agentguide` (or `.github/scripts/check-agentguide.sh`) green.
-- [ ] `.github/scripts/parity-check.sh` green.
+- [x] `go generate ./cmd/tkn-act/` — refreshed embedded agent-guide tree.
+- [x] `make check-agentguide` / `.github/scripts/check-agentguide.sh` green.
+- [x] `.github/scripts/parity-check.sh` green.
 
 **Gate:** all four CI gates (`tests-required`, `coverage`,
 `parity-check`, `agentguide-freshness`) green on the implementation

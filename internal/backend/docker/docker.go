@@ -152,12 +152,14 @@ type daemonInfoer interface {
 //
 // Auto-detection rules: unix:// (or empty dockerHost) is local. Any
 // other scheme triggers the Info probe — matching hostnames mean
-// local, mismatching mean remote, and any ambiguity (Info error,
-// empty daemon Name, missing client hostname) is reported as remote.
-// "Unknown" defaults to remote because misclassifying a remote
-// daemon as local in Phase 3 would silently bind-mount paths that
-// don't exist on the daemon's host. The user can pin the answer
-// with --remote-docker=on|off.
+// local, mismatching mean remote. An empty daemon Name or a missing
+// client hostname is reported as remote — "unknown" defaults to
+// remote because misclassifying a remote daemon as local in Phase 3
+// would silently bind-mount paths that don't exist on the daemon's
+// host. A daemon Info call ERROR (the probe itself failed) is
+// propagated as a startup error rather than silently classified;
+// the user can pin the answer with --remote-docker=on|off to skip
+// the probe in that case.
 func decideRemote(mode, dockerHost string, info daemonInfoer) (bool, error) {
 	switch mode {
 	case "on":
