@@ -31,7 +31,7 @@ Accepted schemes are the same set the Docker client uses:
 
 Use `--docker-host` for a one-off pivot (e.g. `--docker-host=ssh://root@build-vm tkn-act run …`) without mutating process-wide env. Use `$DOCKER_HOST` when every command in a shell should target the same daemon.
 
-`$DOCKER_TLS_VERIFY`, `$DOCKER_CERT_PATH`, `$DOCKER_API_VERSION` are still honored when an override is set — internally the moby client loads them via `client.FromEnv` first and only the host is then re-pointed at the override.
+For `tcp://` and other non-SSH overrides, `$DOCKER_TLS_VERIFY`, `$DOCKER_CERT_PATH`, `$DOCKER_API_VERSION` are still honored — internally the moby client loads them via `client.FromEnv` first and only the host is then re-pointed at the override. The `ssh://` path does not consult those env vars (authentication is publickey-based and TLS does not apply); the SSH dialer is built directly without `client.FromEnv`.
 
 ### SSH transport
 
@@ -60,7 +60,7 @@ When the daemon is remote, bind-mounting a host path doesn't work — the daemon
 Lifecycle:
 
 1. `Backend.New` decides `remote` via `--remote-docker` / `$TKN_ACT_REMOTE_DOCKER` / auto-detect (see next section).
-2. If remote, `Prepare` creates `tkn-act-<runID>` and a long-lived **stager** container (`<volume>/staged` mount point) that copies workspace seeds onto the volume via `CopyToContainer`.
+2. If remote, `Prepare` creates `tkn-act-<runID>` and a long-lived **stager** container with the whole volume mounted at `/staged` inside that container. The stager copies workspace seeds onto the volume via `CopyToContainer`.
 3. Each Task / Step container subpath-mounts the appropriate slice of `<volume>` (`workspaces/<name>/`, `results/<taskRun>/...`, `scripts/...`).
 4. After each step, per-step result files are pulled back to the host via `CopyFromContainer` so the engine's existing `$(steps.X.results.Y)` substitution code keeps working.
 5. `Cleanup` stops the stager, pulls any workspace dirs back to the host for inspection, then removes the volume.
@@ -76,7 +76,7 @@ Subpath mounts require Docker Engine ≥25 on the remote daemon. Older engines E
 | daemon address | auto verdict |
 |---|---|
 | empty / `unix://...` | local |
-| any other scheme | probe the daemon's `Info.Name`; if it equals the client's `os.Hostname()`, local — otherwise remote. Any ambiguity (empty `Info.Name`, network error during the probe) is treated as **remote**, because misclassifying a remote daemon as local is the destructive outcome (it would silently bind-mount paths the daemon can't see). |
+| any other scheme | probe the daemon's `Info.Name`; if it equals the client's `os.Hostname()`, local — otherwise remote. An **empty `Info.Name`** or an unreachable `os.Hostname()` is treated as **remote**, because misclassifying a remote daemon as local is the destructive outcome (it would silently bind-mount paths the daemon can't see). A **daemon `Info` call error** (the network probe itself failed) is propagated as a startup error rather than silently classified — pin `--remote-docker=on|off` to skip the probe in that case. |
 
 Pin `=on` whenever the auto verdict is unstable or you want to short-circuit the probe — CI workflows running against `docker:dind` are the canonical case, where the daemon hostname is a random container id that auto-detect would classify as remote anyway, but pinning makes the test stay green even if `Info` flakes.
 
