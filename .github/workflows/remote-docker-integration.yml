@@ -47,13 +47,19 @@ jobs:
     services:
       dind:
         image: docker:28-dind
-        # DOCKER_TLS_CERTDIR empty → daemon listens on 2375 insecure
-        # (TLS would be 2376; the simpler insecure path is fine since
-        # the daemon is on the same runner, not exposed to the network).
-        env:
-          DOCKER_TLS_CERTDIR: ''
+        # `-e DOCKER_TLS_CERTDIR=` (in options, not `env:`) is the
+        # only reliable way to pass an empty-string env var to the
+        # service container. GitHub Actions' `env:` block renders as
+        # `-e VAR` (no `=value`) which inherits the host's value;
+        # since the runner doesn't set DOCKER_TLS_CERTDIR, the
+        # container sees it UNSET — which dind treats as the default
+        # /certs TLS mode, not insecure. Setting it explicitly to ""
+        # via -e DOCKER_TLS_CERTDIR= tells dind to listen on 2375
+        # insecure. The daemon is on the same runner, not exposed to
+        # the network, so the simpler insecure path is fine.
         options: >-
           --privileged
+          -e DOCKER_TLS_CERTDIR=
           --health-cmd "docker info"
           --health-interval 5s
           --health-timeout 5s
