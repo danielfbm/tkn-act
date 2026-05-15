@@ -94,7 +94,15 @@ func runFixtureDocker(t *testing.T, f fixtures.Fixture) {
 	// (which the dind daemon's filesystem can't see). Empty env →
 	// "" → "auto" inside decideRemote, matching the prior behaviour
 	// of the docker-integration workflow.
-	be, err := docker.New(docker.Options{Remote: os.Getenv("TKN_ACT_REMOTE_DOCKER")})
+	//
+	// TKN_ACT_PAUSE_IMAGE is honored too so the harness can be run
+	// against air-gapped daemons whose network can't reach
+	// registry.k8s.io for the default pause image — same plumbing the
+	// CLI's --pause-image flag provides, just at the test seam.
+	be, err := docker.New(docker.Options{
+		Remote:     os.Getenv("TKN_ACT_REMOTE_DOCKER"),
+		PauseImage: os.Getenv("TKN_ACT_PAUSE_IMAGE"),
+	})
 	if err != nil {
 		t.Skipf("docker: %v", err)
 	}
