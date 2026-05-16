@@ -28,6 +28,12 @@ const (
 	EvtError         EventKind = "error"
 	EvtResolverStart EventKind = "resolver-start"
 	EvtResolverEnd   EventKind = "resolver-end"
+	// EvtDebug is emitted only when --debug is set. Carries Component
+	// (backend | resolver | engine), Message (short human summary),
+	// and Fields (component-defined key/value payload). Existing
+	// fields on Event remain optional and may be empty on debug
+	// events.
+	EvtDebug EventKind = "debug"
 )
 
 // Status values that can appear on task-end. Existing values are unchanged;
@@ -108,6 +114,14 @@ type Event struct {
 	// name (Parent), the 0-based row index, the total expansion
 	// count, and the row's matrix-contributed params.
 	Matrix *MatrixEvent `json:"matrix,omitempty"`
+
+	// Component is the source of a debug event (backend | resolver |
+	// engine). Set only on EvtDebug.
+	Component string `json:"component,omitempty"`
+	// Fields carries the per-debug-event payload (e.g. {"id": "abc",
+	// "image": "alpine"}). Set only on EvtDebug. Encoded as a JSON
+	// object; values must be JSON-serializable.
+	Fields map[string]any `json:"fields,omitempty"`
 }
 
 // MatrixEvent identifies one expansion of a matrix-fanned
