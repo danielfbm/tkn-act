@@ -4,18 +4,20 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/danielfbm/tkn-act/internal/reporter"
 )
 
 // Replay reads events.jsonl line by line and emits each event to rep.
-// The first malformed line aborts the replay with a descriptive error
-// (well-formed events earlier in the file have already been emitted).
+// The first malformed line aborts the replay with a descriptive
+// error (well-formed events earlier in the file have already been
+// emitted).
 //
-// Buffer is sized to handle the 1 MiB max-line invariant the engine
-// guarantees per step-log line.
+// Scanner buffer is sized to 4 MiB to leave headroom over the
+// engine's 1 MiB step-log line cap — base64-padded payloads and
+// future schema additions can grow a single event without us
+// having to bump the limit.
 func Replay(eventsPath string, rep reporter.Reporter) error {
 	f, err := os.Open(eventsPath)
 	if err != nil {
@@ -24,9 +26,6 @@ func Replay(eventsPath string, rep reporter.Reporter) error {
 	defer f.Close()
 
 	sc := bufio.NewScanner(f)
-	// Increase the per-line cap to match the engine's max step-log
-	// line size (1 MiB). bufio.Scanner's default 64 KiB starts the
-	// buffer; supply a larger max so big log lines don't ErrTooLong.
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
 
 	line := 0
@@ -42,7 +41,7 @@ func Replay(eventsPath string, rep reporter.Reporter) error {
 		}
 		rep.Emit(ev)
 	}
-	if err := sc.Err(); err != nil && err != io.EOF {
+	if err := sc.Err(); err != nil {
 		return fmt.Errorf("scan events: %w", err)
 	}
 	return nil

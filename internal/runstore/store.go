@@ -17,12 +17,24 @@ type Store struct {
 
 // Open returns a Store rooted at dir, creating the directory tree if
 // absent. writerVersion is recorded in every new run's meta.json so
-// later replays can detect schema drift.
+// later replays can detect schema drift. Use OpenReadOnly when the
+// caller only intends to Resolve / read existing runs.
 func Open(dir, writerVersion string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "runs"), 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir state-dir: %w", err)
 	}
 	return &Store{dir: dir, writerVersion: writerVersion}, nil
+}
+
+// OpenReadOnly opens an existing state-dir without creating it.
+// Returns fs.ErrNotExist (via os.IsNotExist) when the directory or
+// its index.json doesn't exist, so callers can route to a "no runs
+// recorded" error message without writing anything to disk.
+func OpenReadOnly(dir string) (*Store, error) {
+	if _, err := os.Stat(filepath.Join(dir, "runs")); err != nil {
+		return nil, err
+	}
+	return &Store{dir: dir}, nil
 }
 
 // Dir returns the state-dir root.
@@ -124,7 +136,7 @@ func (s *Store) Resolve(id string) (IndexEntry, error) {
 	if looksLikeSeq(id) {
 		n, _ := strconv.Atoi(id) // safe: looksLikeSeq guarantees valid int
 		if n <= 0 {
-			return IndexEntry{}, fmt.Errorf("run sequence number must be positive (got %d)", n)
+			return IndexEntry{}, fmt.Errorf("run sequence number must be positive (got %d): %w", n, ErrNotFound)
 		}
 		return idx.BySeq(n)
 	}

@@ -122,18 +122,34 @@ func (i *Index) Update(seq int, mutator func(*IndexEntry)) error {
 	return nil
 }
 
-// BySeq returns the entry with the given sequence number.
+// Sentinel errors callers (notably `tkn-act logs`) can route on:
+// "user-supplied id didn't match" becomes Usage(2) at the caller,
+// while underlying I/O / corruption errors stay Env(3).
+var (
+	// ErrNoRuns is returned by Latest when the index is empty.
+	ErrNoRuns = errors.New("no runs recorded")
+	// ErrNotFound is returned by BySeq / ByULIDPrefix when nothing
+	// matches the given identifier.
+	ErrNotFound = errors.New("no matching run")
+	// ErrAmbiguous is returned by ByULIDPrefix when more than one
+	// entry shares the prefix.
+	ErrAmbiguous = errors.New("ambiguous run identifier")
+)
+
+// BySeq returns the entry with the given sequence number. Returns
+// ErrNotFound (wrapped) when no entry matches.
 func (i *Index) BySeq(seq int) (IndexEntry, error) {
 	for _, e := range i.data.Entries {
 		if e.Seq == seq {
 			return e, nil
 		}
 	}
-	return IndexEntry{}, fmt.Errorf("no run with seq %d", seq)
+	return IndexEntry{}, fmt.Errorf("no run with seq %d: %w", seq, ErrNotFound)
 }
 
 // ByULIDPrefix returns the entry whose ULID has the given prefix.
-// Returns an error if zero or multiple entries match.
+// Returns ErrNotFound (zero matches) or ErrAmbiguous (multiple
+// matches) wrapped with context.
 func (i *Index) ByULIDPrefix(prefix string) (IndexEntry, error) {
 	if prefix == "" {
 		return IndexEntry{}, errors.New("ulid prefix must not be empty")
@@ -146,18 +162,19 @@ func (i *Index) ByULIDPrefix(prefix string) (IndexEntry, error) {
 	}
 	switch len(found) {
 	case 0:
-		return IndexEntry{}, fmt.Errorf("no run matching ulid prefix %q", prefix)
+		return IndexEntry{}, fmt.Errorf("no run matching ulid prefix %q: %w", prefix, ErrNotFound)
 	case 1:
 		return found[0], nil
 	default:
-		return IndexEntry{}, fmt.Errorf("ulid prefix %q ambiguous (%d matches)", prefix, len(found))
+		return IndexEntry{}, fmt.Errorf("ulid prefix %q matches %d runs: %w", prefix, len(found), ErrAmbiguous)
 	}
 }
 
-// Latest returns the most recently appended entry.
+// Latest returns the most recently appended entry. Returns ErrNoRuns
+// when the index is empty.
 func (i *Index) Latest() (IndexEntry, error) {
 	if len(i.data.Entries) == 0 {
-		return IndexEntry{}, errors.New("no runs recorded")
+		return IndexEntry{}, ErrNoRuns
 	}
 	return i.data.Entries[len(i.data.Entries)-1], nil
 }

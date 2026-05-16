@@ -1,6 +1,7 @@
 package runstore_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,6 +130,57 @@ func TestStore_Resolve_Errors(t *testing.T) {
 		if !strings.Contains(err.Error(), "positive") {
 			t.Errorf("Resolve(%q) error = %v, want a 'positive' hint", in, err)
 		}
+	}
+}
+
+func TestStore_Resolve_WrapsSentinels(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := runstore.Open(dir, "v")
+
+	// Empty index → Latest returns ErrNoRuns; Resolve should keep it.
+	_, err := s.Resolve("latest")
+	if !errors.Is(err, runstore.ErrNoRuns) {
+		t.Errorf("Resolve(latest) on empty: errors.Is(ErrNoRuns) failed (err=%v)", err)
+	}
+
+	s.NewRun(time.Now(), "p", nil)
+
+	// Bad seq → ErrNotFound.
+	_, err = s.Resolve("99")
+	if !errors.Is(err, runstore.ErrNotFound) {
+		t.Errorf("Resolve(99): errors.Is(ErrNotFound) failed (err=%v)", err)
+	}
+
+	// "-1" → ErrNotFound (with positive-int hint in the wrapper).
+	_, err = s.Resolve("-1")
+	if !errors.Is(err, runstore.ErrNotFound) {
+		t.Errorf("Resolve(-1): errors.Is(ErrNotFound) failed (err=%v)", err)
+	}
+
+	// Bad ULID prefix → ErrNotFound.
+	_, err = s.Resolve("ZZZZ")
+	if !errors.Is(err, runstore.ErrNotFound) {
+		t.Errorf("Resolve(ZZZZ): errors.Is(ErrNotFound) failed (err=%v)", err)
+	}
+}
+
+func TestStore_OpenReadOnly(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "missing")
+	_, err := runstore.OpenReadOnly(dir)
+	if !os.IsNotExist(err) {
+		t.Errorf("OpenReadOnly on missing dir: os.IsNotExist=false, err=%v", err)
+	}
+	// OpenReadOnly does NOT create the dir.
+	if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
+		t.Errorf("OpenReadOnly created missing dir (%v); must be read-only", statErr)
+	}
+
+	// Open creates it; OpenReadOnly then succeeds.
+	if _, err := runstore.Open(dir, "v"); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := runstore.OpenReadOnly(dir); err != nil {
+		t.Errorf("OpenReadOnly after Open: %v", err)
 	}
 }
 
