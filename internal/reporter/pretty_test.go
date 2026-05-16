@@ -278,3 +278,66 @@ func TestPretty_DebugLine_Quiet(t *testing.T) {
 		t.Errorf("quiet should suppress debug events: %q", buf.String())
 	}
 }
+
+// TestPretty_SidecarLine: a sidecar log line carries the diamond
+// glyph (◊) so a reader scanning multi-task output can spot sidecar
+// emission at a glance. The task:sidecar separator stays ":" (steps
+// use "/"). Stream "sidecar-stderr" surfaces the yellow "!" marker.
+func TestPretty_SidecarLine(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Normal})
+	rep.Emit(Event{
+		Kind:   EvtSidecarLog,
+		Task:   "t",
+		Step:   "redis",
+		Stream: "sidecar-stdout",
+		Line:   "ready",
+	})
+	out := buf.String()
+	if !strings.Contains(out, "◊") {
+		t.Errorf("missing ◊ glyph in sidecar line: %q", out)
+	}
+	if !strings.Contains(out, "t:redis") {
+		t.Errorf("missing task:sidecar prefix: %q", out)
+	}
+	if !strings.Contains(out, "ready") {
+		t.Errorf("missing log line content: %q", out)
+	}
+}
+
+// TestPretty_SidecarLine_StderrShowsBangMarker: sidecar-stderr lines
+// must surface the yellow "!" marker so failures are visible mixed
+// in with stdout.
+func TestPretty_SidecarLine_StderrShowsBangMarker(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Normal})
+	rep.Emit(Event{
+		Kind:   EvtSidecarLog,
+		Task:   "t",
+		Step:   "redis",
+		Stream: "sidecar-stderr",
+		Line:   "oom",
+	})
+	if !strings.Contains(buf.String(), "!") {
+		t.Errorf("missing stderr ! marker: %q", buf.String())
+	}
+}
+
+// TestPretty_SidecarLine_PreferDisplayName: when the sidecar carries
+// a DisplayName the renderer prefers it over the raw step name (same
+// convention as step-log).
+func TestPretty_SidecarLine_PreferDisplayName(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Normal})
+	rep.Emit(Event{
+		Kind:        EvtSidecarLog,
+		Task:        "t",
+		Step:        "redis",
+		DisplayName: "Redis Cache",
+		Stream:      "sidecar-stdout",
+		Line:        "ok",
+	})
+	if !strings.Contains(buf.String(), "Redis Cache") {
+		t.Errorf("DisplayName not preferred: %q", buf.String())
+	}
+}

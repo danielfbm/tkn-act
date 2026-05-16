@@ -111,14 +111,18 @@ func (p *prettySink) Emit(e Event) {
 		if p.verb < Normal {
 			return
 		}
-		// Use ":" between task and sidecar name (steps use "/") so
-		// mixed step + sidecar logs are visually attributable at a glance.
+		// Format: `  ◊ task:sidecar │   line`
+		// "◊" tags this as sidecar output (steps use the cyan task/step
+		// prefix); ":" separates task and sidecar name (steps use "/")
+		// so mixed step + sidecar logs are visually attributable at a
+		// glance.
 		stream := " "
 		if e.Stream == "sidecar-stderr" {
 			stream = p.pal.wrap(p.pal.yellow, "!")
 		}
-		fmt.Fprintf(p.w, "  %s %s %s %s\n",
-			p.pal.wrap(p.pal.cyan, e.Task+":"+e.Step),
+		fmt.Fprintf(p.w, "  %s %s %s %s %s\n",
+			p.pal.wrap(p.pal.cyan, "◊"),
+			p.pal.wrap(p.pal.cyan, e.Task+":"+labelOf(e.Step, e.DisplayName)),
 			p.pal.wrap(p.pal.dim, "│"),
 			stream,
 			e.Line,
