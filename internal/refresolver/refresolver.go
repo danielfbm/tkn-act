@@ -335,12 +335,14 @@ func (r *Registry) Resolve(ctx context.Context, req Request) (Resolved, error) {
 	}
 
 	key := CacheKey(req.Resolver, req.Params)
+	r.dbgEmit("dispatch", req.Resolver, key, nil)
 
 	r.mu.Lock()
 	if cached, ok := r.perRun[key]; ok {
 		c := cached
 		c.Cached = true
 		r.mu.Unlock()
+		r.dbgEmit("cache hit (per-run)", req.Resolver, key, map[string]any{"bytes": len(c.Bytes)})
 		return c, nil
 	}
 	disk := r.disk
@@ -354,12 +356,14 @@ func (r *Registry) Resolve(ctx context.Context, req Request) (Resolved, error) {
 			r.mu.Lock()
 			r.perRun[key] = hit
 			r.mu.Unlock()
+			r.dbgEmit("cache hit (disk)", req.Resolver, key, map[string]any{"bytes": len(hit.Bytes)})
 			return hit, nil
 		}
 	}
 
 	// --offline gate: refuse to dispatch on a cache miss.
 	if offline {
+		r.dbgEmit("offline gate refused", req.Resolver, key, nil)
 		return Resolved{}, fmt.Errorf("refresolver: cache miss for resolver %q while --offline is set", req.Resolver)
 	}
 
@@ -368,6 +372,7 @@ func (r *Registry) Resolve(ctx context.Context, req Request) (Resolved, error) {
 	if r.remote != nil {
 		remote := r.remote
 		r.mu.Unlock()
+		r.dbgEmit("remote dispatch", req.Resolver, key, nil)
 		out, err := remote.Resolve(ctx, req)
 		if err != nil {
 			return out, err
@@ -382,20 +387,24 @@ func (r *Registry) Resolve(ctx context.Context, req Request) (Resolved, error) {
 		r.mu.Lock()
 		r.perRun[key] = out
 		r.mu.Unlock()
+		r.dbgEmit("resolve ok", req.Resolver, key, map[string]any{"bytes": len(out.Bytes), "sha256": out.SHA256})
 		return out, nil
 	}
 	if r.allow != nil {
 		if _, ok := r.allow[req.Resolver]; !ok {
 			r.mu.Unlock()
+			r.dbgEmit("allow-list rejected", req.Resolver, key, nil)
 			return Resolved{}, fmt.Errorf("%w: %q not in --resolver-allow", ErrResolverNotAllowed, req.Resolver)
 		}
 	}
 	res, ok := r.direct[req.Resolver]
 	r.mu.Unlock()
 	if !ok {
+		r.dbgEmit("not registered", req.Resolver, key, nil)
 		return Resolved{}, fmt.Errorf("%w: %q (not yet implemented in this release)", ErrResolverNotRegistered, req.Resolver)
 	}
 
+	r.dbgEmit("direct dispatch", req.Resolver, key, nil)
 	out, err := res.Resolve(ctx, req)
 	if err != nil {
 		return out, err
@@ -410,7 +419,27 @@ func (r *Registry) Resolve(ctx context.Context, req Request) (Resolved, error) {
 	r.mu.Lock()
 	r.perRun[key] = out
 	r.mu.Unlock()
+	r.dbgEmit("resolve ok", req.Resolver, key, map[string]any{"bytes": len(out.Bytes), "sha256": out.SHA256})
 	return out, nil
+}
+
+// dbgEmit is a tiny helper that snapshots the current debug emitter
+// (so a concurrent SetDebug doesn't race) and forwards through the
+// usual closure-deferred pattern.
+func (r *Registry) dbgEmit(msg, resolverName, key string, extra map[string]any) {
+	r.mu.Lock()
+	d := r.dbg
+	r.mu.Unlock()
+	d.Emit(debug.Resolver, func() (string, map[string]any) {
+		fields := map[string]any{"resolver": resolverName}
+		if key != "" && len(key) >= 8 {
+			fields["key"] = key[:8]
+		}
+		for k, v := range extra {
+			fields[k] = v
+		}
+		return msg, fields
+	})
 }
 
 // CacheKey computes the per-(resolver, substituted-params) cache key
