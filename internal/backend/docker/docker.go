@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/danielfbm/tkn-act/internal/backend"
+	"github.com/danielfbm/tkn-act/internal/debug"
 	"github.com/danielfbm/tkn-act/internal/resolver"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	"github.com/docker/docker/api/types/container"
@@ -90,6 +91,11 @@ type Backend struct {
 	stagerID            string
 	userWorkspaces      map[string]string
 	workspaceByHostPath map[string]string
+
+	// dbg is the debug emitter. Always non-nil after New(); the engine
+	// replaces it with a live emitter via SetDebug at run-start when
+	// --debug is set.
+	dbg debug.Emitter
 }
 
 func New(opts Options) (*Backend, error) {
@@ -111,7 +117,24 @@ func New(opts Options) (*Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Backend{cli: cli, opts: opts, remote: remote, pauseImg: resolvePauseImage(opts.PauseImage)}, nil
+	return &Backend{
+		cli:      cli,
+		opts:     opts,
+		remote:   remote,
+		pauseImg: resolvePauseImage(opts.PauseImage),
+		dbg:      debug.Nop(),
+	}, nil
+}
+
+// SetDebug installs the debug emitter. Called by the engine at
+// run-start; pre-set to a Nop emitter by New() so callers can emit
+// unconditionally.
+func (b *Backend) SetDebug(d debug.Emitter) {
+	if d == nil {
+		b.dbg = debug.Nop()
+		return
+	}
+	b.dbg = d
 }
 
 // resolvePauseImage returns the pause/stager image the Backend should

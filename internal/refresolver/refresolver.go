@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+
+	"github.com/danielfbm/tkn-act/internal/debug"
 )
 
 // Kind disambiguates whether a Request resolves to a Task or a Pipeline.
@@ -130,6 +132,9 @@ type Registry struct {
 	// SetOffline; the engine surfaces the error on the resolver-end
 	// event and as the task-end message.
 	offline bool
+	// dbg is the debug emitter. Always non-nil after NewRegistry();
+	// SetDebug replaces it with a live emitter when --debug is on.
+	dbg debug.Emitter
 }
 
 // NewRegistry returns an empty Registry. Tests that want a single stub
@@ -138,7 +143,30 @@ func NewRegistry() *Registry {
 	return &Registry{
 		direct: map[string]Resolver{},
 		perRun: map[string]Resolved{},
+		dbg:    debug.Nop(),
 	}
+}
+
+// SetDebug installs the debug emitter. The default is a Nop emitter
+// (NewRegistry), so resolver code can call r.dbg.Emit unconditionally.
+// Called by the engine at run-start when --debug is set.
+func (r *Registry) SetDebug(d debug.Emitter) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if d == nil {
+		r.dbg = debug.Nop()
+		return
+	}
+	r.dbg = d
+}
+
+// Debug returns the currently-installed debug emitter (never nil).
+// Resolvers read this lazily so a SetDebug call mid-run takes effect
+// without re-registering each resolver.
+func (r *Registry) Debug() debug.Emitter {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.dbg
 }
 
 // NewDefaultRegistry returns a Registry pre-populated with whatever

@@ -12,6 +12,7 @@ import (
 	"github.com/danielfbm/tkn-act/internal/cluster"
 	"github.com/danielfbm/tkn-act/internal/cluster/tekton"
 	"github.com/danielfbm/tkn-act/internal/cmdrunner"
+	"github.com/danielfbm/tkn-act/internal/debug"
 	"github.com/danielfbm/tkn-act/internal/volumes"
 	apiextclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/client-go/dynamic"
@@ -43,6 +44,9 @@ type ClientBundle struct {
 type Backend struct {
 	opt    Options
 	client ClientBundle
+	// dbg is the debug emitter. Always non-nil after construction;
+	// engine replaces it via SetDebug at run-start when --debug is on.
+	dbg debug.Emitter
 }
 
 // New is the production constructor: it does not connect — Prepare lazily
@@ -57,16 +61,29 @@ func New(opt Options) *Backend {
 	if opt.TektonVersion == "" {
 		opt.TektonVersion = tekton.DefaultTektonVersion
 	}
-	return &Backend{opt: opt}
+	return &Backend{opt: opt, dbg: debug.Nop()}
 }
 
 // NewWithClients is a test constructor that injects a pre-built ClientBundle.
-func NewWithClients(cb ClientBundle) *Backend { return &Backend{client: cb} }
+func NewWithClients(cb ClientBundle) *Backend {
+	return &Backend{client: cb, dbg: debug.Nop()}
+}
 
 // NewWithClientsAndStores is the same, plus the configMap/secret stores
 // the volumes-apply path needs. Production code uses New + Options.
 func NewWithClientsAndStores(cb ClientBundle, cm, sec *volumes.Store) *Backend {
-	return &Backend{client: cb, opt: Options{ConfigMaps: cm, Secrets: sec}}
+	return &Backend{client: cb, opt: Options{ConfigMaps: cm, Secrets: sec}, dbg: debug.Nop()}
+}
+
+// SetDebug installs the debug emitter. Called by the engine at
+// run-start; pre-set to a Nop emitter so emit sites can call
+// b.dbg.Emit unconditionally.
+func (b *Backend) SetDebug(d debug.Emitter) {
+	if d == nil {
+		b.dbg = debug.Nop()
+		return
+	}
+	b.dbg = d
 }
 
 // ApplyVolumeSourcesForTest re-exposes the package-private apply path so
