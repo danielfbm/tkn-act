@@ -53,22 +53,15 @@ const defaultListLimit = 20
 
 // runRunsList writes the index entries to w. When the state-dir
 // doesn't exist yet the result is an empty list, not an error —
-// "no runs recorded" is a valid state for a fresh user.
+// "no runs recorded" is a valid state for a fresh user. Read path
+// uses ReadIndexEntries (no flock, no file creation) so a bare
+// `tkn-act runs list` doesn't materialize the state-dir tree.
 func runRunsList(w io.Writer, all bool) error {
 	stateDir := runstore.ResolveStateDir(gf.stateDir)
-	store, err := runstore.OpenReadOnly(stateDir)
+	entries, err := runstore.ReadIndexEntries(stateDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return emitRunsList(w, nil)
-		}
-		return exitcode.Wrap(exitcode.Env, fmt.Errorf("open state-dir: %w", err))
+		return exitcode.Wrap(exitcode.Env, fmt.Errorf("read index: %w", err))
 	}
-	idx, err := runstore.OpenIndex(store.Dir())
-	if err != nil {
-		return exitcode.Wrap(exitcode.Env, err)
-	}
-	defer idx.Close()
-	entries := idx.All()
 	if !all && len(entries) > defaultListLimit {
 		entries = entries[len(entries)-defaultListLimit:]
 	}
@@ -83,6 +76,10 @@ func emitRunsList(w io.Writer, entries []runstore.IndexEntry) error {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		return enc.Encode(entries)
+	}
+	if len(entries) == 0 {
+		fmt.Fprintln(w, "No runs recorded yet. Try `tkn-act run -f <pipeline.yaml>`.")
+		return nil
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "#\tULID\tpipeline\tstarted\tduration\texit\tstatus")
@@ -110,6 +107,10 @@ func newRunsShowCmd() *cobra.Command {
   tkn-act runs show latest -o json
   tkn-act runs show 01HQYZAB`,
 		RunE: func(c *cobra.Command, args []string) error {
+			if args[0] == "" {
+				return exitcode.Wrap(exitcode.Usage,
+					errors.New("run id must not be empty; pass 'latest' to select the most recent run"))
+			}
 			return runRunsShow(os.Stdout, args[0])
 		},
 	}
@@ -181,9 +182,16 @@ TKN_ACT_KEEP_DAYS (default 30) days.
 
 func runRunsPrune(w io.Writer, all, yes bool) error {
 	stateDir := runstore.ResolveStateDir(gf.stateDir)
-	if all && !yes {
+	switch {
+	case all && !yes:
 		return exitcode.Wrap(exitcode.Usage,
 			errors.New("--all is destructive; pass --yes/-y to confirm"))
+	case yes && !all:
+		// Silently no-op on --yes alone would hide automation bugs
+		// (e.g., shell variable for --all is empty and only -y is
+		// passed). Make the asymmetry explicit.
+		return exitcode.Wrap(exitcode.Usage,
+			errors.New("--yes/-y only applies with --all; default retention applies otherwise"))
 	}
 	store, err := runstore.OpenReadOnly(stateDir)
 	if err != nil {
@@ -201,6 +209,10 @@ func runRunsPrune(w io.Writer, all, yes bool) error {
 	if err != nil {
 		return exitcode.Wrap(exitcode.Env, err)
 	}
-	fmt.Fprintf(w, "Pruned %d run(s) from %s\n", n, stateDir)
+	noun := "runs"
+	if n == 1 {
+		noun = "run"
+	}
+	fmt.Fprintf(w, "Pruned %d %s from %s\n", n, noun, stateDir)
 	return nil
 }

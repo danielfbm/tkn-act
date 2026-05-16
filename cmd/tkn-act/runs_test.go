@@ -188,6 +188,106 @@ func TestRunsPrune_All_RequiresYes(t *testing.T) {
 	}
 }
 
+func TestRunsPrune_YesWithoutAll_Errors(t *testing.T) {
+	dir := t.TempDir()
+	runsFixture(t, dir)
+	gf = globalFlags{stateDir: dir}
+	err := runRunsPrune(new(bytes.Buffer), false, true)
+	if err == nil {
+		t.Fatalf("--yes without --all must error")
+	}
+	if got := exitcode.From(err); got != exitcode.Usage {
+		t.Errorf("exit = %d, want Usage(2)", got)
+	}
+}
+
+func TestRunsList_NoSideEffects(t *testing.T) {
+	// `runs list` against a non-existent state-dir must NOT create
+	// anything on disk. Same invariant for an existing-but-empty dir.
+	dir := filepath.Join(t.TempDir(), "never-existed")
+	gf = globalFlags{output: "json", stateDir: dir}
+	var buf bytes.Buffer
+	if err := runRunsList(&buf, false); err != nil {
+		t.Fatalf("runRunsList: %v", err)
+	}
+	if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
+		t.Errorf("runs list created state-dir as side effect (%v)", statErr)
+	}
+
+	// After a single `run` happens, the state-dir is created. But
+	// subsequent `runs list` invocations must not create new files
+	// (no index.lock).
+	pre, _ := runstore.Open(dir, "v")
+	r, _ := pre.NewRun(time.Now(), "p", nil)
+	r.Finalize(time.Now(), 0, "succeeded")
+	before := must(os.ReadDir(dir))
+	if err := runRunsList(&buf, false); err != nil {
+		t.Fatalf("runRunsList: %v", err)
+	}
+	after := must(os.ReadDir(dir))
+	if len(after) != len(before) {
+		t.Errorf("runs list created %d new file(s)", len(after)-len(before))
+		// Report what's new for debug.
+		seen := map[string]bool{}
+		for _, e := range before {
+			seen[e.Name()] = true
+		}
+		for _, e := range after {
+			if !seen[e.Name()] {
+				t.Errorf("  new: %s", e.Name())
+			}
+		}
+	}
+}
+
+func TestRunsShow_EmptyPositional_Errors(t *testing.T) {
+	gf = globalFlags{stateDir: t.TempDir()}
+	cmd := newRunsCmd()
+	cmd.SetArgs([]string{"show", ""})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("want error on empty positional")
+	}
+	if got := exitcode.From(err); got != exitcode.Usage {
+		t.Errorf("exit = %d, want Usage(2)", got)
+	}
+}
+
+func TestRunsPrune_Pluralization(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := runstore.Open(dir, "v")
+	// 1 run + KeepRuns=0 (disable) + All=false: nothing pruned.
+	r, _ := s.NewRun(time.Now(), "p", nil)
+	r.Finalize(time.Now(), 0, "succeeded")
+	t.Setenv("TKN_ACT_KEEP_RUNS", "0")
+	t.Setenv("TKN_ACT_KEEP_DAYS", "0")
+	gf = globalFlags{stateDir: dir}
+	var buf bytes.Buffer
+	runRunsPrune(&buf, false, false)
+	if !strings.Contains(buf.String(), "Pruned 0 runs") {
+		t.Errorf("plural for 0: %q", buf.String())
+	}
+
+	// 1 run + KeepRuns=0 + All=true: prunes the 1 finalized run.
+	buf.Reset()
+	if err := runRunsPrune(&buf, true, true); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Pruned 1 run ") {
+		t.Errorf("singular for 1: %q", buf.String())
+	}
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
 func TestRunsPrune_AllWithYes(t *testing.T) {
 	dir := t.TempDir()
 	runsFixture(t, dir)

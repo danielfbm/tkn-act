@@ -155,6 +155,52 @@ func TestPrune_NoOpsWhenBothZeroAndAllFalse(t *testing.T) {
 	}
 }
 
+func TestPrune_InFlightImmune_FromCountGate(t *testing.T) {
+	// Regression: count-based prune must not delete an in-flight
+	// peer's run-dir while it's still being written.
+	dir := t.TempDir()
+	s, _ := runstore.Open(dir, "v")
+	// 3 finalized runs + 1 in-flight, KeepRuns=2 → drop the OLDEST
+	// FINALIZED run only (keep 2 finalized + 1 in-flight = 3 total).
+	for i := 0; i < 3; i++ {
+		r, _ := s.NewRun(time.Unix(int64(1_700_000_000+i), 0), "p", nil)
+		r.Finalize(time.Unix(int64(1_700_000_000+i)+1, 0), 0, "succeeded")
+	}
+	inflight, _ := s.NewRun(time.Unix(1_700_000_100, 0), "p", nil)
+	_ = inflight // no Finalize call
+
+	n, err := s.Prune(runstore.PruneOptions{KeepRuns: 2, Now: time.Unix(1_700_000_200, 0)})
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("pruned = %d, want 1 (in-flight immune from count gate)", n)
+	}
+	// In-flight run-dir must still exist.
+	if _, err := os.Stat(filepath.Join(dir, "runs", string(inflight.ID))); err != nil {
+		t.Errorf("in-flight run-dir gone after count prune: %v", err)
+	}
+}
+
+func TestPrune_All_SkipsInFlight(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := runstore.Open(dir, "v")
+	r1, _ := s.NewRun(time.Unix(1_700_000_000, 0), "p", nil)
+	r1.Finalize(time.Unix(1_700_000_001, 0), 0, "succeeded")
+	inflight, _ := s.NewRun(time.Unix(1_700_000_002, 0), "p", nil)
+
+	n, err := s.Prune(runstore.PruneOptions{All: true})
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("pruned = %d, want 1 (in-flight survives --all)", n)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "runs", string(inflight.ID))); err != nil {
+		t.Errorf("in-flight run-dir gone after --all prune: %v", err)
+	}
+}
+
 func TestPrune_UnfinalizedRunsNotPrunedByAge(t *testing.T) {
 	// A run that's still in-flight has EndedAt zero. Age-based prune
 	// should NOT remove it (we can't know how old it is until it
