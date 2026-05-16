@@ -259,6 +259,37 @@ func (p *prettySink) Emit(e Event) {
 			p.pal.wrap(p.pal.red, "error:"),
 			e.Message,
 		)
+
+	case EvtDebug:
+		// Suppressed in Quiet — debug is trace data, not summary
+		// output.
+		if p.verb < Normal {
+			return
+		}
+		// Render as: `  [debug] component=<c> k=v k=v — msg`.
+		// Indented to align with step-log output. Fields render in
+		// sorted key order so the line is deterministic across runs.
+		var sb strings.Builder
+		sb.WriteString("  ")
+		sb.WriteString(p.pal.wrap(p.pal.gray, "[debug]"))
+		sb.WriteString(" component=")
+		sb.WriteString(e.Component)
+		if len(e.Fields) > 0 {
+			keys := make([]string, 0, len(e.Fields))
+			for k := range e.Fields {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				fmt.Fprintf(&sb, " %s=%v", k, e.Fields[k])
+			}
+		}
+		if e.Message != "" {
+			sb.WriteString(" — ")
+			sb.WriteString(e.Message)
+		}
+		sb.WriteByte('\n')
+		p.w.Write([]byte(sb.String()))
 	}
 }
 
