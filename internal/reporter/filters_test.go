@@ -78,6 +78,55 @@ func TestFilter_EmptyFilters_Passthrough(t *testing.T) {
 	}
 }
 
+// TestFilter_DropsNonMatchingTaskEnd: task-end for a task that is
+// not on the --task list must be dropped, not just step-log. This
+// pins the per-task lifecycle behavior: a user narrowing to "build"
+// should not see "deploy succeeded" task-end events.
+func TestFilter_DropsNonMatchingTaskEnd(t *testing.T) {
+	inner := &capSink{}
+	f := reporter.NewFilter(inner, []string{"build"}, nil)
+	f.Emit(reporter.Event{Kind: reporter.EvtTaskStart, Task: "build"})
+	f.Emit(reporter.Event{Kind: reporter.EvtTaskEnd, Task: "deploy", Status: "succeeded"})
+	f.Emit(reporter.Event{Kind: reporter.EvtTaskEnd, Task: "build", Status: "succeeded"})
+	if len(inner.events) != 2 || inner.events[1].Task != "build" {
+		t.Errorf("task-end for non-matching task must be dropped; got %+v", inner.events)
+	}
+}
+
+// TestFilter_StepOnly_CrossTask: --step=compile with no --task must
+// pass events for that step across any task and drop non-matching
+// step-events regardless of task.
+func TestFilter_StepOnly_CrossTask(t *testing.T) {
+	inner := &capSink{}
+	f := reporter.NewFilter(inner, nil, []string{"compile"})
+	f.Emit(reporter.Event{Kind: reporter.EvtStepLog, Task: "build", Step: "compile", Line: "y"})
+	f.Emit(reporter.Event{Kind: reporter.EvtStepLog, Task: "build", Step: "lint", Line: "n"})
+	f.Emit(reporter.Event{Kind: reporter.EvtStepLog, Task: "deploy", Step: "compile", Line: "y"})
+	if len(inner.events) != 2 {
+		t.Errorf("step-only filter should accept matching step across tasks; got %+v", inner.events)
+	}
+	for _, e := range inner.events {
+		if e.Step != "compile" {
+			t.Errorf("non-matching step leaked: %+v", e)
+		}
+	}
+}
+
+// TestFilter_TaskEmpty_EnvelopeEventsPass: an event with no Task
+// (top-level resolver-start / resolver-end for pipeline-ref
+// resolution is the canonical example) must pass even with a narrow
+// --task filter — otherwise the user filtering to one task never
+// sees the pre-task resolution envelope or its failure.
+func TestFilter_TaskEmpty_EnvelopeEventsPass(t *testing.T) {
+	inner := &capSink{}
+	f := reporter.NewFilter(inner, []string{"build"}, nil)
+	f.Emit(reporter.Event{Kind: reporter.EvtResolverStart, Resolver: "git"})
+	f.Emit(reporter.Event{Kind: reporter.EvtResolverEnd, Resolver: "git", Status: "succeeded"})
+	if len(inner.events) != 2 {
+		t.Errorf("top-level resolver-start / resolver-end with empty Task must pass; got %+v", inner.events)
+	}
+}
+
 // TestFilter_Close_DelegatesToInner: Close on the filter wrapper
 // must invoke Close on the inner reporter so persistence sinks
 // flush their files.

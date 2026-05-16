@@ -121,9 +121,9 @@ Designed for both humans and AI agents:
 	cmd.PersistentFlags().BoolVar(&gf.timestamps, "timestamps", false,
 		"prepend [HH:MM:SS.mmm] (UTC) to step/sidecar/debug lines in pretty mode")
 	cmd.PersistentFlags().StringSliceVar(&gf.taskFilter, "task", nil,
-		"limit pretty output to this task (repeatable; run-boundary events always pass)")
+		"limit live output to this task (repeatable; applies to pretty AND json; run-boundary and pre-task events always pass)")
 	cmd.PersistentFlags().StringSliceVar(&gf.stepFilter, "step", nil,
-		"limit pretty output to this step (repeatable; AND with --task)")
+		"limit live output to this step (repeatable; AND with --task; applies to pretty AND json)")
 	cmd.PersistentFlags().StringVar(&gf.configMapDir, "configmap-dir", "", "directory to resolve configMap volumes from (default $XDG_CACHE_HOME/tkn-act/configmaps)")
 	cmd.PersistentFlags().StringVar(&gf.secretDir, "secret-dir", "", "directory to resolve secret volumes from (default $XDG_CACHE_HOME/tkn-act/secrets)")
 	cmd.PersistentFlags().StringArrayVar(&gf.configMaps, "configmap", nil, "inline configMap as <name>=<k>=<v>[,<k>=<v>...] (repeatable)")

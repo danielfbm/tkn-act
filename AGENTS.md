@@ -218,7 +218,7 @@ bump.**
 | Event field names | Existing camelCase fields stay camelCase. New multi-word fields use `snake_case` (see [`docs/agent-guide/display-name.md`](docs/agent-guide/display-name.md) for the rule). Fields are never renamed or retyped. |
 | `tkn-act help-json` shape | Top-level keys, command-tree shape, flag-info shape. |
 | `tkn-act doctor -o json` shape | `ok`, `checks[]` with `name`/`ok`/`detail`/`required_for`. |
-| CLI flag names (long form) | `--output`, `--cluster`, `--param`, `-w` / `--workspace`, `--tekton-version` (on `cluster up`), `--remote-docker`, `--docker-host`, `--pause-image`, `--sidecar-start-grace`, `--sidecar-stop-grace`, etc. Short forms (`-o`, `-p`, `-q`, `-v`, `-f`) are stable. |
+| CLI flag names (long form) | `--output`, `--cluster`, `--param`, `-w` / `--workspace`, `--tekton-version` (on `cluster up`), `--remote-docker`, `--docker-host`, `--pause-image`, `--sidecar-start-grace`, `--sidecar-stop-grace`, `--debug`, `--timestamps`, `--task`, `--step`, etc. Short forms (`-o`, `-p`, `-q`, `-v`, `-f`) are stable. |
 | Environment variables | `TKN_ACT_TEKTON_VERSION` (overrides the built-in Tekton install version for `cluster up`), `TKN_ACT_REMOTE_DOCKER` (`auto` / `on` / `off` for the docker backend's remote-daemon detection), `TKN_ACT_SSH_INSECURE` (`1` bypasses `~/.ssh/known_hosts` for the `ssh://` docker transport), `TKN_ACT_DOCKER_SOCKET` (remote daemon socket path; default `/var/run/docker.sock`), `TKN_ACT_PAUSE_IMAGE` (per-Task pause / remote-mode stager image; default `registry.k8s.io/pause:3.9`). Existing env vars keep their names. |
 | Subcommand names | `run`, `validate`, `list`, `doctor`, `help-json`, `agent-guide`, `cluster`, `cache`, `version`. |
 

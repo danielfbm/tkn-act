@@ -4,9 +4,11 @@ package reporter
 // when its Task is in the configured task set (or the set is empty)
 // AND its Step is in the configured step set (or the set is empty OR
 // the event carries no Step). Events that don't belong to any
-// task/step — run-start, run-end, error — always pass so the user
-// can see the run envelope and out-of-band failures even with narrow
-// filters.
+// specific task — run-start, run-end, error, and any other event
+// with empty Task (e.g. top-level resolver-start / resolver-end for
+// pipeline-ref resolution) — always pass so the user can see the
+// run envelope, out-of-band failures, and pre-task resolution
+// progress even with narrow filters.
 //
 // The filter wraps the user-facing reporter only; the persistence
 // sink stays full-fidelity so a later `tkn-act logs` replay can
@@ -44,6 +46,16 @@ func setOf(s []string) map[string]bool {
 func (f *filter) Emit(e Event) {
 	switch e.Kind {
 	case EvtRunStart, EvtRunEnd, EvtError:
+		f.inner.Emit(e)
+		return
+	}
+	// Events without a Task are "envelope" events that don't belong
+	// to any specific task — top-level resolver-start / resolver-end
+	// for pipeline-ref resolution is the canonical example. Pass
+	// them through so a user narrowing to --task=build still sees
+	// "what resolved the pipeline I'm filtering into" and pre-task
+	// resolver failures.
+	if e.Task == "" {
 		f.inner.Emit(e)
 		return
 	}
