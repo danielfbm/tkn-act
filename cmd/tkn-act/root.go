@@ -61,6 +61,18 @@ type globalFlags struct {
 	// $TKN_ACT_STATE_DIR, then $XDG_DATA_HOME/tkn-act, then
 	// $HOME/.local/share/tkn-act.
 	stateDir string
+	// timestamps prepends `[HH:MM:SS.mmm] ` (UTC) to each
+	// step-log / sidecar-log / debug line in pretty mode. Pretty
+	// mode only — the JSON event stream already carries a `time`
+	// field on every event.
+	timestamps bool
+	// taskFilter / stepFilter limit pretty output to a subset of
+	// tasks / steps (both repeatable, AND-combined). Run-boundary
+	// events (run-start, run-end, error) always pass. The persist
+	// sink is unaffected — events.jsonl is full-fidelity so a later
+	// `tkn-act logs` replay can reapply any filter.
+	taskFilter []string
+	stepFilter []string
 }
 
 var gf globalFlags
@@ -106,6 +118,12 @@ Designed for both humans and AI agents:
 	cmd.PersistentFlags().StringVar(&gf.color, "color", "auto", "color mode: auto | always | never")
 	cmd.PersistentFlags().BoolVarP(&gf.quiet, "quiet", "q", false, "suppress step logs and pipeline header (pretty output)")
 	cmd.PersistentFlags().BoolVarP(&gf.verbose, "verbose", "v", false, "show step boundaries in addition to step logs (pretty output)")
+	cmd.PersistentFlags().BoolVar(&gf.timestamps, "timestamps", false,
+		"prepend [HH:MM:SS.mmm] (UTC) to step/sidecar/debug lines in pretty mode")
+	cmd.PersistentFlags().StringSliceVar(&gf.taskFilter, "task", nil,
+		"limit live output to this task (repeatable; applies to pretty AND json; run-boundary and pre-task events always pass)")
+	cmd.PersistentFlags().StringSliceVar(&gf.stepFilter, "step", nil,
+		"limit live output to this step (repeatable; AND with --task; applies to pretty AND json)")
 	cmd.PersistentFlags().StringVar(&gf.configMapDir, "configmap-dir", "", "directory to resolve configMap volumes from (default $XDG_CACHE_HOME/tkn-act/configmaps)")
 	cmd.PersistentFlags().StringVar(&gf.secretDir, "secret-dir", "", "directory to resolve secret volumes from (default $XDG_CACHE_HOME/tkn-act/secrets)")
 	cmd.PersistentFlags().StringArrayVar(&gf.configMaps, "configmap", nil, "inline configMap as <name>=<k>=<v>[,<k>=<v>...] (repeatable)")

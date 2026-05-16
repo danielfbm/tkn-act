@@ -199,6 +199,11 @@ func runWith(rf runFlags) (retErr error) {
 	if err != nil {
 		return exitcode.Wrap(exitcode.Usage, err)
 	}
+	// Wrap the live reporter with --task/--step filters so the user-
+	// facing output is narrowed, but the persist sink (attached
+	// further down) stays full-fidelity. Replay via `tkn-act logs`
+	// can then reapply any filter against the recorded stream.
+	liveRep = reporter.NewFilter(liveRep, gf.taskFilter, gf.stepFilter)
 
 	// Build backend.
 	var be backend.Backend
@@ -392,7 +397,11 @@ func buildReporter(out io.Writer) (reporter.Reporter, error) {
 	case gf.verbose:
 		verb = reporter.Verbose
 	}
-	return reporter.NewPretty(out, reporter.PrettyOptions{Color: color, Verbosity: verb}), nil
+	return reporter.NewPretty(out, reporter.PrettyOptions{
+		Color:      color,
+		Verbosity:  verb,
+		Timestamps: gf.timestamps,
+	}), nil
 }
 
 // buildVolumeStores assembles the configMap / secret stores from the

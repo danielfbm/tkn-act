@@ -278,3 +278,134 @@ func TestPretty_DebugLine_Quiet(t *testing.T) {
 		t.Errorf("quiet should suppress debug events: %q", buf.String())
 	}
 }
+
+// TestPretty_SidecarLine: a sidecar log line carries the diamond
+// glyph (◊) so a reader scanning multi-task output can spot sidecar
+// emission at a glance. The task:sidecar separator stays ":" (steps
+// use "/"). Stream "sidecar-stderr" surfaces the yellow "!" marker.
+func TestPretty_SidecarLine(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Normal})
+	rep.Emit(Event{
+		Kind:   EvtSidecarLog,
+		Task:   "t",
+		Step:   "redis",
+		Stream: "sidecar-stdout",
+		Line:   "ready",
+	})
+	out := buf.String()
+	if !strings.Contains(out, "◊") {
+		t.Errorf("missing ◊ glyph in sidecar line: %q", out)
+	}
+	if !strings.Contains(out, "t:redis") {
+		t.Errorf("missing task:sidecar prefix: %q", out)
+	}
+	if !strings.Contains(out, "ready") {
+		t.Errorf("missing log line content: %q", out)
+	}
+}
+
+// TestPretty_SidecarLine_StderrShowsBangMarker: sidecar-stderr lines
+// must surface the yellow "!" marker so failures are visible mixed
+// in with stdout.
+func TestPretty_SidecarLine_StderrShowsBangMarker(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Normal})
+	rep.Emit(Event{
+		Kind:   EvtSidecarLog,
+		Task:   "t",
+		Step:   "redis",
+		Stream: "sidecar-stderr",
+		Line:   "oom",
+	})
+	if !strings.Contains(buf.String(), "!") {
+		t.Errorf("missing stderr ! marker: %q", buf.String())
+	}
+}
+
+// TestPretty_SidecarLine_PreferDisplayName: when the sidecar carries
+// a DisplayName the renderer prefers it over the raw step name (same
+// convention as step-log).
+func TestPretty_SidecarLine_PreferDisplayName(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Normal})
+	rep.Emit(Event{
+		Kind:        EvtSidecarLog,
+		Task:        "t",
+		Step:        "redis",
+		DisplayName: "Redis Cache",
+		Stream:      "sidecar-stdout",
+		Line:        "ok",
+	})
+	if !strings.Contains(buf.String(), "Redis Cache") {
+		t.Errorf("DisplayName not preferred: %q", buf.String())
+	}
+}
+
+// TestPretty_Timestamps_StepLog: with PrettyOptions{Timestamps:true}
+// step-log lines are prefixed with `[HH:MM:SS.mmm] ` (UTC). The
+// prefix is omitted when the event's Time field is zero (never
+// surface a bogus 00:00:00.000).
+func TestPretty_Timestamps_StepLog(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Normal, Timestamps: true})
+	rep.Emit(Event{
+		Kind: EvtStepLog, Time: time.Date(2026, 5, 15, 9, 56, 13, 252_000_000, time.UTC),
+		Task: "t", Step: "s", Line: "hi",
+	})
+	if !strings.Contains(buf.String(), "[09:56:13.252]") {
+		t.Errorf("missing timestamp prefix on step-log: %q", buf.String())
+	}
+}
+
+// TestPretty_Timestamps_OffByDefault: omitting Timestamps must keep
+// the prefix off — the historical pretty output stays unchanged for
+// users who don't opt in.
+func TestPretty_Timestamps_OffByDefault(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Normal})
+	rep.Emit(Event{
+		Kind: EvtStepLog, Time: time.Date(2026, 5, 15, 9, 56, 13, 0, time.UTC),
+		Task: "t", Step: "s", Line: "hi",
+	})
+	if strings.Contains(buf.String(), "09:56:13") {
+		t.Errorf("unexpected timestamp prefix when not requested: %q", buf.String())
+	}
+}
+
+// TestPretty_Timestamps_ZeroTimeSuppressed: an event with a zero
+// Time must NOT render a `[00:00:00.000]` prefix — that would be
+// misleading. Common case: tests that build events without a time
+// stamp.
+func TestPretty_Timestamps_ZeroTimeSuppressed(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Normal, Timestamps: true})
+	rep.Emit(Event{Kind: EvtStepLog, Task: "t", Step: "s", Line: "hi"})
+	if strings.Contains(buf.String(), "[00:00:00.000]") {
+		t.Errorf("zero Time produced a bogus timestamp prefix: %q", buf.String())
+	}
+}
+
+// TestPretty_Timestamps_SidecarAndDebug: the prefix also lands on
+// sidecar-log and debug lines, so all three "live" line types
+// correlate against the same wall clock.
+func TestPretty_Timestamps_SidecarAndDebug(t *testing.T) {
+	now := time.Date(2026, 5, 15, 9, 56, 13, 252_000_000, time.UTC)
+
+	var sidecarBuf bytes.Buffer
+	NewPretty(&sidecarBuf, PrettyOptions{Verbosity: Normal, Timestamps: true}).Emit(Event{
+		Kind: EvtSidecarLog, Time: now, Task: "t", Step: "redis",
+		Stream: "sidecar-stdout", Line: "ok",
+	})
+	if !strings.Contains(sidecarBuf.String(), "[09:56:13.252]") {
+		t.Errorf("missing timestamp on sidecar-log: %q", sidecarBuf.String())
+	}
+
+	var debugBuf bytes.Buffer
+	NewPretty(&debugBuf, PrettyOptions{Verbosity: Normal, Timestamps: true}).Emit(Event{
+		Kind: EvtDebug, Time: now, Component: "engine", Message: "task ready",
+	})
+	if !strings.Contains(debugBuf.String(), "[09:56:13.252]") {
+		t.Errorf("missing timestamp on debug: %q", debugBuf.String())
+	}
+}

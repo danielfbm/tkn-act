@@ -23,6 +23,7 @@ var Order = []string{
 	"timeouts",
 	"resolvers",
 	"debug",
+	"live-output",
 }
 
 // FileName returns the on-disk file name for a section in Order.
