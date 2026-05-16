@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/danielfbm/tkn-act/internal/debug"
 	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 )
@@ -65,6 +66,16 @@ func (e *Engine) runOneWithPolicy(
 		}
 		// Failure-class outcomes ("failed", "infrafailed") are retryable.
 		if attempt < maxAttempts {
+			currentAttempt, totalAttempts, ocStatus, ocMessage := attempt, maxAttempts, oc.Status, oc.Message
+			e.dbg.Emit(debug.Engine, func() (string, map[string]any) {
+				return "task retry", map[string]any{
+					"task":    pt.Name,
+					"attempt": currentAttempt,
+					"of":      totalAttempts,
+					"reason":  ocStatus,
+					"message": truncate(ocMessage, 64),
+				}
+			})
 			e.rep.Emit(reporter.Event{
 				Kind:        reporter.EvtTaskRetry,
 				Time:        time.Now(),
