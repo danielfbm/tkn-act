@@ -96,7 +96,9 @@ Designed for both humans and AI agents:
 		SilenceErrors: true,
 	}
 	cmd.PersistentFlags().StringVarP(&gf.output, "output", "o", "pretty", "output format: pretty | json")
-	cmd.PersistentFlags().BoolVar(&gf.debug, "debug", false, "verbose internal logs")
+	cmd.PersistentFlags().BoolVar(&gf.debug, "debug", false,
+		"emit debug events from backend, resolver, and engine "+
+			"(inline in pretty; as kind:'debug' events in JSON)")
 	cmd.PersistentFlags().BoolVar(&gf.cleanup, "cleanup", false, "remove workspace tmpdirs on success and failure")
 	cmd.PersistentFlags().IntVar(&gf.maxParallel, "max-parallel", 4, "max concurrent tasks at the same DAG level")
 	cmd.PersistentFlags().BoolVar(&gf.cluster, "cluster", false, "use ephemeral k3d cluster instead of Docker")

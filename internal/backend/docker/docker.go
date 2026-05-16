@@ -11,9 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/danielfbm/tkn-act/internal/backend"
+	"github.com/danielfbm/tkn-act/internal/debug"
 	"github.com/danielfbm/tkn-act/internal/resolver"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	"github.com/docker/docker/api/types/container"
@@ -90,6 +92,22 @@ type Backend struct {
 	stagerID            string
 	userWorkspaces      map[string]string
 	workspaceByHostPath map[string]string
+
+	// dbgVal stores the current debug.Emitter. atomic.Pointer keeps
+	// concurrent RunTask goroutines race-free with a late SetDebug
+	// (the field is plain on Phase 4, but the cross-step concurrent
+	// emit pattern from Phase 5+ makes the lock-free swap safer than
+	// adding mutex hops on every Emit). New() seeds with a Nop.
+	dbgVal atomic.Pointer[debug.Emitter]
+}
+
+// dbg returns the current debug emitter; never nil. Backed by an
+// atomic pointer so reads happen-before the next SetDebug write.
+func (b *Backend) dbg() debug.Emitter {
+	if e := b.dbgVal.Load(); e != nil {
+		return *e
+	}
+	return debug.Nop()
 }
 
 func New(opts Options) (*Backend, error) {
@@ -111,7 +129,25 @@ func New(opts Options) (*Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Backend{cli: cli, opts: opts, remote: remote, pauseImg: resolvePauseImage(opts.PauseImage)}, nil
+	b := &Backend{
+		cli:      cli,
+		opts:     opts,
+		remote:   remote,
+		pauseImg: resolvePauseImage(opts.PauseImage),
+	}
+	nop := debug.Nop()
+	b.dbgVal.Store(&nop)
+	return b, nil
+}
+
+// SetDebug installs the debug emitter. Called by the engine at
+// run-start; pre-set to a Nop emitter by New() so callers can emit
+// unconditionally. Race-safe with concurrent reads via b.dbg().
+func (b *Backend) SetDebug(d debug.Emitter) {
+	if d == nil {
+		d = debug.Nop()
+	}
+	b.dbgVal.Store(&d)
 }
 
 // resolvePauseImage returns the pause/stager image the Backend should
@@ -123,6 +159,16 @@ func resolvePauseImage(opt string) string {
 		return defaultPauseImage
 	}
 	return opt
+}
+
+// shortID truncates a docker resource ID to the first 12 characters,
+// matching the docker CLI's display convention. Empty input passes
+// through.
+func shortID(id string) string {
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:12]
 }
 
 // resolveDockerHost returns the daemon address the moby client should
@@ -537,15 +583,31 @@ func (b *Backend) ensureImage(ctx context.Context, img, policy string) error {
 	if policy == "IfNotPresent" {
 		_, _, err := b.cli.ImageInspectWithRaw(ctx, img)
 		if err == nil {
+			b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
+				return "image cache hit", map[string]any{"image": img, "policy": policy}
+			})
 			return nil
 		}
 	}
+	start := time.Now()
+	b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
+		return "image pull start", map[string]any{"image": img, "policy": policy}
+	})
 	rc, err := b.cli.ImagePull(ctx, img, image.PullOptions{})
 	if err != nil {
+		b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
+			return "image pull failed", map[string]any{"image": img, "error": err.Error()}
+		})
 		return fmt.Errorf("pull %s: %w", img, err)
 	}
 	defer func() { _ = rc.Close() }()
 	_, _ = io.Copy(io.Discard, rc) // drain to ensure pull completes
+	b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
+		return "image pull done", map[string]any{
+			"image":       img,
+			"duration_ms": time.Since(start).Milliseconds(),
+		}
+	})
 	return nil
 }
 
@@ -725,6 +787,15 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 	if err != nil {
 		return 0, fmt.Errorf("create %s: %w", containerName, err)
 	}
+	b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
+		return "container created", map[string]any{
+			"id":           shortID(created.ID),
+			"name":         containerName,
+			"image":        step.Image,
+			"taskrun_name": inv.TaskRunName,
+			"step_name":    step.Name,
+		}
+	})
 	defer func() {
 		_ = b.cli.ContainerRemove(context.Background(), created.ID, container.RemoveOptions{Force: true})
 	}()
@@ -732,6 +803,9 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 	if err := b.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
 		return 0, fmt.Errorf("start %s: %w", containerName, err)
 	}
+	b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
+		return "container started", map[string]any{"id": shortID(created.ID), "name": containerName}
+	})
 
 	// Stream logs.
 	logRC, err := b.cli.ContainerLogs(ctx, created.ID, container.LogsOptions{

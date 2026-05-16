@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danielfbm/tkn-act/internal/debug"
 	"github.com/danielfbm/tkn-act/internal/exitcode"
 	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/runstore"
@@ -291,4 +292,32 @@ func TestSetupRunPersistence_PropagatesFailure(t *testing.T) {
 	if m.ExitCode != exitcode.Timeout {
 		t.Errorf("ExitCode = %d, want %d", m.ExitCode, exitcode.Timeout)
 	}
+}
+
+// fakeReporter is a no-op reporter.Reporter used to thread something
+// concrete through buildDebugEmitter — the test only inspects the
+// returned emitter's Enabled() state, not its Emit behavior.
+type fakeReporter struct{}
+
+func (fakeReporter) Emit(reporter.Event) {}
+func (fakeReporter) Close() error        { return nil }
+
+// TestBuildDebugEmitter: the cmd-level helper that runWith uses
+// returns an enabled emitter when --debug is on and a disabled
+// emitter when --debug is off. This is the sole reason the
+// construction sits in a helper — keeps the cmd/tkn-act statement
+// covered without requiring a docker daemon test.
+func TestBuildDebugEmitter(t *testing.T) {
+	if got := buildDebugEmitter(fakeReporter{}, true); !got.Enabled() {
+		t.Errorf("buildDebugEmitter(true).Enabled() = false, want true")
+	}
+	if got := buildDebugEmitter(fakeReporter{}, false); got.Enabled() {
+		t.Errorf("buildDebugEmitter(false).Enabled() = true, want false")
+	}
+	// The disabled emitter must not invoke its build closure.
+	got := buildDebugEmitter(fakeReporter{}, false)
+	got.Emit(debug.Engine, func() (string, map[string]any) {
+		t.Errorf("closure invoked on disabled emitter")
+		return "x", nil
+	})
 }

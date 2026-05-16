@@ -275,6 +275,11 @@ func runWith(rf runFlags) (retErr error) {
 		MaxParallel:    gf.maxParallel,
 		VolumeResolver: volResolver,
 		Refresolver:    reg,
+		// Debug emitter built from the persisting reporter so debug
+		// events flow to both live output and events.jsonl. engine.New
+		// propagates it to the backend (via SetDebug) and the resolver
+		// registry so all three components emit through the same channel.
+		Debug: buildDebugEmitter(rep, gf.debug),
 	}).RunPipeline(ctx, engine.PipelineInput{
 		Bundle:     b,
 		Name:       pipe,

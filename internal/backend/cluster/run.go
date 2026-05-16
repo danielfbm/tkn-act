@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/danielfbm/tkn-act/internal/backend"
+	"github.com/danielfbm/tkn-act/internal/debug"
 	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	corev1 "k8s.io/api/core/v1"
@@ -44,6 +45,13 @@ func (b *Backend) RunPipeline(ctx context.Context, in backend.PipelineRunInvocat
 	if err != nil {
 		return backend.PipelineRunResult{}, fmt.Errorf("create PipelineRun: %w", err)
 	}
+	b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
+		return "pipelinerun applied", map[string]any{
+			"name":      created.GetName(),
+			"namespace": ns,
+			"uid":       string(created.GetUID()),
+		}
+	})
 	return b.watchPipelineRun(ctx, in, ns, created.GetName())
 }
 
@@ -826,6 +834,7 @@ func (b *Backend) streamAllTaskRunLogs(ctx context.Context, in backend.PipelineR
 	// `sidecars` e2e fixture must produce equivalent JSON event
 	// shapes on docker and cluster.
 	sidecarSeen := map[string]map[string]sidecarSeenState{} // taskRunName → sidecarName → state
+	taskRunsSeen := map[string]bool{}
 	for ev := range w.ResultChan() {
 		un, ok := ev.Object.(*unstructured.Unstructured)
 		if !ok {
@@ -833,6 +842,15 @@ func (b *Backend) streamAllTaskRunLogs(ctx context.Context, in backend.PipelineR
 		}
 		taskName, _, _ := unstructured.NestedString(un.Object, "metadata", "labels", "tekton.dev/pipelineTask")
 		trName := un.GetName()
+		if !taskRunsSeen[trName] {
+			taskRunsSeen[trName] = true
+			b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
+				return "taskrun seen", map[string]any{
+					"name":          trName,
+					"pipeline_task": taskName,
+				}
+			})
+		}
 		// Diff sidecar statuses and emit transition events.
 		b.emitSidecarTransitions(in, taskName, trName, un, sidecarSeen)
 
@@ -841,6 +859,13 @@ func (b *Backend) streamAllTaskRunLogs(ctx context.Context, in backend.PipelineR
 			continue
 		}
 		streamed[podName] = true
+		b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
+			return "pod attached", map[string]any{
+				"pod":           podName,
+				"taskrun":       trName,
+				"pipeline_task": taskName,
+			}
+		})
 		go b.streamPodLogs(ctx, in, ns, podName, taskName)
 	}
 }

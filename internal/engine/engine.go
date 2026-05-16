@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/danielfbm/tkn-act/internal/backend"
+	"github.com/danielfbm/tkn-act/internal/debug"
 	"github.com/danielfbm/tkn-act/internal/engine/dag"
 	"github.com/danielfbm/tkn-act/internal/loader"
 	"github.com/danielfbm/tkn-act/internal/refresolver"
@@ -33,6 +34,20 @@ type Options struct {
 	// The CLI builds this from --resolver-allow / --resolver-cache-dir /
 	// --offline; tests inject a Registry with an inline stub resolver.
 	Refresolver *refresolver.Registry
+	// Debug is the verbose-trace emitter. The CLI builds this from the
+	// --debug flag; nil means "no debug emissions" (the engine
+	// substitutes debug.Nop in New). When non-nil, the engine propagates
+	// it to the backend (via SetDebug if the backend implements
+	// DebugSetter) and to Refresolver (via Registry.SetDebug) at
+	// run-start, so all three components emit through the same channel.
+	Debug debug.Emitter
+}
+
+// DebugSetter is implemented by backends that accept a debug.Emitter.
+// The engine type-asserts the backend against this interface at
+// run-start; backends that don't implement it stay silent on --debug.
+type DebugSetter interface {
+	SetDebug(d debug.Emitter)
 }
 
 // VolumeResolver is the engine's hook for the volumes package. Returns
@@ -43,13 +58,28 @@ type Engine struct {
 	be   backend.Backend
 	rep  reporter.Reporter
 	opts Options
+	dbg  debug.Emitter
 }
 
 func New(be backend.Backend, rep reporter.Reporter, opts Options) *Engine {
 	if opts.MaxParallel <= 0 {
 		opts.MaxParallel = 4
 	}
-	return &Engine{be: be, rep: rep, opts: opts}
+	dbg := opts.Debug
+	if dbg == nil {
+		dbg = debug.Nop()
+	}
+	// Propagate the emitter so resolver and backend emit through the
+	// same reporter the engine writes to. Done at New (not RunPipeline)
+	// so callers that drive sub-flows directly (tests, the
+	// remote-resolver dispatch) get the same wiring.
+	if opts.Refresolver != nil {
+		opts.Refresolver.SetDebug(dbg)
+	}
+	if ds, ok := be.(DebugSetter); ok {
+		ds.SetDebug(dbg)
+	}
+	return &Engine{be: be, rep: rep, opts: opts, dbg: dbg}
 }
 
 func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, error) {
@@ -231,6 +261,9 @@ levelLoop:
 			mu.Unlock()
 
 			eg.Go(func() error {
+				e.dbg.Emit(debug.Engine, func() (string, map[string]any) {
+					return "task ready", map[string]any{"task": tname}
+				})
 				e.rep.Emit(reporter.Event{
 					Kind: reporter.EvtTaskStart, Time: time.Now(), Task: tname,
 					DisplayName: pt.DisplayName,
@@ -414,12 +447,66 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		},
 	}
 
+	// Emit a "params resolved" debug event with the count of resolved
+	// keys and a truncated peek at each value. Useful diagnostic when
+	// $(...) substitution surfaces a surprise upstream — and cheap when
+	// disabled because the build closure short-circuits.
+	//
+	// Param values whose key name matches the secret-like pattern
+	// (secret|token|password|key|credential|auth) are redacted to
+	// `<redacted>` so `--debug -o json > events.jsonl` doesn't
+	// archive credentials. The check is intentionally over-cautious
+	// — false positives are harmless; a missed exposure is not.
+	e.dbg.Emit(debug.Engine, func() (string, map[string]any) {
+		preview := make(map[string]string, len(rctx.Params))
+		for k, v := range rctx.Params {
+			if looksLikeSecretName(k) {
+				preview[k] = "<redacted>"
+				continue
+			}
+			preview[k] = truncate(v, 64)
+		}
+		return "params resolved", map[string]any{
+			"task":             pt.Name,
+			"count":            len(rctx.Params),
+			"truncated_values": preview,
+		}
+	})
+
 	// Evaluate when expressions.
 	pass, reason, err := evaluateWhen(pt.When, rctx)
 	if err != nil {
 		return TaskOutcome{Status: "failed", Message: err.Error()}
 	}
 	if !pass {
+		// "task skipped" debug event carries:
+		//   - expression: the raw `pt.When` (pre-substitution); useful
+		//     when the user wants to grep for clauses by literal value.
+		//   - evaluated:  the post-substitution form (the reason
+		//     string from evaluateWhen). Agents that don't want to
+		//     do their own substitution can read this directly.
+		//   - reason:     short human label ("in mismatch" / "notin
+		//     match") matching what surfaces in the EvtTaskSkip message.
+		// Matrix-fanned skips also include matrix_row so N expansions
+		// of the same parent task don't produce N identical events.
+		e.dbg.Emit(debug.Engine, func() (string, map[string]any) {
+			expr := ""
+			if len(pt.When) > 0 {
+				expr = fmt.Sprintf("%v", pt.When)
+			}
+			fields := map[string]any{
+				"task":       pt.Name,
+				"reason":     reason,
+				"expression": truncate(expr, 64),
+				"evaluated":  truncate(reason, 64),
+			}
+			if pt.MatrixInfo != nil {
+				fields["matrix_row"] = pt.MatrixInfo.Index
+				fields["matrix_of"] = pt.MatrixInfo.Of
+				fields["matrix_parent"] = pt.MatrixInfo.Parent
+			}
+			return "task skipped", fields
+		})
 		// For matrix-fanned tasks, the *expansion-name* skip is
 		// emitted by the caller (RunPipeline's eg.Go closure) so
 		// that Matrix is populated; suppress the inner skip event
@@ -995,4 +1082,47 @@ func (e *Engine) emitClusterTaskEvents(pl tektontypes.Pipeline, bundle *loader.B
 	for _, pt := range pl.Spec.Finally {
 		emit(pt)
 	}
+}
+
+// truncate clips s to at most max runes, appending an ellipsis when
+// truncation actually happens. Used to keep debug field values
+// bounded so a giant resolved param doesn't bloat events.jsonl. Works
+// on runes (not bytes) so a multibyte UTF-8 boundary doesn't render
+// a replacement character.
+func truncate(s string, max int) string {
+	rs := []rune(s)
+	if len(rs) <= max {
+		return s
+	}
+	return string(rs[:max-1]) + "…"
+}
+
+// secretNamePatterns is the case-insensitive substring set that
+// triggers redaction in the "params resolved" debug event. Matches
+// the most common credential-bearing param-name conventions
+// across Tekton catalogs. Adding a new pattern requires a
+// corresponding test in TestLooksLikeSecretName.
+var secretNamePatterns = []string{
+	"secret",
+	"token",
+	"password",
+	"passwd",
+	"key",
+	"credential",
+	"auth",
+}
+
+// looksLikeSecretName returns true when name appears to identify a
+// secret-bearing param (case-insensitive substring match against
+// secretNamePatterns). False positives are harmless — they only
+// suppress the value in a debug trace; the engine still substitutes
+// the real value into the resolved task.
+func looksLikeSecretName(name string) bool {
+	lower := strings.ToLower(name)
+	for _, p := range secretNamePatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
 }

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/danielfbm/tkn-act/internal/debug"
 	"github.com/danielfbm/tkn-act/internal/exitcode"
 	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/runstore"
@@ -94,6 +95,14 @@ func wrapReporterWithPersist(warnSink io.Writer, liveRep reporter.Reporter, run 
 	}
 	tee := reporter.NewTee(liveRep, persistRep)
 	return tee, tee.Close
+}
+
+// buildDebugEmitter constructs the debug.Emitter the engine wires
+// through to the backend and refresolver. Extracted out of runWith
+// so the construction sits in a unit-testable function (runWith
+// itself is daemon-dependent and stays at 0% coverage).
+func buildDebugEmitter(rep reporter.Reporter, enabled bool) debug.Emitter {
+	return debug.New(rep, enabled)
 }
 
 // setupRunPersistence wires the run-store and the persist sink into

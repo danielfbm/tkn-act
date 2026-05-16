@@ -5,8 +5,41 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/danielfbm/tkn-act/internal/debug"
 	"github.com/danielfbm/tkn-act/internal/refresolver"
+	"github.com/danielfbm/tkn-act/internal/reporter"
 )
+
+// recordingReporter buffers emitted events and lets debug-emission
+// tests assert on them without standing up a real reporter.
+type recordingReporter struct {
+	events []reporterEventSnapshot
+}
+
+// reporterEventSnapshot mirrors the subset of reporter.Event the
+// debug tests assert on. Keeping this private to the test file lets us
+// evolve the helper without rippling into production tests.
+type reporterEventSnapshot struct {
+	Kind      string
+	Component string
+	Message   string
+	Fields    map[string]any
+}
+
+// Renamed to avoid shadow with reporterEvent below.
+func (r *recordingReporter) Emit(e reporter.Event) {
+	r.events = append(r.events, reporterEventSnapshot{
+		Kind:      string(e.Kind),
+		Component: e.Component,
+		Message:   e.Message,
+		Fields:    e.Fields,
+	})
+}
+func (r *recordingReporter) Close() error { return nil }
+
+func newRecordingEmitter(rep *recordingReporter) debug.Emitter {
+	return debug.New(rep, true)
+}
 
 // stubResolver is a Resolver that returns a fixed payload and counts calls.
 type stubResolver struct {
@@ -187,5 +220,113 @@ func TestCacheKey(t *testing.T) {
 
 	if len(a) != 64 {
 		t.Errorf("expected 64-char hex sha256, got %d chars (%s)", len(a), a)
+	}
+}
+
+// TestRegistry_EmitsDebugOnDispatchAndCacheHit: a registry with debug
+// enabled emits at minimum a "dispatch" event on first Resolve, and a
+// "cache hit (per-run)" event on the second identical Resolve.
+func TestRegistry_EmitsDebugOnDispatchAndCacheHit(t *testing.T) {
+	rep := &recordingReporter{}
+	reg := refresolver.NewRegistry()
+	reg.Register(&stubResolver{name: "stub", bytes: []byte("hello")})
+	reg.SetDebug(newRecordingEmitter(rep))
+
+	for i := 0; i < 2; i++ {
+		if _, err := reg.Resolve(context.Background(), refresolver.Request{
+			Resolver: "stub",
+			Params:   map[string]string{"k": "v"},
+		}); err != nil {
+			t.Fatalf("resolve %d: %v", i, err)
+		}
+	}
+
+	// Expect: dispatch, direct dispatch, resolve ok (first call) then
+	// dispatch, cache hit (per-run) (second call). Five total at minimum.
+	var sawDispatch, sawCacheHit, sawResolveOk bool
+	for _, ev := range rep.events {
+		if ev.Kind != "debug" || ev.Component != "resolver" {
+			continue
+		}
+		switch ev.Message {
+		case "dispatch":
+			sawDispatch = true
+		case "cache hit (per-run)":
+			sawCacheHit = true
+		case "resolve ok":
+			sawResolveOk = true
+		}
+	}
+	if !sawDispatch {
+		t.Errorf("missing 'dispatch' debug event in %+v", rep.events)
+	}
+	if !sawResolveOk {
+		t.Errorf("missing 'resolve ok' debug event in %+v", rep.events)
+	}
+	if !sawCacheHit {
+		t.Errorf("missing 'cache hit (per-run)' debug event in %+v", rep.events)
+	}
+}
+
+// TestRegistry_DebugDisabled_NoEvents: with debug disabled (the
+// default), Resolve emits zero EvtDebug events.
+func TestRegistry_DebugDisabled_NoEvents(t *testing.T) {
+	rep := &recordingReporter{}
+	reg := refresolver.NewRegistry()
+	reg.Register(&stubResolver{name: "stub", bytes: []byte("hello")})
+	// SetDebug NOT called — the registry stays on its Nop emitter.
+	_, _ = reg.Resolve(context.Background(), refresolver.Request{Resolver: "stub"})
+	for _, ev := range rep.events {
+		if ev.Kind == "debug" {
+			t.Errorf("unexpected debug event with debug disabled: %+v", ev)
+		}
+	}
+}
+
+// TestRegistry_Debug_AccessorReturnsCurrentEmitter: Debug() exposes
+// the most recently-installed emitter (never nil).
+func TestRegistry_Debug_AccessorReturnsCurrentEmitter(t *testing.T) {
+	reg := refresolver.NewRegistry()
+	// Default Nop.
+	d1 := reg.Debug()
+	if d1 == nil {
+		t.Fatal("Debug() returned nil before SetDebug")
+	}
+	if d1.Enabled() {
+		t.Errorf("default Debug() emitter is enabled — should be Nop")
+	}
+	// After SetDebug, the accessor returns the installed emitter.
+	rep := &recordingReporter{}
+	reg.SetDebug(newRecordingEmitter(rep))
+	d2 := reg.Debug()
+	if !d2.Enabled() {
+		t.Errorf("Debug() after SetDebug(enabled=true) returned a disabled emitter")
+	}
+}
+
+// TestRegistry_SetDebug_NilFallsBackToNop: passing nil must not panic
+// and must leave a Nop emitter in place — emit sites use the snapshot
+// from r.dbg() without nil checks.
+func TestRegistry_SetDebug_NilFallsBackToNop(t *testing.T) {
+	reg := refresolver.NewRegistry()
+	rep := &recordingReporter{}
+	reg.SetDebug(newRecordingEmitter(rep))
+	if !reg.Debug().Enabled() {
+		t.Fatal("setup: expected enabled emitter after first SetDebug")
+	}
+	reg.SetDebug(nil)
+	if reg.Debug() == nil {
+		t.Fatal("Debug() returned nil after SetDebug(nil)")
+	}
+	if reg.Debug().Enabled() {
+		t.Errorf("Debug() after SetDebug(nil) returned an enabled emitter — should be Nop")
+	}
+	// Confirm Resolve still works and produces zero debug events.
+	reg.Register(&stubResolver{name: "stub", bytes: []byte("ok")})
+	_, _ = reg.Resolve(context.Background(), refresolver.Request{Resolver: "stub"})
+	for _, ev := range rep.events {
+		if ev.Kind == "debug" {
+			t.Errorf("unexpected debug event after SetDebug(nil): %+v", ev)
+		}
 	}
 }

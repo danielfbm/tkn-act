@@ -211,3 +211,70 @@ func TestPrettyResolverEndTopLevelPipelineRefHasNoTaskPrefix(t *testing.T) {
 		t.Errorf("top-level resolver line shouldn't carry a task prefix: %q", out)
 	}
 }
+
+// TestPretty_DebugLine: a debug event renders as one indented line with
+// the [debug] tag, the component, sorted key=value pairs from Fields,
+// and the human message after an em-dash separator. Indented to align
+// with step-log output so visual flow is preserved.
+func TestPretty_DebugLine(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Normal})
+	rep.Emit(Event{
+		Kind:      EvtDebug,
+		Component: "resolver",
+		Message:   "cache hit",
+		Fields:    map[string]any{"ref": "hub://git-clone:0.9", "bytes": 4096},
+	})
+	out := buf.String()
+	if !strings.Contains(out, "[debug]") {
+		t.Errorf("missing [debug] tag: %q", out)
+	}
+	if !strings.Contains(out, "component=resolver") {
+		t.Errorf("missing component=resolver: %q", out)
+	}
+	if !strings.Contains(out, "ref=hub://git-clone:0.9") {
+		t.Errorf("missing ref field: %q", out)
+	}
+	if !strings.Contains(out, "bytes=4096") {
+		t.Errorf("missing bytes field: %q", out)
+	}
+	if !strings.Contains(out, "cache hit") {
+		t.Errorf("missing message: %q", out)
+	}
+	// Keys must render in sorted order (bytes before ref).
+	if i, j := strings.Index(out, "bytes="), strings.Index(out, "ref="); i < 0 || j < 0 || i > j {
+		t.Errorf("fields not sorted: %q", out)
+	}
+}
+
+// TestPretty_DebugLine_NoFields: a debug event with no Fields still
+// renders the [debug] tag, component, and message — no stray spacing
+// or trailing artifacts from the empty map.
+func TestPretty_DebugLine_NoFields(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Normal})
+	rep.Emit(Event{
+		Kind:      EvtDebug,
+		Component: "engine",
+		Message:   "task ready",
+	})
+	out := buf.String()
+	if !strings.Contains(out, "[debug]") || !strings.Contains(out, "component=engine") || !strings.Contains(out, "task ready") {
+		t.Errorf("debug-line render: %q", out)
+	}
+}
+
+// TestPretty_DebugLine_Quiet: debug events are suppressed in Quiet
+// verbosity (they're trace data, not summary output).
+func TestPretty_DebugLine_Quiet(t *testing.T) {
+	var buf bytes.Buffer
+	rep := NewPretty(&buf, PrettyOptions{Verbosity: Quiet})
+	rep.Emit(Event{
+		Kind:      EvtDebug,
+		Component: "engine",
+		Message:   "task ready",
+	})
+	if buf.Len() != 0 {
+		t.Errorf("quiet should suppress debug events: %q", buf.String())
+	}
+}
