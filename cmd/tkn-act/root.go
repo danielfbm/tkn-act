@@ -56,6 +56,11 @@ type globalFlags struct {
 	// default unix socket. Lets a single CLI invocation target a
 	// different daemon without mutating process-wide env.
 	dockerHost string
+	// stateDir overrides where tkn-act records per-run state
+	// (events.jsonl + meta.json). Empty falls through to
+	// $TKN_ACT_STATE_DIR, then $XDG_DATA_HOME/tkn-act, then
+	// $HOME/.local/share/tkn-act.
+	stateDir string
 }
 
 var gf globalFlags
@@ -129,6 +134,9 @@ Designed for both humans and AI agents:
 	// without mutating process env. Same scheme set as DOCKER_HOST:
 	// unix:// | tcp:// | ssh://. Empty falls through to $DOCKER_HOST.
 	cmd.PersistentFlags().StringVar(&gf.dockerHost, "docker-host", "", "override the docker daemon address for this invocation (overrides $DOCKER_HOST; same scheme set: unix:// | tcp:// | ssh://)")
+	// State directory for per-run records (events.jsonl + meta.json).
+	// Empty falls through to $TKN_ACT_STATE_DIR, then XDG_DATA_HOME.
+	cmd.PersistentFlags().StringVar(&gf.stateDir, "state-dir", "", "override the directory where tkn-act stores run records (env: TKN_ACT_STATE_DIR; default $XDG_DATA_HOME/tkn-act or ~/.local/share/tkn-act)")
 
 	cmd.AddCommand(newRunCmd())
 	cmd.AddCommand(newListCmd())

@@ -19,6 +19,7 @@ import (
 	"github.com/danielfbm/tkn-act/internal/loader"
 	"github.com/danielfbm/tkn-act/internal/refresolver"
 	"github.com/danielfbm/tkn-act/internal/reporter"
+	"github.com/danielfbm/tkn-act/internal/runstore"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	"github.com/danielfbm/tkn-act/internal/validator"
 	"github.com/danielfbm/tkn-act/internal/volumes"
@@ -71,7 +72,7 @@ func runDefault(_ *cobra.Command, _ []string) error {
 	return runWith(runFlags{})
 }
 
-func runWith(rf runFlags) error {
+func runWith(rf runFlags) (retErr error) {
 	files := rf.files
 	dir := rf.dir
 	if dir == "" {
@@ -189,8 +190,11 @@ func runWith(rf runFlags) error {
 		return volumes.MaterializeForTask(taskName, vs, volBase, cmStore, secStore)
 	}
 
-	// Build reporter.
-	rep, err := buildReporter(os.Stdout)
+	// Build reporter (pretty / json). The persist-sink fan-out is
+	// attached AFTER backend construction so environment failures
+	// (no docker daemon, no k3d) don't leave phantom started-but-
+	// never-ran rows in index.json.
+	liveRep, err := buildReporter(os.Stdout)
 	if err != nil {
 		return exitcode.Wrap(exitcode.Usage, err)
 	}
@@ -224,6 +228,12 @@ func runWith(rf runFlags) error {
 		}
 		be = dockerBe
 	}
+
+	// Attach the persist sink now (after backend init has succeeded)
+	// so a future `tkn-act logs` can replay this run. Backend init
+	// failures above leave the state-dir untouched.
+	rep, cleanup := setupRunPersistence(os.Stderr, runstore.ResolveStateDir(gf.stateDir), pipe, os.Args[1:], liveRep)
+	defer func() { cleanup(retErr) }()
 
 	// Cancel on signals.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
