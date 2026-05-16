@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -345,11 +346,24 @@ func isTerminal(f *os.File) bool {
 	return (st.Mode() & os.ModeCharDevice) != 0
 }
 
+// isWriterTerminal reports whether w is a *os.File pointing at a TTY.
+// Any non-file writer (e.g. a *bytes.Buffer in tests) is treated as
+// non-interactive, which matches the safe-by-default color stance.
+func isWriterTerminal(w io.Writer) bool {
+	if f, ok := w.(*os.File); ok {
+		return isTerminal(f)
+	}
+	return false
+}
+
 // buildReporter constructs the reporter for the current global flags. Output
 // "json" always returns a JSON reporter (no color, no verbosity — its shape is
 // the agent contract). Otherwise we resolve color and verbosity from the
 // flags and the environment.
-func buildReporter(out *os.File) (reporter.Reporter, error) {
+//
+// Accepting io.Writer (not *os.File) lets `tkn-act logs` replay to an
+// arbitrary buffer in tests without an asFile shim.
+func buildReporter(out io.Writer) (reporter.Reporter, error) {
 	if gf.output == "json" {
 		return reporter.NewJSON(out), nil
 	}
@@ -364,7 +378,7 @@ func buildReporter(out *os.File) (reporter.Reporter, error) {
 		// --no-color is a hard override (for backwards compatibility).
 		mode = reporter.ColorNever
 	}
-	color := reporter.ResolveColor(mode, isTerminal(out), os.LookupEnv)
+	color := reporter.ResolveColor(mode, isWriterTerminal(out), os.LookupEnv)
 
 	verb := reporter.Normal
 	switch {
