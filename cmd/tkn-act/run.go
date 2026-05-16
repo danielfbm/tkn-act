@@ -14,7 +14,6 @@ import (
 	clusterbe "github.com/danielfbm/tkn-act/internal/backend/cluster"
 	"github.com/danielfbm/tkn-act/internal/backend/docker"
 	"github.com/danielfbm/tkn-act/internal/cluster/k3d"
-	"github.com/danielfbm/tkn-act/internal/debug"
 	"github.com/danielfbm/tkn-act/internal/discovery"
 	"github.com/danielfbm/tkn-act/internal/engine"
 	"github.com/danielfbm/tkn-act/internal/exitcode"
@@ -272,17 +271,15 @@ func runWith(rf runFlags) (retErr error) {
 		reg.SetRemote(remote)
 	}
 
-	// Debug emitter — built from the persisting reporter so debug
-	// events flow to both live output and events.jsonl. engine.New
-	// propagates it to the backend (via SetDebug) and the resolver
-	// registry so all three components emit through the same channel.
-	dbg := debug.New(rep, gf.debug)
-
 	res, err := engine.New(be, rep, engine.Options{
 		MaxParallel:    gf.maxParallel,
 		VolumeResolver: volResolver,
 		Refresolver:    reg,
-		Debug:          dbg,
+		// Debug emitter built from the persisting reporter so debug
+		// events flow to both live output and events.jsonl. engine.New
+		// propagates it to the backend (via SetDebug) and the resolver
+		// registry so all three components emit through the same channel.
+		Debug: buildDebugEmitter(rep, gf.debug),
 	}).RunPipeline(ctx, engine.PipelineInput{
 		Bundle:     b,
 		Name:       pipe,
