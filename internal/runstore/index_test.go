@@ -1,6 +1,8 @@
 package runstore_test
 
 import (
+	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -142,6 +144,25 @@ func TestIndex_Update(t *testing.T) {
 	e, _ := idx.BySeq(seq)
 	if e.Status != "succeeded" {
 		t.Errorf("Status = %q, want succeeded", e.Status)
+	}
+}
+
+func TestIndex_FlushAtomic_NoLeftoverTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	idx, _ := runstore.OpenIndex(dir)
+	for i := 0; i < 5; i++ {
+		idx.Append(runstore.IndexEntry{ULID: "01HQYZAB00000000000000000" + string(rune('A'+i))})
+	}
+	idx.Close()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".index-") && strings.HasSuffix(name, ".tmp") {
+			t.Errorf("leftover temp file in state-dir: %s", name)
+		}
 	}
 }
 

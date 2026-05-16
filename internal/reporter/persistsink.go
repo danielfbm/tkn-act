@@ -55,6 +55,14 @@ func (p *persistSink) Emit(e Event) {
 	_, _ = p.w.Write([]byte("\n"))
 }
 
+// Close flushes the buffered writer and fsyncs the underlying file
+// before closing it. Durability stance: process-crash safe (the
+// kernel keeps the page cache and flushes on its own), host-crash
+// best-effort within the fsync window. We deliberately do NOT fsync
+// on every Emit — that would dominate run latency on filesystems
+// with slow journal commits, and the recovery story (replay from
+// the last fsync, lose any in-flight buffered events) is acceptable
+// for a triage feature.
 func (p *persistSink) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -62,6 +70,7 @@ func (p *persistSink) Close() error {
 		_ = p.w.Flush()
 	}
 	if p.f != nil {
+		_ = p.f.Sync()
 		return p.f.Close()
 	}
 	return nil

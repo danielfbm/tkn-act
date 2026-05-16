@@ -190,15 +190,14 @@ func runWith(rf runFlags) (retErr error) {
 		return volumes.MaterializeForTask(taskName, vs, volBase, cmStore, secStore)
 	}
 
-	// Build reporter. setupRunPersistence opens the run-store and
-	// fans events into a persist sink under a Tee so a future
-	// `tkn-act logs` can replay this run; both steps are fail-soft.
+	// Build reporter (pretty / json). The persist-sink fan-out is
+	// attached AFTER backend construction so environment failures
+	// (no docker daemon, no k3d) don't leave phantom started-but-
+	// never-ran rows in index.json.
 	liveRep, err := buildReporter(os.Stdout)
 	if err != nil {
 		return exitcode.Wrap(exitcode.Usage, err)
 	}
-	rep, cleanup := setupRunPersistence(os.Stderr, runstore.ResolveStateDir(gf.stateDir), pipe, os.Args[1:], liveRep)
-	defer func() { cleanup(retErr) }()
 
 	// Build backend.
 	var be backend.Backend
@@ -229,6 +228,12 @@ func runWith(rf runFlags) (retErr error) {
 		}
 		be = dockerBe
 	}
+
+	// Attach the persist sink now (after backend init has succeeded)
+	// so a future `tkn-act logs` can replay this run. Backend init
+	// failures above leave the state-dir untouched.
+	rep, cleanup := setupRunPersistence(os.Stderr, runstore.ResolveStateDir(gf.stateDir), pipe, os.Args[1:], liveRep)
+	defer func() { cleanup(retErr) }()
 
 	// Cancel on signals.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

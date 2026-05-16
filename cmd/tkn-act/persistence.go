@@ -30,15 +30,19 @@ func openRunRecord(warnSink io.Writer, stateDir, pipelineName string, args []str
 
 // finalizeRun records the run's terminal state in meta.json and
 // index.json. status is "succeeded" when retErr is nil, otherwise
-// "failed"; exit code is derived via exitcode.From.
-func finalizeRun(run *runstore.Run, retErr error) {
+// "failed"; exit code is derived via exitcode.From. Finalize errors
+// are reported to warnSink so the user knows the on-disk record is
+// incomplete; the calling run's exit code is unchanged either way.
+func finalizeRun(warnSink io.Writer, run *runstore.Run, retErr error) {
 	status := "succeeded"
 	code := 0
 	if retErr != nil {
 		code = exitcode.From(retErr)
 		status = "failed"
 	}
-	_ = run.Finalize(time.Now(), code, status)
+	if err := run.Finalize(time.Now(), code, status); err != nil {
+		fmt.Fprintf(warnSink, "warning: finalize run record: %v\n", err)
+	}
 }
 
 // wrapReporterWithPersist returns liveRep unchanged when run is nil,
@@ -76,11 +80,11 @@ func setupRunPersistence(warnSink io.Writer, stateDir, pipelineName string, args
 		if closeRep != nil {
 			// Close before Finalize so the persist sink's bufio writer
 			// is flushed and events.jsonl is complete on disk before
-			// meta.json's end_at lands.
+			// meta.json's ended_at lands.
 			_ = closeRep()
 		}
 		if run != nil {
-			finalizeRun(run, retErr)
+			finalizeRun(warnSink, run, retErr)
 		}
 	}
 	return rep, cleanup

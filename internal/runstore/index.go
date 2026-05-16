@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,41 +31,56 @@ type indexFile struct {
 
 // Index is a handle on the state-dir's index.json under an exclusive
 // file lock. Callers must Close to release the lock.
+//
+// Locking strategy: the flock is held on a sibling file `index.lock`,
+// not on `index.json` itself. This decouples the lock identity from
+// the data file's inode so flush can use a write-temp-rename atomic
+// update without invalidating concurrent holders' locks. (`flock(2)`
+// is per-inode; renaming a locked file unlinks the locked inode and
+// breaks the lock contract.)
+//
+// Filesystem caveat: `flock(2)` is a Linux/Darwin local-FS advisory
+// lock. On NFSv3-without-nlm, CIFS, virtiofs, and some FUSE backends
+// it either no-ops or returns ENOLCK. Concurrent runs against a
+// state-dir on such filesystems may collide on seq numbers; the
+// agent-guide (Phase 6) calls this out and recommends pointing
+// TKN_ACT_STATE_DIR at a local path.
 type Index struct {
-	dir  string
-	f    *os.File // holds flock; nil after Close
-	data indexFile
+	dir    string
+	lockFD *os.File // flock holder; nil after Close
+	data   indexFile
 }
 
-// OpenIndex opens (or creates) index.json under an exclusive lock.
-// The state-dir and its `runs/` subdirectory are created on demand.
+// OpenIndex opens (or creates) index.json under an exclusive lock
+// (on a sibling `index.lock` file). The state-dir and its `runs/`
+// subdirectory are created on demand.
 func OpenIndex(stateDir string) (*Index, error) {
 	if err := os.MkdirAll(filepath.Join(stateDir, "runs"), 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir state-dir: %w", err)
 	}
-	path := filepath.Join(stateDir, "index.json")
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	lockPath := filepath.Join(stateDir, "index.lock")
+	lf, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
-		return nil, fmt.Errorf("open index: %w", err)
+		return nil, fmt.Errorf("open lock file: %w", err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
+	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX); err != nil {
+		lf.Close()
 		return nil, fmt.Errorf("lock index: %w", err)
 	}
-	idx := &Index{dir: stateDir, f: f}
-	info, err := f.Stat()
-	if err != nil {
-		idx.Close()
-		return nil, err
-	}
-	if info.Size() == 0 {
+	idx := &Index{dir: stateDir, lockFD: lf}
+
+	// Now read index.json under the lock.
+	dataPath := filepath.Join(stateDir, "index.json")
+	if data, err := os.ReadFile(dataPath); err != nil {
+		if !os.IsNotExist(err) {
+			idx.Close()
+			return nil, fmt.Errorf("read index: %w", err)
+		}
+		idx.data = indexFile{NextSeq: 1}
+	} else if len(data) == 0 {
 		idx.data = indexFile{NextSeq: 1}
 	} else {
-		if _, err := f.Seek(0, io.SeekStart); err != nil {
-			idx.Close()
-			return nil, err
-		}
-		if err := json.NewDecoder(f).Decode(&idx.data); err != nil {
+		if err := json.Unmarshal(data, &idx.data); err != nil {
 			idx.Close()
 			return nil, fmt.Errorf("decode index: %w", err)
 		}
@@ -77,14 +91,14 @@ func OpenIndex(stateDir string) (*Index, error) {
 	return idx, nil
 }
 
-// Close releases the lock and closes the file.
+// Close releases the lock and closes the lock file.
 func (i *Index) Close() error {
-	if i.f == nil {
+	if i.lockFD == nil {
 		return nil
 	}
-	syscall.Flock(int(i.f.Fd()), syscall.LOCK_UN)
-	err := i.f.Close()
-	i.f = nil
+	_ = syscall.Flock(int(i.lockFD.Fd()), syscall.LOCK_UN)
+	err := i.lockFD.Close()
+	i.lockFD = nil
 	return err
 }
 
@@ -155,22 +169,34 @@ func (i *Index) All() []IndexEntry {
 	return out
 }
 
-// flush rewrites the underlying file from scratch (truncate then write).
+// flush atomically rewrites index.json: encode into a temp file in the
+// same directory, fsync it, then rename onto the canonical name. The
+// flock on i.f (held since OpenIndex) ensures only one writer races.
+//
+// Atomicity matters: an in-place Truncate+Write would leave index.json
+// at size zero if the process crashed between the truncate and the
+// final Write, and OpenIndex treats a zero-byte index.json as a fresh
+// state-dir, silently losing every prior run record.
 func (i *Index) flush() error {
-	if _, err := i.f.Seek(0, io.SeekStart); err != nil {
+	tmp, err := os.CreateTemp(i.dir, ".index-*.tmp")
+	if err != nil {
 		return err
 	}
-	if err := i.f.Truncate(0); err != nil {
-		return err
-	}
-	enc := json.NewEncoder(i.f)
+	enc := json.NewEncoder(tmp)
 	enc.SetIndent("", "  ")
-	return enc.Encode(i.data)
-}
-
-// replaceEntries replaces the entries slice in-memory and flushes.
-// Used by retention GC to remove pruned rows in bulk.
-func (i *Index) replaceEntries(entries []IndexEntry) error {
-	i.data.Entries = entries
-	return i.flush()
+	if err := enc.Encode(i.data); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return os.Rename(tmp.Name(), filepath.Join(i.dir, "index.json"))
 }

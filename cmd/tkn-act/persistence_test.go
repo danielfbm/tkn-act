@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,7 +50,7 @@ func TestFinalizeRun_SuccessRecordsSucceeded(t *testing.T) {
 	dir := t.TempDir()
 	store, _ := runstore.Open(dir, "tkn-act-test")
 	r, _ := store.NewRun(time.Unix(1_700_000_000, 0), "p", nil)
-	finalizeRun(r, nil)
+	finalizeRun(io.Discard, r, nil)
 	m, _ := runstore.ReadMeta(filepath.Join(r.Dir, "meta.json"))
 	if m.Status != "succeeded" {
 		t.Errorf("Status = %q, want succeeded", m.Status)
@@ -67,7 +68,7 @@ func TestFinalizeRun_FailureCapturesExitCode(t *testing.T) {
 	store, _ := runstore.Open(dir, "tkn-act-test")
 	r, _ := store.NewRun(time.Unix(1_700_000_000, 0), "p", nil)
 	wrapped := exitcode.Wrap(exitcode.Pipeline, errors.New("boom"))
-	finalizeRun(r, wrapped)
+	finalizeRun(io.Discard, r, wrapped)
 	m, _ := runstore.ReadMeta(filepath.Join(r.Dir, "meta.json"))
 	if m.Status != "failed" {
 		t.Errorf("Status = %q, want failed", m.Status)

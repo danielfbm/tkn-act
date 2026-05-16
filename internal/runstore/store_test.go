@@ -3,6 +3,7 @@ package runstore_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,6 +117,18 @@ func TestStore_Resolve_Errors(t *testing.T) {
 	s.NewRun(time.Now(), "", nil)
 	if _, err := s.Resolve("99"); err == nil {
 		t.Errorf("Resolve(99): want not-found")
+	}
+	// Negative/zero numeric identifiers must error cleanly rather than
+	// fall through to ULID-prefix lookup with confusing wording.
+	for _, in := range []string{"0", "-1"} {
+		_, err := s.Resolve(in)
+		if err == nil {
+			t.Errorf("Resolve(%q): want error", in)
+			continue
+		}
+		if !strings.Contains(err.Error(), "positive") {
+			t.Errorf("Resolve(%q) error = %v, want a 'positive' hint", in, err)
+		}
 	}
 }
 

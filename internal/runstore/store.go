@@ -101,9 +101,17 @@ func (r *Run) Finalize(end time.Time, exitCode int, status string) error {
 	})
 }
 
-// Resolve maps a user-supplied identifier — empty/"latest" for the
-// most recent run, a positive integer for a seq, otherwise a ULID or
-// ULID prefix — to an IndexEntry.
+// Resolve maps a user-supplied identifier to an IndexEntry:
+//   - empty or "latest"  → most recent run
+//   - bare positive int  → seq lookup (no leading zero; "1", "42")
+//   - "0" / "-1"         → clear error rather than ULID fall-through
+//   - anything else      → ULID or ULID-prefix
+//
+// A ULID's first 10 characters encode a millisecond timestamp; in
+// Crockford base32 that means a prefix can be all decimal digits
+// (e.g. "00000000" for a ULID minted at ms=0). To avoid colliding
+// such prefixes with seq lookups, only un-leading-zero numerics
+// reach BySeq.
 func (s *Store) Resolve(id string) (IndexEntry, error) {
 	idx, err := OpenIndex(s.dir)
 	if err != nil {
@@ -113,10 +121,39 @@ func (s *Store) Resolve(id string) (IndexEntry, error) {
 	if id == "" || id == "latest" {
 		return idx.Latest()
 	}
-	if n, err := strconv.Atoi(id); err == nil && n > 0 {
+	if looksLikeSeq(id) {
+		n, _ := strconv.Atoi(id) // safe: looksLikeSeq guarantees valid int
+		if n <= 0 {
+			return IndexEntry{}, fmt.Errorf("run sequence number must be positive (got %d)", n)
+		}
 		return idx.BySeq(n)
 	}
 	return idx.ByULIDPrefix(id)
+}
+
+// looksLikeSeq returns true iff s is intended as a sequence number:
+// optional leading "-" (for the clear error path), then digits, with
+// no leading zero (so "01HQ..." stays a ULID prefix).
+func looksLikeSeq(s string) bool {
+	if s == "" {
+		return false
+	}
+	start := 0
+	if s[0] == '-' {
+		if len(s) == 1 {
+			return false
+		}
+		start = 1
+	}
+	if s[start] == '0' && len(s)-start > 1 {
+		return false // leading-zero numerics are ULID prefixes, not seqs
+	}
+	for i := start; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // RunDir returns the on-disk directory for the given index entry.

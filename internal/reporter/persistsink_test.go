@@ -64,6 +64,61 @@ func TestPersistSink_PreservesOrder(t *testing.T) {
 	}
 }
 
+// TestPersistSink_TeeByteEqualityWithZeroTime locks the contract that
+// even an event emitted without an explicit Time field produces the
+// SAME bytes on both sinks when tee'd. Today both sinks fall back to
+// time.Now() independently; this test would catch a divergence if
+// the two implementations drift apart in the future.
+//
+// We strip the time field from each marshaled event before comparing
+// — the two time.Now() calls happen back-to-back but aren't required
+// to be identical to the microsecond, and the spec's byte-equality
+// promise is about every OTHER field of the event being identical.
+func TestPersistSink_TeeByteEqualityWithZeroTime(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	ps, _ := reporter.NewPersistSink(path)
+	var stdout strings.Builder
+	js := reporter.NewJSON(&stdout)
+	tee := reporter.NewTee(js, ps)
+
+	// Event with no Time set — both sinks must fall back identically.
+	tee.Emit(reporter.Event{Kind: reporter.EvtRunStart, Pipeline: "p"})
+	tee.Close()
+
+	persisted, _ := os.ReadFile(path)
+	if stripTime(string(persisted)) != stripTime(stdout.String()) {
+		t.Errorf("zero-Time event diverged across tee:\npersist=%q\nstdout=%q", persisted, stdout.String())
+	}
+}
+
+// stripTime removes the time field from each JSON line so byte-equality
+// tests are insensitive to the back-to-back time.Now() jitter between
+// the two Tee'd sinks.
+func stripTime(s string) string {
+	var out strings.Builder
+	for _, line := range strings.Split(strings.TrimSpace(s), "\n") {
+		// Naïve but adequate: drop everything from "time": until the next
+		// quote-comma boundary. Real round-trip tests above use explicit
+		// Time values to avoid this fuzziness.
+		idx := strings.Index(line, `"time":"`)
+		if idx < 0 {
+			out.WriteString(line)
+			out.WriteByte('\n')
+			continue
+		}
+		end := strings.Index(line[idx+8:], `","`)
+		if end < 0 {
+			out.WriteString(line)
+			out.WriteByte('\n')
+			continue
+		}
+		out.WriteString(line[:idx])
+		out.WriteString(line[idx+8+end+1:])
+		out.WriteByte('\n')
+	}
+	return out.String()
+}
+
 func TestPersistSink_RoundTripVsJSONReporter(t *testing.T) {
 	// The persist sink must produce the same per-line bytes as `NewJSON`
 	// so events.jsonl is a faithful copy of the `-o json` stdout stream.
