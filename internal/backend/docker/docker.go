@@ -148,6 +148,16 @@ func resolvePauseImage(opt string) string {
 	return opt
 }
 
+// shortID truncates a docker resource ID to the first 12 characters,
+// matching the docker CLI's display convention. Empty input passes
+// through.
+func shortID(id string) string {
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:12]
+}
+
 // resolveDockerHost returns the daemon address the moby client should
 // dial: an explicit Options.Host wins, otherwise we fall through to
 // $DOCKER_HOST, otherwise empty (which lets client.FromEnv pick the
@@ -560,15 +570,31 @@ func (b *Backend) ensureImage(ctx context.Context, img, policy string) error {
 	if policy == "IfNotPresent" {
 		_, _, err := b.cli.ImageInspectWithRaw(ctx, img)
 		if err == nil {
+			b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+				return "image cache hit", map[string]any{"image": img, "policy": policy}
+			})
 			return nil
 		}
 	}
+	start := time.Now()
+	b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+		return "image pull start", map[string]any{"image": img, "policy": policy}
+	})
 	rc, err := b.cli.ImagePull(ctx, img, image.PullOptions{})
 	if err != nil {
+		b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+			return "image pull failed", map[string]any{"image": img, "error": err.Error()}
+		})
 		return fmt.Errorf("pull %s: %w", img, err)
 	}
 	defer func() { _ = rc.Close() }()
 	_, _ = io.Copy(io.Discard, rc) // drain to ensure pull completes
+	b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+		return "image pull done", map[string]any{
+			"image":       img,
+			"duration_ms": time.Since(start).Milliseconds(),
+		}
+	})
 	return nil
 }
 
@@ -748,6 +774,15 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 	if err != nil {
 		return 0, fmt.Errorf("create %s: %w", containerName, err)
 	}
+	b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+		return "container created", map[string]any{
+			"id":           shortID(created.ID),
+			"name":         containerName,
+			"image":        step.Image,
+			"taskRunName":  inv.TaskRunName,
+			"stepName":     step.Name,
+		}
+	})
 	defer func() {
 		_ = b.cli.ContainerRemove(context.Background(), created.ID, container.RemoveOptions{Force: true})
 	}()
@@ -755,6 +790,9 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 	if err := b.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
 		return 0, fmt.Errorf("start %s: %w", containerName, err)
 	}
+	b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+		return "container started", map[string]any{"id": shortID(created.ID), "name": containerName}
+	})
 
 	// Stream logs.
 	logRC, err := b.cli.ContainerLogs(ctx, created.ID, container.LogsOptions{

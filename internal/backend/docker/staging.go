@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danielfbm/tkn-act/internal/debug"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/volume"
@@ -105,6 +106,9 @@ func (b *Backend) startRemoteStaging(ctx context.Context, runID string, workspac
 		return fmt.Errorf("create stage volume %q: %w", b.volName, vErr)
 	}
 	b.volumeCreated = true
+	b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+		return "volume created", map[string]any{"name": b.volName, "purpose": "stage"}
+	})
 
 	if iErr := b.ensureImage(ctx, b.pauseImg, "IfNotPresent"); iErr != nil {
 		return fmt.Errorf("pull stager image %q: %w", b.pauseImg, iErr)
@@ -129,6 +133,13 @@ func (b *Backend) startRemoteStaging(ctx context.Context, runID string, workspac
 	if sErr := b.cli.ContainerStart(ctx, b.stagerID, container.StartOptions{}); sErr != nil {
 		return fmt.Errorf("start stager %q: %w", stagerName, sErr)
 	}
+	b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+		return "stager started", map[string]any{
+			"id":         shortID(b.stagerID),
+			"name":       stagerName,
+			"workspaces": len(workspaces),
+		}
+	})
 
 	// Seed each declared workspace (auto-allocated dirs are empty;
 	// user-supplied -w name=/path dirs may have content). Empty dirs
@@ -295,6 +306,7 @@ func (b *Backend) stopRemoteStaging() error {
 		}
 
 		timeoutSecs := 1
+		stoppedID := b.stagerID
 		if err := b.cli.ContainerStop(bg, b.stagerID, container.StopOptions{Timeout: &timeoutSecs}); err != nil {
 			captureErr(fmt.Errorf("stop stager: %w", err))
 		}
@@ -302,6 +314,9 @@ func (b *Backend) stopRemoteStaging() error {
 			captureErr(fmt.Errorf("remove stager: %w", err))
 		}
 		b.stagerID = ""
+		b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+			return "stager stopped", map[string]any{"id": shortID(stoppedID)}
+		})
 	}
 	if b.volumeCreated && b.volName != "" {
 		if err := b.cli.VolumeRemove(bg, b.volName, true); err != nil {
