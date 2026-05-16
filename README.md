@@ -61,6 +61,24 @@ For machine-readable output (CI, agents, scripts):
     tkn-act list        -o json
     tkn-act help-json                      # full command/flag tree
 
+### Replaying past runs
+
+Every `tkn-act run` persists its full JSON event stream under
+`$XDG_DATA_HOME/tkn-act/` (override via `TKN_ACT_STATE_DIR` or
+`--state-dir`). Re-stream a previous run with `tkn-act logs`:
+
+    tkn-act runs list                          # recent runs, newest first
+    tkn-act logs                               # replay the latest run, pretty
+    tkn-act logs 7 -o json                     # replay run #7 as JSON
+    tkn-act logs latest --task build --step compile  # filter the replay
+
+The on-disk `events.jsonl` is full-fidelity, so `--task` / `--step`
+/ `--timestamps` (live flags) all work on replay. Retention
+defaults: 50 runs / 30 days (tune via `TKN_ACT_KEEP_RUNS` /
+`TKN_ACT_KEEP_DAYS`; `tkn-act runs prune` applies the policy on
+demand). See [`docs/agent-guide/logs.md`](docs/agent-guide/logs.md)
+for the full reference.
+
 ## Two backends
 
 | Mode | Trigger | Fidelity | Speed | Needs |
