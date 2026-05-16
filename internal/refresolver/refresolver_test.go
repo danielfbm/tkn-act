@@ -282,3 +282,51 @@ func TestRegistry_DebugDisabled_NoEvents(t *testing.T) {
 		}
 	}
 }
+
+// TestRegistry_Debug_AccessorReturnsCurrentEmitter: Debug() exposes
+// the most recently-installed emitter (never nil).
+func TestRegistry_Debug_AccessorReturnsCurrentEmitter(t *testing.T) {
+	reg := refresolver.NewRegistry()
+	// Default Nop.
+	d1 := reg.Debug()
+	if d1 == nil {
+		t.Fatal("Debug() returned nil before SetDebug")
+	}
+	if d1.Enabled() {
+		t.Errorf("default Debug() emitter is enabled — should be Nop")
+	}
+	// After SetDebug, the accessor returns the installed emitter.
+	rep := &recordingReporter{}
+	reg.SetDebug(newRecordingEmitter(rep))
+	d2 := reg.Debug()
+	if !d2.Enabled() {
+		t.Errorf("Debug() after SetDebug(enabled=true) returned a disabled emitter")
+	}
+}
+
+// TestRegistry_SetDebug_NilFallsBackToNop: passing nil must not panic
+// and must leave a Nop emitter in place — emit sites use the snapshot
+// from r.dbg() without nil checks.
+func TestRegistry_SetDebug_NilFallsBackToNop(t *testing.T) {
+	reg := refresolver.NewRegistry()
+	rep := &recordingReporter{}
+	reg.SetDebug(newRecordingEmitter(rep))
+	if !reg.Debug().Enabled() {
+		t.Fatal("setup: expected enabled emitter after first SetDebug")
+	}
+	reg.SetDebug(nil)
+	if reg.Debug() == nil {
+		t.Fatal("Debug() returned nil after SetDebug(nil)")
+	}
+	if reg.Debug().Enabled() {
+		t.Errorf("Debug() after SetDebug(nil) returned an enabled emitter — should be Nop")
+	}
+	// Confirm Resolve still works and produces zero debug events.
+	reg.Register(&stubResolver{name: "stub", bytes: []byte("ok")})
+	_, _ = reg.Resolve(context.Background(), refresolver.Request{Resolver: "stub"})
+	for _, ev := range rep.events {
+		if ev.Kind == "debug" {
+			t.Errorf("unexpected debug event after SetDebug(nil): %+v", ev)
+		}
+	}
+}
