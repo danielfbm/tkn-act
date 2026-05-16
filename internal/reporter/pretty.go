@@ -26,14 +26,20 @@ const (
 type PrettyOptions struct {
 	Color     bool      // already resolved via ResolveColor
 	Verbosity Verbosity // Quiet | Normal | Verbose
+	// Timestamps, when true, prefixes each step-log, sidecar-log, and
+	// debug line with `[HH:MM:SS.mmm] ` (UTC). Useful for correlating
+	// log lines across parallel tasks. Wired by the `--timestamps`
+	// CLI flag; off by default.
+	Timestamps bool
 }
 
 type prettySink struct {
-	mu       sync.Mutex
-	w        io.Writer
-	pal      palette
-	verb     Verbosity
-	pipeline string
+	mu         sync.Mutex
+	w          io.Writer
+	pal        palette
+	verb       Verbosity
+	timestamps bool
+	pipeline   string
 }
 
 // NewPretty returns a Reporter that prints human-readable, live-ordered
@@ -41,10 +47,22 @@ type prettySink struct {
 // names so parallel runs remain readable.
 func NewPretty(w io.Writer, opt PrettyOptions) Reporter {
 	return &prettySink{
-		w:    w,
-		pal:  newPalette(opt.Color),
-		verb: opt.Verbosity,
+		w:          w,
+		pal:        newPalette(opt.Color),
+		verb:       opt.Verbosity,
+		timestamps: opt.Timestamps,
 	}
+}
+
+// writeTimestampPrefix writes a `[HH:MM:SS.mmm] ` prefix to the
+// reporter's output when Timestamps is enabled and the event has a
+// non-zero Time. Used by step-log, sidecar-log, and debug branches
+// to give every "live" line a wall-clock anchor.
+func (p *prettySink) writeTimestampPrefix(e Event) {
+	if !p.timestamps || e.Time.IsZero() {
+		return
+	}
+	fmt.Fprintf(p.w, "[%s] ", e.Time.UTC().Format("15:04:05.000"))
 }
 
 func (p *prettySink) Emit(e Event) {
@@ -93,6 +111,7 @@ func (p *prettySink) Emit(e Event) {
 		// Stream every log line in arrival order. The task/step prefix lets the
 		// user disambiguate parallel tasks; the bar separator keeps the line
 		// itself unindented so copy-paste of error messages is clean.
+		p.writeTimestampPrefix(e)
 		prefix := prefixOf(e.Task, labelOf(e.Step, e.DisplayName))
 		stream := ""
 		if e.Stream == "stderr" {
@@ -116,6 +135,7 @@ func (p *prettySink) Emit(e Event) {
 		// prefix); ":" separates task and sidecar name (steps use "/")
 		// so mixed step + sidecar logs are visually attributable at a
 		// glance.
+		p.writeTimestampPrefix(e)
 		stream := " "
 		if e.Stream == "sidecar-stderr" {
 			stream = p.pal.wrap(p.pal.yellow, "!")
@@ -273,6 +293,7 @@ func (p *prettySink) Emit(e Event) {
 		// Render as: `  [debug] component=<c> k=v k=v — msg`.
 		// Indented to align with step-log output. Fields render in
 		// sorted key order so the line is deterministic across runs.
+		p.writeTimestampPrefix(e)
 		var sb strings.Builder
 		sb.WriteString("  ")
 		sb.WriteString(p.pal.wrap(p.pal.gray, "[debug]"))

@@ -392,7 +392,11 @@ func buildReporter(out io.Writer) (reporter.Reporter, error) {
 	case gf.verbose:
 		verb = reporter.Verbose
 	}
-	return reporter.NewPretty(out, reporter.PrettyOptions{Color: color, Verbosity: verb}), nil
+	return reporter.NewPretty(out, reporter.PrettyOptions{
+		Color:      color,
+		Verbosity:  verb,
+		Timestamps: gf.timestamps,
+	}), nil
 }
 
 // buildVolumeStores assembles the configMap / secret stores from the
