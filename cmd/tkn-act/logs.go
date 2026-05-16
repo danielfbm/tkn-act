@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/danielfbm/tkn-act/internal/exitcode"
+	"github.com/danielfbm/tkn-act/internal/reporter"
 	"github.com/danielfbm/tkn-act/internal/runstore"
 	"github.com/spf13/cobra"
 )
@@ -85,6 +86,11 @@ func runLogs(w io.Writer, id string) error {
 	if err != nil {
 		return exitcode.Wrap(exitcode.Usage, err)
 	}
+	// Reapply --task/--step filters on the replay output. The
+	// recorded events.jsonl is full-fidelity, so the filter narrows
+	// what the user sees this invocation without re-encoding the
+	// underlying stream.
+	rep = reporter.NewFilter(rep, gf.taskFilter, gf.stepFilter)
 	defer rep.Close()
 	eventsPath := filepath.Join(store.RunDir(entry), "events.jsonl")
 	if err := runstore.Replay(eventsPath, rep); err != nil {

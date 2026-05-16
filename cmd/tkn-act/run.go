@@ -199,6 +199,11 @@ func runWith(rf runFlags) (retErr error) {
 	if err != nil {
 		return exitcode.Wrap(exitcode.Usage, err)
 	}
+	// Wrap the live reporter with --task/--step filters so the user-
+	// facing output is narrowed, but the persist sink (attached
+	// further down) stays full-fidelity. Replay via `tkn-act logs`
+	// can then reapply any filter against the recorded stream.
+	liveRep = reporter.NewFilter(liveRep, gf.taskFilter, gf.stepFilter)
 
 	// Build backend.
 	var be backend.Backend
