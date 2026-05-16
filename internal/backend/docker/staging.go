@@ -106,7 +106,7 @@ func (b *Backend) startRemoteStaging(ctx context.Context, runID string, workspac
 		return fmt.Errorf("create stage volume %q: %w", b.volName, vErr)
 	}
 	b.volumeCreated = true
-	b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+	b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
 		return "volume created", map[string]any{"name": b.volName, "purpose": "stage"}
 	})
 
@@ -133,7 +133,7 @@ func (b *Backend) startRemoteStaging(ctx context.Context, runID string, workspac
 	if sErr := b.cli.ContainerStart(ctx, b.stagerID, container.StartOptions{}); sErr != nil {
 		return fmt.Errorf("start stager %q: %w", stagerName, sErr)
 	}
-	b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+	b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
 		return "stager started", map[string]any{
 			"id":         shortID(b.stagerID),
 			"name":       stagerName,
@@ -314,7 +314,7 @@ func (b *Backend) stopRemoteStaging() error {
 			captureErr(fmt.Errorf("remove stager: %w", err))
 		}
 		b.stagerID = ""
-		b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+		b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
 			return "stager stopped", map[string]any{"id": shortID(stoppedID)}
 		})
 	}

@@ -10,6 +10,76 @@ import (
 	"github.com/danielfbm/tkn-act/internal/reporter"
 )
 
+// TestParamsResolved_RedactsSecretLikeNames: param values whose name
+// matches the secret-like patterns must be replaced with <redacted>
+// in the "params resolved" debug event so events.jsonl doesn't
+// archive credentials.
+func TestParamsResolved_RedactsSecretLikeNames(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  params:
+    - {name: GITHUB_TOKEN}
+    - {name: API_KEY}
+    - {name: USER_PASSWORD}
+    - {name: REGION}
+  steps: [{name: s, image: alpine, script: 'true'}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  params:
+    - {name: GITHUB_TOKEN, default: "ghp_supersecret_1234567890"}
+    - {name: API_KEY, default: "AKIA_supersecret"}
+    - {name: USER_PASSWORD, default: "hunter2"}
+    - {name: REGION, default: "us-west-2"}
+  tasks:
+    - name: a
+      taskRef: {name: t}
+      params:
+        - {name: GITHUB_TOKEN, value: "$(params.GITHUB_TOKEN)"}
+        - {name: API_KEY, value: "$(params.API_KEY)"}
+        - {name: USER_PASSWORD, value: "$(params.USER_PASSWORD)"}
+        - {name: REGION, value: "$(params.REGION)"}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	be := &captureBackend{}
+	sink := &sliceSink{}
+	dbg := debug.New(sink, true)
+	_, err = engine.New(be, sink, engine.Options{Debug: dbg}).
+		RunPipeline(context.Background(), engine.PipelineInput{Bundle: b, Name: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, ev := range sink.events {
+		if ev.Kind != reporter.EvtDebug || ev.Message != "params resolved" {
+			continue
+		}
+		found = true
+		preview, ok := ev.Fields["truncated_values"].(map[string]string)
+		if !ok {
+			t.Fatalf("truncated_values is not map[string]string: %T", ev.Fields["truncated_values"])
+		}
+		for _, secretKey := range []string{"GITHUB_TOKEN", "API_KEY", "USER_PASSWORD"} {
+			if v := preview[secretKey]; v != "<redacted>" {
+				t.Errorf("%s leaked through: got %q, want <redacted>", secretKey, v)
+			}
+		}
+		if v := preview["REGION"]; v != "us-west-2" {
+			t.Errorf("REGION redacted unexpectedly: %q", v)
+		}
+	}
+	if !found {
+		t.Fatal("never saw a 'params resolved' debug event")
+	}
+}
+
 // TestEngine_EmitsTaskReadyDebugEvent: with a non-Nop debug emitter,
 // the engine fires a "task ready" event for each PipelineTask it
 // dispatches. Uses the sliceSink as both Reporter and indirect debug

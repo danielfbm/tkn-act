@@ -235,4 +235,3 @@ func (t *Tee) Close() error {
 	}
 	return first
 }
-

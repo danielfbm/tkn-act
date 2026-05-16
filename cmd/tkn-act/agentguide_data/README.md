@@ -105,10 +105,14 @@ Use this to construct correct invocations without scraping `--help` text.
 
 Streams one JSON object per line on stdout, one event per line. Event kinds:
 `run-start`, `run-end`, `task-start`, `task-end`, `task-skip`, `task-retry`,
-`step-start`, `step-end`, `step-log`, `error`, `resolver-start`, `resolver-end`.
+`step-start`, `step-end`, `step-log`, `error`, `resolver-start`, `resolver-end`,
+`sidecar-start`, `sidecar-end`, `sidecar-log`, `debug`.
 The two `resolver-*` kinds (Track 1 #9 Phase 1) are additive — agents that
 don't recognize them ignore them. `task-retry` fires between
 attempts of a retried task; the terminal `task-end` carries `attempt: N`.
+`debug` events only appear with `--debug` set; they carry `component`
+(`backend`/`resolver`/`engine`) and a `fields` map — see
+[`debug.md`](debug.md) for the full enumeration.
 Task statuses: `succeeded`, `failed`, `infrafailed`, `skipped`, `not-run`,
 `timeout`. The exit code follows the table below.
 

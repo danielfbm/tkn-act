@@ -71,7 +71,7 @@ func (e *Engine) runOneWithPolicy(
 				return "task retry", map[string]any{
 					"task":    pt.Name,
 					"attempt": currentAttempt,
-					"of":      totalAttempts,
+					"total":   totalAttempts,
 					"reason":  ocStatus,
 					"message": truncate(ocMessage, 64),
 				}

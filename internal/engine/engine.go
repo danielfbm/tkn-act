@@ -451,15 +451,25 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 	// keys and a truncated peek at each value. Useful diagnostic when
 	// $(...) substitution surfaces a surprise upstream — and cheap when
 	// disabled because the build closure short-circuits.
+	//
+	// Param values whose key name matches the secret-like pattern
+	// (secret|token|password|key|credential|auth) are redacted to
+	// `<redacted>` so `--debug -o json > events.jsonl` doesn't
+	// archive credentials. The check is intentionally over-cautious
+	// — false positives are harmless; a missed exposure is not.
 	e.dbg.Emit(debug.Engine, func() (string, map[string]any) {
 		preview := make(map[string]string, len(rctx.Params))
 		for k, v := range rctx.Params {
+			if looksLikeSecretName(k) {
+				preview[k] = "<redacted>"
+				continue
+			}
 			preview[k] = truncate(v, 64)
 		}
 		return "params resolved", map[string]any{
-			"task":              pt.Name,
-			"count":             len(rctx.Params),
-			"truncated_values":  preview,
+			"task":             pt.Name,
+			"count":            len(rctx.Params),
+			"truncated_values": preview,
 		}
 	})
 
@@ -469,19 +479,33 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		return TaskOutcome{Status: "failed", Message: err.Error()}
 	}
 	if !pass {
-		// "task skipped" debug event carries the unevaluated when
-		// expression alongside the reason — agents can correlate which
-		// clause refused without re-parsing the message string.
+		// "task skipped" debug event carries:
+		//   - expression: the raw `pt.When` (pre-substitution); useful
+		//     when the user wants to grep for clauses by literal value.
+		//   - evaluated:  the post-substitution form (the reason
+		//     string from evaluateWhen). Agents that don't want to
+		//     do their own substitution can read this directly.
+		//   - reason:     short human label ("in mismatch" / "notin
+		//     match") matching what surfaces in the EvtTaskSkip message.
+		// Matrix-fanned skips also include matrix_row so N expansions
+		// of the same parent task don't produce N identical events.
 		e.dbg.Emit(debug.Engine, func() (string, map[string]any) {
 			expr := ""
 			if len(pt.When) > 0 {
 				expr = fmt.Sprintf("%v", pt.When)
 			}
-			return "task skipped", map[string]any{
+			fields := map[string]any{
 				"task":       pt.Name,
 				"reason":     reason,
 				"expression": truncate(expr, 64),
+				"evaluated":  truncate(reason, 64),
 			}
+			if pt.MatrixInfo != nil {
+				fields["matrix_row"] = pt.MatrixInfo.Index
+				fields["matrix_of"] = pt.MatrixInfo.Of
+				fields["matrix_parent"] = pt.MatrixInfo.Parent
+			}
+			return "task skipped", fields
 		})
 		// For matrix-fanned tasks, the *expansion-name* skip is
 		// emitted by the caller (RunPipeline's eg.Go closure) so
@@ -1071,4 +1095,34 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return string(rs[:max-1]) + "…"
+}
+
+// secretNamePatterns is the case-insensitive substring set that
+// triggers redaction in the "params resolved" debug event. Matches
+// the most common credential-bearing param-name conventions
+// across Tekton catalogs. Adding a new pattern requires a
+// corresponding test in TestLooksLikeSecretName.
+var secretNamePatterns = []string{
+	"secret",
+	"token",
+	"password",
+	"passwd",
+	"key",
+	"credential",
+	"auth",
+}
+
+// looksLikeSecretName returns true when name appears to identify a
+// secret-bearing param (case-insensitive substring match against
+// secretNamePatterns). False positives are harmless — they only
+// suppress the value in a debug trace; the engine still substitutes
+// the real value into the resolved task.
+func looksLikeSecretName(name string) bool {
+	lower := strings.ToLower(name)
+	for _, p := range secretNamePatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
 }

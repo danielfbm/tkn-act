@@ -45,7 +45,7 @@ func (b *Backend) RunPipeline(ctx context.Context, in backend.PipelineRunInvocat
 	if err != nil {
 		return backend.PipelineRunResult{}, fmt.Errorf("create PipelineRun: %w", err)
 	}
-	b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+	b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
 		return "pipelinerun applied", map[string]any{
 			"name":      created.GetName(),
 			"namespace": ns,
@@ -844,10 +844,10 @@ func (b *Backend) streamAllTaskRunLogs(ctx context.Context, in backend.PipelineR
 		trName := un.GetName()
 		if !taskRunsSeen[trName] {
 			taskRunsSeen[trName] = true
-			b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+			b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
 				return "taskrun seen", map[string]any{
-					"name":         trName,
-					"pipelineTask": taskName,
+					"name":          trName,
+					"pipeline_task": taskName,
 				}
 			})
 		}
@@ -859,11 +859,11 @@ func (b *Backend) streamAllTaskRunLogs(ctx context.Context, in backend.PipelineR
 			continue
 		}
 		streamed[podName] = true
-		b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+		b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
 			return "pod attached", map[string]any{
-				"pod":          podName,
-				"taskrun":      trName,
-				"pipelineTask": taskName,
+				"pod":           podName,
+				"taskrun":       trName,
+				"pipeline_task": taskName,
 			}
 		})
 		go b.streamPodLogs(ctx, in, ns, podName, taskName)

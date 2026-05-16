@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/danielfbm/tkn-act/internal/backend"
@@ -44,9 +45,27 @@ type ClientBundle struct {
 type Backend struct {
 	opt    Options
 	client ClientBundle
-	// dbg is the debug emitter. Always non-nil after construction;
-	// engine replaces it via SetDebug at run-start when --debug is on.
-	dbg debug.Emitter
+	// dbgVal stores the current debug.Emitter. atomic.Pointer keeps
+	// concurrent log-stream goroutines race-free with a late SetDebug.
+	// Seeded with a Nop by every constructor below.
+	dbgVal atomic.Pointer[debug.Emitter]
+}
+
+// dbg returns the current debug emitter; never nil. Backed by an
+// atomic pointer so reads happen-before the next SetDebug write.
+func (b *Backend) dbg() debug.Emitter {
+	if e := b.dbgVal.Load(); e != nil {
+		return *e
+	}
+	return debug.Nop()
+}
+
+// withNopDebug seeds the debug emitter to a Nop so emit sites can
+// dereference unconditionally. Called by every constructor.
+func (b *Backend) withNopDebug() *Backend {
+	nop := debug.Nop()
+	b.dbgVal.Store(&nop)
+	return b
 }
 
 // New is the production constructor: it does not connect — Prepare lazily
@@ -61,29 +80,28 @@ func New(opt Options) *Backend {
 	if opt.TektonVersion == "" {
 		opt.TektonVersion = tekton.DefaultTektonVersion
 	}
-	return &Backend{opt: opt, dbg: debug.Nop()}
+	return (&Backend{opt: opt}).withNopDebug()
 }
 
 // NewWithClients is a test constructor that injects a pre-built ClientBundle.
 func NewWithClients(cb ClientBundle) *Backend {
-	return &Backend{client: cb, dbg: debug.Nop()}
+	return (&Backend{client: cb}).withNopDebug()
 }
 
 // NewWithClientsAndStores is the same, plus the configMap/secret stores
 // the volumes-apply path needs. Production code uses New + Options.
 func NewWithClientsAndStores(cb ClientBundle, cm, sec *volumes.Store) *Backend {
-	return &Backend{client: cb, opt: Options{ConfigMaps: cm, Secrets: sec}, dbg: debug.Nop()}
+	return (&Backend{client: cb, opt: Options{ConfigMaps: cm, Secrets: sec}}).withNopDebug()
 }
 
 // SetDebug installs the debug emitter. Called by the engine at
 // run-start; pre-set to a Nop emitter so emit sites can call
-// b.dbg.Emit unconditionally.
+// b.dbg().Emit unconditionally. Race-safe with concurrent reads.
 func (b *Backend) SetDebug(d debug.Emitter) {
 	if d == nil {
-		b.dbg = debug.Nop()
-		return
+		d = debug.Nop()
 	}
-	b.dbg = d
+	b.dbgVal.Store(&d)
 }
 
 // ApplyVolumeSourcesForTest re-exposes the package-private apply path so

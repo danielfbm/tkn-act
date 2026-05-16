@@ -16,17 +16,26 @@ type recordingReporter struct {
 func (r *recordingReporter) Emit(e reporter.Event) { r.events = append(r.events, e) }
 func (r *recordingReporter) Close() error          { return nil }
 
+// newTestBackend returns a *Backend with the dbg field seeded to a
+// Nop emitter — mirrors New() without spinning up a daemon.
+func newTestBackend() *Backend {
+	b := &Backend{}
+	nop := debug.Nop()
+	b.dbgVal.Store(&nop)
+	return b
+}
+
 // TestSetDebug_ReplacesEmitter: the engine wires a live emitter
 // post-construction via SetDebug. Confirm that emitting through the
 // new emitter actually lands on the reporter.
 func TestSetDebug_ReplacesEmitter(t *testing.T) {
-	b := &Backend{dbg: debug.Nop()}
-	if b.dbg == nil {
-		t.Fatal("dbg should default to Nop, not nil")
+	b := newTestBackend()
+	if b.dbg() == nil {
+		t.Fatal("b.dbg() returned nil before SetDebug")
 	}
 	rep := &recordingReporter{}
 	b.SetDebug(debug.New(rep, true))
-	b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+	b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
 		return "test", map[string]any{"k": "v"}
 	})
 	if len(rep.events) != 1 {
@@ -43,14 +52,14 @@ func TestSetDebug_ReplacesEmitter(t *testing.T) {
 // TestSetDebug_NilFallsBackToNop: SetDebug(nil) should not panic and
 // must leave a Nop emitter in place so emit sites stay safe.
 func TestSetDebug_NilFallsBackToNop(t *testing.T) {
-	b := &Backend{dbg: debug.Nop()}
+	b := newTestBackend()
 	b.SetDebug(nil)
-	if b.dbg == nil {
-		t.Fatal("dbg became nil after SetDebug(nil)")
+	if b.dbg() == nil {
+		t.Fatal("b.dbg() returned nil after SetDebug(nil)")
 	}
 	// Emitting on the Nop must not panic and must produce no events.
 	rep := &recordingReporter{}
-	b.dbg.Emit(debug.Backend, func() (string, map[string]any) {
+	b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
 		// The Nop must NOT invoke the build closure.
 		t.Errorf("closure invoked on Nop emitter")
 		return "x", nil
@@ -58,6 +67,29 @@ func TestSetDebug_NilFallsBackToNop(t *testing.T) {
 	if len(rep.events) != 0 {
 		t.Errorf("Nop emitted %d events", len(rep.events))
 	}
+}
+
+// TestSetDebug_ConcurrentSwap: SetDebug racing with concurrent emit
+// reads must be safe (atomic.Pointer-backed). `go test -race` is the
+// real check.
+func TestSetDebug_ConcurrentSwap(t *testing.T) {
+	b := newTestBackend()
+	rep := &recordingReporter{}
+	b.SetDebug(debug.New(rep, true))
+
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 200; i++ {
+			b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
+				return "tick", nil
+			})
+		}
+		close(done)
+	}()
+	for i := 0; i < 50; i++ {
+		b.SetDebug(debug.New(rep, true))
+	}
+	<-done
 }
 
 // TestShortID: truncates docker IDs to 12 chars, matches docker CLI.
