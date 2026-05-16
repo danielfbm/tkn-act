@@ -148,5 +148,6 @@ Designed for both humans and AI agents:
 	cmd.AddCommand(newAgentGuideCmd())
 	cmd.AddCommand(newCacheCmd())
 	cmd.AddCommand(newLogsCmd())
+	cmd.AddCommand(newRunsCmd())
 	return cmd
 }
