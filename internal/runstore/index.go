@@ -186,6 +186,14 @@ func (i *Index) All() []IndexEntry {
 	return out
 }
 
+// replaceEntries replaces the entries slice (in-memory) and flushes
+// to disk. Used by retention GC to remove pruned rows in bulk under
+// the existing flock.
+func (i *Index) replaceEntries(entries []IndexEntry) error {
+	i.data.Entries = entries
+	return i.flush()
+}
+
 // flush atomically rewrites index.json: encode into a temp file in the
 // same directory, fsync it, then rename onto the canonical name. The
 // flock on i.f (held since OpenIndex) ensures only one writer races.
