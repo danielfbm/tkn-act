@@ -197,6 +197,83 @@ func TestSetupRunPersistence_FailSoftWhenStateDirBad(t *testing.T) {
 	}
 }
 
+func TestRetentionOpts_Defaults(t *testing.T) {
+	t.Setenv("TKN_ACT_KEEP_RUNS", "")
+	t.Setenv("TKN_ACT_KEEP_DAYS", "")
+	opts := retentionOpts()
+	if opts.KeepRuns != 50 || opts.KeepDays != 30 {
+		t.Errorf("defaults: got KeepRuns=%d KeepDays=%d, want 50/30", opts.KeepRuns, opts.KeepDays)
+	}
+}
+
+func TestRetentionOpts_EnvOverrides(t *testing.T) {
+	t.Setenv("TKN_ACT_KEEP_RUNS", "5")
+	t.Setenv("TKN_ACT_KEEP_DAYS", "7")
+	opts := retentionOpts()
+	if opts.KeepRuns != 5 || opts.KeepDays != 7 {
+		t.Errorf("env overrides: got KeepRuns=%d KeepDays=%d, want 5/7", opts.KeepRuns, opts.KeepDays)
+	}
+}
+
+func TestRetentionOpts_EnvUnparseableFallsBack(t *testing.T) {
+	t.Setenv("TKN_ACT_KEEP_RUNS", "not-a-number")
+	t.Setenv("TKN_ACT_KEEP_DAYS", "0")
+	opts := retentionOpts()
+	if opts.KeepRuns != 50 {
+		t.Errorf("unparseable falls back to default; got %d", opts.KeepRuns)
+	}
+	if opts.KeepDays != 0 {
+		t.Errorf("0 should disable; got %d", opts.KeepDays)
+	}
+}
+
+func TestEnvInt(t *testing.T) {
+	t.Setenv("TKN_ACT_TEST_X", "42")
+	if got := envInt("TKN_ACT_TEST_X", 1); got != 42 {
+		t.Errorf("envInt parse: got %d, want 42", got)
+	}
+	t.Setenv("TKN_ACT_TEST_X", "")
+	if got := envInt("TKN_ACT_TEST_X", 1); got != 1 {
+		t.Errorf("envInt empty: got %d, want default 1", got)
+	}
+	t.Setenv("TKN_ACT_TEST_X", "abc")
+	if got := envInt("TKN_ACT_TEST_X", 7); got != 7 {
+		t.Errorf("envInt bad: got %d, want default 7", got)
+	}
+}
+
+func TestOpenRunRecord_PrunesBeforeCreatingNewRun(t *testing.T) {
+	// Pre-populate the store with 5 finalized runs, then call
+	// openRunRecord with TKN_ACT_KEEP_RUNS=2. The pre-call pruning
+	// should drop 3 of the existing runs; openRunRecord then adds
+	// a 6th seq, but on disk only 3 dirs remain (2 survivors + the
+	// new one).
+	dir := t.TempDir()
+	pre, err := runstore.Open(dir, "test")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		r, _ := pre.NewRun(time.Unix(int64(1_700_000_000+i), 0), "p", nil)
+		r.Finalize(time.Unix(int64(1_700_000_000+i)+1, 0), 0, "succeeded")
+	}
+
+	t.Setenv("TKN_ACT_KEEP_RUNS", "2")
+	t.Setenv("TKN_ACT_KEEP_DAYS", "0")
+	var warn bytes.Buffer
+	r := openRunRecord(&warn, dir, "p", nil)
+	if r == nil {
+		t.Fatalf("openRunRecord returned nil; warnings=%q", warn.String())
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "runs"))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Errorf("dirs = %d, want 3 (2 survivors + new)", len(entries))
+	}
+}
+
 func TestSetupRunPersistence_PropagatesFailure(t *testing.T) {
 	dir := t.TempDir()
 	var warn bytes.Buffer

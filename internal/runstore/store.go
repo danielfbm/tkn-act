@@ -37,9 +37,6 @@ func OpenReadOnly(dir string) (*Store, error) {
 	return &Store{dir: dir}, nil
 }
 
-// Dir returns the state-dir root.
-func (s *Store) Dir() string { return s.dir }
-
 // Run is an in-progress (or finalized) run record.
 type Run struct {
 	ID    RunID

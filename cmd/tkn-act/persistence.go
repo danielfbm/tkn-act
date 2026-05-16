@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/danielfbm/tkn-act/internal/exitcode"
@@ -14,11 +16,20 @@ import (
 // record for the named pipeline. Both operations are fail-soft: any
 // error is reported to warnSink as a single warning line and nil is
 // returned, leaving the caller to proceed without persistence.
+//
+// Auto-GC: before creating the new run, we prune older runs per the
+// retention policy (defaults: keep 50 runs AND drop those older than
+// 30 days). The intersection semantics are spec-mandated. Overrides
+// via TKN_ACT_KEEP_RUNS / TKN_ACT_KEEP_DAYS env vars; set either to
+// "0" to disable that gate. Prune errors are themselves fail-soft.
 func openRunRecord(warnSink io.Writer, stateDir, pipelineName string, args []string) *runstore.Run {
 	store, err := runstore.Open(stateDir, version)
 	if err != nil {
 		fmt.Fprintf(warnSink, "warning: state-dir %s: %v (run will not be persisted)\n", stateDir, err)
 		return nil
+	}
+	if _, err := store.Prune(retentionOpts()); err != nil {
+		fmt.Fprintf(warnSink, "warning: retention prune: %v\n", err)
 	}
 	r, err := store.NewRun(time.Now(), pipelineName, args)
 	if err != nil {
@@ -26,6 +37,27 @@ func openRunRecord(warnSink io.Writer, stateDir, pipelineName string, args []str
 		return nil
 	}
 	return r
+}
+
+// retentionOpts builds a PruneOptions from the env-var overrides
+// (TKN_ACT_KEEP_RUNS, TKN_ACT_KEEP_DAYS) and the built-in defaults
+// (50 runs, 30 days).
+func retentionOpts() runstore.PruneOptions {
+	return runstore.PruneOptions{
+		KeepRuns: envInt("TKN_ACT_KEEP_RUNS", 50),
+		KeepDays: envInt("TKN_ACT_KEEP_DAYS", 30),
+	}
+}
+
+// envInt returns the int value of the named env var, or def when
+// unset or unparseable.
+func envInt(name string, def int) int {
+	if v := os.Getenv(name); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
 }
 
 // finalizeRun records the run's terminal state in meta.json and

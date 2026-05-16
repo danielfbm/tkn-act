@@ -2,6 +2,7 @@ package runstore_test
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -144,6 +145,63 @@ func TestIndex_Update(t *testing.T) {
 	e, _ := idx.BySeq(seq)
 	if e.Status != "succeeded" {
 		t.Errorf("Status = %q, want succeeded", e.Status)
+	}
+}
+
+func TestReadIndexEntries_AbsentReturnsEmpty(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "never-existed")
+	entries, err := runstore.ReadIndexEntries(dir)
+	if err != nil {
+		t.Errorf("absent dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("entries = %d, want 0", len(entries))
+	}
+	if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
+		t.Errorf("ReadIndexEntries created %s as side effect", dir)
+	}
+}
+
+func TestReadIndexEntries_EmptyFileReturnsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.json"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := runstore.ReadIndexEntries(dir)
+	if err != nil {
+		t.Errorf("empty file: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("entries = %d, want 0", len(entries))
+	}
+}
+
+func TestReadIndexEntries_RoundTripFromOpenIndex(t *testing.T) {
+	dir := t.TempDir()
+	idx, _ := runstore.OpenIndex(dir)
+	idx.Append(runstore.IndexEntry{ULID: "01HQYZAB000000000000000001", PipelineRef: "a.yaml"})
+	idx.Append(runstore.IndexEntry{ULID: "01HQYZAB000000000000000002", PipelineRef: "b.yaml"})
+	idx.Close()
+
+	entries, err := runstore.ReadIndexEntries(dir)
+	if err != nil {
+		t.Fatalf("ReadIndexEntries: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("entries = %d, want 2", len(entries))
+	}
+	if entries[1].PipelineRef != "b.yaml" {
+		t.Errorf("second entry pipeline = %q", entries[1].PipelineRef)
+	}
+}
+
+func TestReadIndexEntries_CorruptReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runstore.ReadIndexEntries(dir); err == nil {
+		t.Errorf("want error on corrupt index")
 	}
 }
 

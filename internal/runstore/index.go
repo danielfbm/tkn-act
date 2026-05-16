@@ -186,6 +186,38 @@ func (i *Index) All() []IndexEntry {
 	return out
 }
 
+// ReadIndexEntries returns the index.json entries without taking a
+// lock or creating any files. Used by read-only commands like
+// `tkn-act runs list` that mustn't touch the state-dir as a side
+// effect. Returns an empty slice (not an error) when index.json is
+// absent — "no runs recorded yet" is a valid state.
+func ReadIndexEntries(stateDir string) ([]IndexEntry, error) {
+	path := filepath.Join(stateDir, "index.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read index: %w", err)
+	}
+	if len(data) == 0 {
+		return nil, nil
+	}
+	var f indexFile
+	if err := json.Unmarshal(data, &f); err != nil {
+		return nil, fmt.Errorf("decode index: %w", err)
+	}
+	return f.Entries, nil
+}
+
+// replaceEntries replaces the entries slice (in-memory) and flushes
+// to disk. Used by retention GC to remove pruned rows in bulk under
+// the existing flock.
+func (i *Index) replaceEntries(entries []IndexEntry) error {
+	i.data.Entries = entries
+	return i.flush()
+}
+
 // flush atomically rewrites index.json: encode into a temp file in the
 // same directory, fsync it, then rename onto the canonical name. The
 // flock on i.f (held since OpenIndex) ensures only one writer races.
