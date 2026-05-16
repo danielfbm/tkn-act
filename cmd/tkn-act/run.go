@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/danielfbm/tkn-act/internal/backend"
 	clusterbe "github.com/danielfbm/tkn-act/internal/backend/cluster"
@@ -136,29 +135,6 @@ func runWith(rf runFlags) (retErr error) {
 		return exitcode.Wrap(exitcode.Validate, fmt.Errorf("%d validation error(s)", len(errs)))
 	}
 
-	// Record this run on disk so `tkn-act logs` can replay it later.
-	// Persistence is fail-soft: if the state-dir is unwritable we print
-	// a one-line warning and continue. `run` is nil in that case and
-	// the rest of this function behaves exactly as before.
-	var run *runstore.Run
-	stateDir := runstore.ResolveStateDir(gf.stateDir)
-	if store, err := runstore.Open(stateDir, version); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: state-dir %s: %v (run will not be persisted)\n", stateDir, err)
-	} else if r, err := store.NewRun(time.Now(), pipe, os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not record run: %v (run will not be persisted)\n", err)
-	} else {
-		run = r
-		defer func() {
-			status := "succeeded"
-			code := 0
-			if retErr != nil {
-				code = exitcode.From(retErr)
-				status = "failed"
-			}
-			_ = run.Finalize(time.Now(), code, status)
-		}()
-	}
-
 	// Parse params.
 	paramsMap := map[string]tektontypes.ParamValue{}
 	for _, kv := range rf.params {
@@ -214,25 +190,15 @@ func runWith(rf runFlags) (retErr error) {
 		return volumes.MaterializeForTask(taskName, vs, volBase, cmStore, secStore)
 	}
 
-	// Build reporter. When the run is being persisted, fan out events
-	// to the persist sink under a Tee so events.jsonl is byte-identical
-	// to `-o json` stdout.
+	// Build reporter. setupRunPersistence opens the run-store and
+	// fans events into a persist sink under a Tee so a future
+	// `tkn-act logs` can replay this run; both steps are fail-soft.
 	liveRep, err := buildReporter(os.Stdout)
 	if err != nil {
 		return exitcode.Wrap(exitcode.Usage, err)
 	}
-	rep := liveRep
-	if run != nil {
-		if persistRep, err := reporter.NewPersistSink(run.EventsPath()); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: open events file: %v (run will not be persisted)\n", err)
-		} else {
-			rep = reporter.NewTee(liveRep, persistRep)
-			// Close before Finalize (which is deferred earlier) so the
-			// persist sink's bufio writer is flushed and events.jsonl is
-			// complete on disk before meta.json's end_at lands.
-			defer rep.Close()
-		}
-	}
+	rep, cleanup := setupRunPersistence(os.Stderr, runstore.ResolveStateDir(gf.stateDir), pipe, os.Args[1:], liveRep)
+	defer func() { cleanup(retErr) }()
 
 	// Build backend.
 	var be backend.Backend
