@@ -1,6 +1,6 @@
 # Tekton feature parity
 
-Last updated: 2026-05-15 (docker backend gained remote-daemon support — `ssh://` / `tcp://` `DOCKER_HOST`, `--docker-host`, per-run volume staging — in v1.7; see [`docs/agent-guide/docker-backend.md`](agent-guide/docker-backend.md)).
+Last updated: 2026-05-16 (logs-and-debug rollout: `tkn-act logs` replay, `tkn-act runs list/show/prune`, functional `--debug` with new `debug` event kind, `--timestamps` / `--task` / `--step` live filters; CLI UX additions, no new Tekton feature rows; see [`docs/agent-guide/logs.md`](agent-guide/logs.md), [`docs/agent-guide/debug.md`](agent-guide/debug.md), [`docs/agent-guide/live-output.md`](agent-guide/live-output.md)).
 
 This document is the **canonical scoreboard** for what `tkn-act` does and
 doesn't support from upstream Tekton, and what proves it. It's read by
