@@ -79,7 +79,7 @@ exposes the SHA the clone task checked out.
 
 | Param | Default | Notes |
 |---|---|---|
-| `golangci-lint-version` | `v1.64.8` | `go install`-compatible version selector. |
+| `golangci-lint-version` | `v2.12.2` | `go install`-compatible version selector. |
 
 ## Notes / gotchas
 
