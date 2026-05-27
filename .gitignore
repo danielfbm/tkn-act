@@ -1,6 +1,7 @@
 # Binaries
 /tkn-act
 /dist/
+/bin
 
 # Test outputs
 /coverage.out

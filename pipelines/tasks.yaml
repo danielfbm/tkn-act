@@ -1,6 +1,43 @@
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
+  name: go-mod-download
+spec:
+  description: |
+    Run `go mod download` against the default build, plus the integration and cluster
+  params:
+    - name: packages
+      type: string
+      default: "./..."
+    - name: goproxy
+      type: string
+      default: "https://proxy.golang.org,direct"
+      description: "GOPROXY value for module fetches; chain mirrors for restricted networks."
+  workspaces:
+    - name: source
+    - name: cache
+  stepTemplate:
+    image: golang:1.25-alpine
+    workingDir: $(workspaces.source.path)
+    env:
+      - name: GOPROXY
+        value: $(params.goproxy)
+      - name: GOFLAGS
+        value: "-buildvcs=false"
+      - name: GOSUMDB
+        value: "off"
+      - name: GOMODCACHE
+        value: "$(workspaces.cache.path)"
+  steps:
+    - name: download
+      script: |
+        set -eu
+        apk add --no-cache git >/dev/null
+        go mod download
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
   name: go-vet
 spec:
   description: |
@@ -16,6 +53,7 @@ spec:
       description: "GOPROXY value for module fetches; chain mirrors for restricted networks."
   workspaces:
     - name: source
+    - name: cache
   stepTemplate:
     image: golang:1.25-alpine
     workingDir: $(workspaces.source.path)
@@ -26,6 +64,8 @@ spec:
         value: "-buildvcs=false"
       - name: GOSUMDB
         value: "off"
+      - name: GOMODCACHE
+        value: "$(workspaces.cache.path)"
   steps:
     - name: vet-default
       script: |
@@ -56,15 +96,20 @@ spec:
     - name: goproxy
       type: string
       default: "https://proxy.golang.org,direct"
+    - name: version
+      type: string
+      default: "1.25"
   workspaces:
     - name: source
+    - name: cache
+
   results:
     - name: test-count
       type: string
       description: "Number of `=== RUN` test entries observed."
   steps:
     - name: test
-      image: golang:1.25-alpine
+      image: golang:$(params.version)-alpine
       workingDir: $(workspaces.source.path)
       env:
         - name: GOPROXY
@@ -73,6 +118,8 @@ spec:
           value: "-buildvcs=false"
         - name: GOSUMDB
           value: "off"
+        - name: GOMODCACHE
+          value: "$(workspaces.cache.path)"
       script: |
         set -eu
         apk add --no-cache git gcc musl-dev >/dev/null
@@ -103,6 +150,7 @@ spec:
       default: "https://proxy.golang.org,direct"
   workspaces:
     - name: source
+    - name: cache
   results:
     - name: version
       type: string
@@ -124,6 +172,8 @@ spec:
           value: "-buildvcs=false"
         - name: GOSUMDB
           value: "off"
+        - name: GOMODCACHE
+          value: "$(workspaces.cache.path)"
       script: |
         set -eu
         apk add --no-cache git coreutils >/dev/null
@@ -158,6 +208,7 @@ spec:
       default: "v1.64.8"
   workspaces:
     - name: source
+    - name: cache
   results:
     - name: lint-exit
       type: string
@@ -177,6 +228,8 @@ spec:
           value: "0"
         - name: GOLANGCI_LINT_VERSION
           value: $(params.golangci-lint-version)
+        - name: GOMODCACHE
+          value: "$(workspaces.cache.path)"
       script: |
         set -eu
         apk add --no-cache git >/dev/null

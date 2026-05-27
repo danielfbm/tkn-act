@@ -25,8 +25,24 @@ spec:
       description: "GOPROXY value forwarded to every Go-using task."
   workspaces:
     - name: source
+    - name: cache
   tasks:
+    - name: go-mod-download
+      taskRef:
+        name: go-mod-download
+      params:
+        - name: packages
+          value: $(params.packages)
+        - name: goproxy
+          value: $(params.goproxy)
+      workspaces:
+        - name: source
+          workspace: source
+        - name: cache
+          workspace: cache
     - name: go-vet
+      runAfter:
+        - go-mod-download
       taskRef:
         name: go-vet
       params:
@@ -37,9 +53,13 @@ spec:
       workspaces:
         - name: source
           workspace: source
+        - name: cache
+          workspace: cache
     - name: go-test
       taskRef:
         name: go-test
+      runAfter:
+        - go-mod-download
       params:
         - name: packages
           value: $(params.packages)
@@ -48,18 +68,26 @@ spec:
       workspaces:
         - name: source
           workspace: source
+        - name: cache
+          workspace: cache
     - name: go-build
       taskRef:
         name: go-build
+      runAfter:
+        - go-mod-download
       params:
         - name: goproxy
           value: $(params.goproxy)
       workspaces:
         - name: source
           workspace: source
+        - name: cache
+          workspace: cache
     - name: golangci-lint
       taskRef:
         name: golangci-lint
+      runAfter:
+        - go-mod-download
       params:
         - name: packages
           value: $(params.packages)
@@ -68,6 +96,8 @@ spec:
       workspaces:
         - name: source
           workspace: source
+        - name: cache
+          workspace: cache
   results:
     - name: version
       description: "Version string baked into the rebuilt bin/tkn-act."
