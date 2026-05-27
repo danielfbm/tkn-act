@@ -69,12 +69,36 @@ jobs:
           # The dispatch input wins; otherwise default to the full set.
           PACKAGES: ${{ github.event.inputs.packages || './...' }}
         run: |
+          # Capture the full JSON stream for the machine assertions below.
+          # Disable -e around the run so a pipeline failure still lets the
+          # human-readable replay step (below, if: always()) surface logs.
+          set +e
           ./bin/tkn-act run \
             -f pipelines/tasks.yaml -f pipelines/ci-workspace.yaml \
             -w "source=$(pwd)" \
             --param "packages=${PACKAGES}" \
             -o json > /tmp/self-build.jsonl
-          echo "exit=$?"
+          status=$?
+          echo "exit=$status"
+          echo "RUN_EXIT=$status" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: show pipeline logs (human-readable)
+        if: always()
+        # Re-stream the just-recorded run from the run-store in pretty form so
+        # the CI console shows step-by-step logs grouped per task — far easier
+        # to scan on failure than the raw JSONL artifact. The replay is
+        # side-effect-free and never changes the job's pass/fail.
+        run: |
+          echo "::group::ci-workspace replay"
+          ./bin/tkn-act logs latest -o pretty --color always || true
+          echo "::endgroup::"
+
+      - name: fail if the run did not succeed
+        run: |
+          # Re-assert the run exit code captured above; cleared the earlier
+          # set -e only to guarantee the logs step runs first.
+          test "${RUN_EXIT:-1}" = "0"
 
       - name: assert pipeline succeeded with the expected results
         run: |
