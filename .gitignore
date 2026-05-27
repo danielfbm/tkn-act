@@ -1,10 +1,13 @@
 # Binaries
 /tkn-act
 /dist/
+/bin
 
 # Test outputs
 /coverage.out
 /coverage.html
+/coverage/
+/coverage-cluster.txt
 
 # Editor
 .idea/

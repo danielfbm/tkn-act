@@ -71,6 +71,7 @@ spec:
       description: "GOPROXY value forwarded to every Go-using task."
   workspaces:
     - name: source
+    - name: cache
   tasks:
     - name: clone
       taskRef:
@@ -95,6 +96,8 @@ spec:
       workspaces:
         - name: source
           workspace: source
+        - name: cache
+          workspace: cache
     - name: go-test
       taskRef:
         name: go-test
@@ -107,6 +110,8 @@ spec:
       workspaces:
         - name: source
           workspace: source
+        - name: cache
+          workspace: cache
     - name: go-build
       taskRef:
         name: go-build
@@ -117,6 +122,8 @@ spec:
       workspaces:
         - name: source
           workspace: source
+        - name: cache
+          workspace: cache
     - name: golangci-lint
       taskRef:
         name: golangci-lint
@@ -129,6 +136,8 @@ spec:
       workspaces:
         - name: source
           workspace: source
+        - name: cache
+          workspace: cache
   results:
     - name: version
       description: "Version string baked into the rebuilt bin/tkn-act."

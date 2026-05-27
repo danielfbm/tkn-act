@@ -14,7 +14,7 @@ spec:
     - name: emit
       image: alpine:3
       script: |
-        printf "$(params.os)-$(params.arch)" > $(results.tag.path)
+        echo "$(params.os)-$(params.arch)" | tee $(results.tag.path)
 ---
 apiVersion: tekton.dev/v1
 kind: Pipeline

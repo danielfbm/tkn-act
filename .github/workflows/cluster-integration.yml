@@ -57,8 +57,8 @@ jobs:
       KUBECTL_VERSION: v1.31.0
       TKN_ACT_TEKTON_VERSION: ${{ matrix.tekton-version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -82,7 +82,37 @@ jobs:
           ./tkn-act doctor -o json
 
       - name: go test -tags cluster ./internal/clustere2e/...
-        run: go test -tags cluster -count=1 -timeout 25m ./internal/clustere2e/...
+        # -v surfaces per-test harness/controller logs in the CI console for
+        # easier debugging (complements the failure dump below; the step is
+        # already collapsible in the UI). -coverpkg=./... instruments every
+        # package so the cluster backend path is attributed; the profile feeds
+        # the per-version coverage summary below (report-only).
+        run: |
+          go test -v -tags cluster -count=1 -timeout 25m \
+            -coverpkg=./... -coverprofile=coverage-cluster.txt \
+            ./internal/clustere2e/...
+
+      - name: cluster coverage summary
+        if: always()
+        # Report-only: cluster coverage is published per Tekton version to the
+        # job summary, NOT merged into the unit+integration total (that runs on
+        # a separate single-runner workflow). No file ⇒ tests never produced a
+        # profile (early failure); skip quietly.
+        run: |
+          f=coverage-cluster.txt
+          if [ ! -s "$f" ]; then
+            echo "cluster coverage: no profile produced (tests failed early?)" >&2
+            exit 0
+          fi
+          total=$(go tool cover -func="$f" 2>/dev/null | awk '/^total:/{print $NF}')
+          {
+            echo "## Cluster coverage — Tekton ${{ matrix.tekton-version }}"
+            echo
+            echo "**Total: \`${total:-n/a}\`** (statements, \`-tags cluster\`, coverpkg=./...)"
+            echo
+            echo "_Reported separately; not folded into the unit+integration total._"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "cluster coverage total (Tekton ${{ matrix.tekton-version }}) = ${total:-n/a}"
 
       - name: dump cluster state on failure
         if: failure()
@@ -115,6 +145,14 @@ jobs:
                 ;;
             esac
           done
+
+      - name: upload cluster coverage
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-cluster-${{ matrix.tekton-version }}
+          path: coverage-cluster.txt
+          if-no-files-found: ignore
 
       - name: tear down cluster
         if: always()

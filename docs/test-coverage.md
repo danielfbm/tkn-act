@@ -1,6 +1,6 @@
 # Test coverage — what CI runs and what it doesn't
 
-Last updated: 2026-05-16 (post logs-and-debug rollout — `internal/runstore/` covered by unit tests; `internal/reporter/filters.go` + `--task`/`--step`/`--timestamps`/`--debug` reporter paths covered in `internal/reporter/` and `cmd/tkn-act/`).
+Last updated: 2026-05-27 (CI coverage aggregation — `coverage.yml` report workflow + `coverage-report.sh` covdata-merge total; 0.5pp gate tolerance; cluster coverage per matrix leg; action version bumps to Node 24. Post logs-and-debug: `internal/runstore/` covered by unit tests; `internal/reporter/filters.go` + `--task`/`--step`/`--timestamps`/`--debug` reporter paths covered in `internal/reporter/` and `cmd/tkn-act/`).
 
 This document inventories what the GitHub Actions pipelines and the
 test suite cover today, and — equally important — what they do not. It
@@ -11,14 +11,15 @@ behavior I changed is exercised."
 
 ## 1. Workflows
 
-Six workflows live under `.github/workflows/`:
+Seven workflows live under `.github/workflows/`:
 
 | File | When it runs | What it runs |
 |---|---|---|
 | `ci.yml` | every push, every PR | `go vet`, `go build`, `go test -race -count=1 ./...` (untagged), `tkn-act help-json` smoke; matrix: ubuntu-latest + macos-latest. PR-only `tests-required`, `coverage`, `parity-check`, and `agentguide-freshness` jobs. |
 | `docker-integration.yml` | `push` to `main`/`release/**` always; PR only when paths in its filter changed | `go test -tags integration -count=1 -timeout 15m ./internal/e2e/...` on ubuntu-latest. Pre-pulls `alpine:3`. |
 | `remote-docker-integration.yml` | same trigger pattern | Same fixture table as `docker-integration.yml`, but against a `docker:28-dind` service container (`DOCKER_HOST=tcp://localhost:2375`, `TKN_ACT_REMOTE_DOCKER=on`). Exercises the Phase 1–4 remote-daemon path end-to-end (auto-detect → Phase 3 per-run volume staging instead of bind mounts). A regression in the staging path that the local-daemon workflow would silently miss surfaces here because the dind daemon's filesystem can't see the runner's bind sources. `go test -tags integration -count=1 -timeout 20m ./internal/e2e/...`. |
-| `cluster-integration.yml` | same trigger pattern | installs `kubectl` + `k3d`, then `go test -tags cluster -count=1 -timeout 25m ./internal/clustere2e/...` on ubuntu-latest. **Matrix over Tekton LTS versions** (`v1.3.0` + `v1.12.0` as of 2026-05-13); each leg sets `TKN_ACT_TEKTON_VERSION` and runs the full fixture table. `fail-fast: false` so each leg reports independently. Dumps cluster state on failure. |
+| `cluster-integration.yml` | same trigger pattern | installs `kubectl` + `k3d`, then `go test -tags cluster -coverpkg=./... -coverprofile=coverage-cluster.txt -count=1 -timeout 25m ./internal/clustere2e/...` on ubuntu-latest. **Matrix over Tekton LTS versions** (`v1.3.0` + `v1.12.0` as of 2026-05-13); each leg sets `TKN_ACT_TEKTON_VERSION` and runs the full fixture table. `fail-fast: false` so each leg reports independently. Dumps cluster state on failure. Each leg emits a "Cluster coverage (version)" section to the job summary and uploads a `coverage-cluster-<version>` artifact. |
+| `coverage.yml` | every PR + `push` to `main`/`release/**` | Runs `coverage-report.sh` on ubuntu-latest: unit test suite + docker integration suite, merged via `go tool covdata merge` (Go 1.20+ binary coverage). Writes a Markdown total + collapsible per-package table to the job summary. Uploads a `coverage-report` artifact (`coverage.txt`, `coverage.html`, `per-package.txt`). **Report only — not a gate.** |
 | `cli-e2e.yml` | same trigger pattern | builds `tkn-act` and exercises it as a subprocess against `testdata/e2e/` fixtures (no Go-level harness — verifies the binary's actual CLI surface, exit codes, and `-o json` shape). |
 | `cli-self-build.yml` | same trigger pattern | runs `tkn-act` against its own `pipelines/` so the project dog-foods every release. |
 
@@ -38,7 +39,15 @@ The script:
    tags) on both sides and parses the per-package
    `coverage: NN.N% of statements` line emitted by `go test`.
 3. Compares per-package: any package on HEAD whose coverage is lower
-   than on BASE by more than the rounding tolerance (0.1pp) is a drop.
+   than on BASE by more than the measurement-noise tolerance (0.5pp) is
+   a drop.
+
+The tolerance is 0.5pp (not a simple rounding margin) because `go test
+-cover` measurements on goroutine-synchronized packages swing by up to
+0.3pp between CI runs with no code change, driven by goroutine scheduling
+and map iteration order. 0.5pp absorbs this noise without masking a real
+1pp regression (which would correspond to ~5 missed statements on a
+typical 500-statement package).
 
 The job fails if there are any drops, and prints a per-package table
 (BASE, HEAD, DELTA, STATUS) so authors see exactly what regressed. New
@@ -49,8 +58,8 @@ message rather than silently passing as 0%.
 
 The gate runs only on PRs (no base to compare against on push to
 `main`) and only on the default test set — `-tags integration` and
-`-tags cluster` coverage is intentionally not measured, since those
-suites run in their own workflows and would roughly double CI time.
+`-tags cluster` coverage is intentionally not measured here; see the
+"Aggregated coverage report" section below for the full-suite total.
 
 Override per-PR by including the literal token `[skip-coverage-check]`
 in any commit message in the PR (mirrors `tests-required`'s
@@ -58,6 +67,50 @@ in any commit message in the PR (mirrors `tests-required`'s
 changes — a deletion that drops a covered code path along with its
 tests, a refactor that intentionally drops dead code — not as a
 shortcut.
+
+### Aggregated coverage report
+
+`coverage.yml` (report workflow, not a gate) runs on every PR and every
+push to `main`/`release/**`. It invokes `.github/scripts/coverage-report.sh`,
+which computes a merged total using Go 1.20+ binary coverage:
+
+1. **Unit pass:** `go test -coverpkg=./... -count=1 ./...
+   -args -test.gocoverdir=unit-cov/` — the full default test set, same
+   as the gate, but with binary coverage output instead of the text format.
+2. **Integration pass** (skipped when `COVERAGE_INTEGRATION=0`):
+   `go test -tags integration -coverpkg=./...
+   ./internal/e2e/... ./internal/backend/docker/...
+   -args -test.gocoverdir=integration-cov/` — the docker e2e suite. A
+   flaky integration run is best-effort and does NOT fail the report job.
+3. **Merge:** `go tool covdata merge -i unit-cov[,integration-cov]
+   -o merged-cov/` — correctly unions both passes so a statement
+   exercised by either run counts as covered once. This is the key
+   operation that the legacy text-format `go test -cover` output cannot
+   perform safely across build tags.
+4. **Output under `coverage/`:** `coverage.txt` (merged profile),
+   `coverage.html` (HTML browse view), `per-package.txt` (per-package
+   percentages from `go tool covdata percent`).
+5. **Job summary:** total percentage + a collapsible per-package table
+   written to `$GITHUB_STEP_SUMMARY`, visible directly in the GitHub
+   Actions UI without downloading the artifact.
+
+The `coverage-report` artifact (containing the three output files) is
+uploaded on every run by `actions/upload-artifact@v6`.
+
+**Baseline numbers (2026-05-27, unit-only pass):** 72.5% total.
+Lowest packages: `internal/backend/docker` 24.1% (most of docker.go /
+sidecars.go only runs under `-tags integration`), `internal/workspace`
+47.1%, `cmd/tkn-act` 64.5%. Raising these is a separate future PR; these
+numbers are expected to improve when the integration pass is included.
+
+**Cluster coverage** is reported separately: `cluster-integration.yml`
+runs `-coverpkg=./... -coverprofile=coverage-cluster.txt` on each matrix
+leg (one per Tekton LTS version), emits a "Cluster coverage (version)"
+section to the job summary for that leg, and uploads a
+`coverage-cluster-<version>` artifact. Cluster coverage is not merged into
+the `coverage.yml` aggregate because the matrix runs independently and
+merging across legs adds no new information (both legs compile and exercise
+the same Go source).
 
 ### Path scopes (PR-only gates)
 
@@ -197,9 +250,10 @@ In rough order of "you should be aware":
   through.
 - **Coverage reporting (external).** No Codecov / Coveralls upload;
   no historical coverage dashboards. The PR-only `coverage` job in
-  `ci.yml` does enforce a per-package no-drop invariant against the
-  target branch (see "Coverage gate" above), but absolute coverage
-  numbers over time are not tracked anywhere.
+  `ci.yml` enforces a per-package no-drop invariant (see "Coverage gate"
+  above), and `coverage.yml` publishes a per-run total + collapsible
+  per-package table to the job summary and a `coverage-report` artifact,
+  but trends over time are not tracked in an external service.
 - **macOS docker / cluster integration.** macOS runners run only the
   build/vet/unit job (`ci.yml`); the integration workflows are
   ubuntu-only because docker isn't preinstalled on macos runners and
@@ -242,7 +296,7 @@ In rough order of "you should be aware":
 |---|---|
 | `build & test` | `go vet`, `go build`, or any unit test. Fast and local-reproducible: `go test -race ./...`. |
 | `tests-required` | The PR has a Go code change without a `_test.go` change. Either add a test or include `[skip-test-check]` in a commit message. |
-| `coverage no-drop` | A package on HEAD has lower coverage than on BASE by more than 0.1pp. The job log prints a per-package table. Add tests for the affected package(s) or, for genuinely coverage-immune changes, include `[skip-coverage-check]` in a commit message. Reproduce locally: `bash .github/scripts/coverage-check.sh origin/main HEAD`. |
+| `coverage no-drop` | A package on HEAD has lower coverage than on BASE by more than 0.5pp. The job log prints a per-package table. Add tests for the affected package(s) or, for genuinely coverage-immune changes, include `[skip-coverage-check]` in a commit message. Reproduce locally: `bash .github/scripts/coverage-check.sh origin/main HEAD`. |
 | `docker e2e` | An `internal/e2e/` test failed under real Docker. Reproduce locally with `go test -tags integration ./internal/e2e/...`. |
 | `k3d e2e` | The k3d cluster failed to come up, Tekton failed to install, or the cluster fixture failed. The job dumps cluster pod state on failure; check that block in the GitHub Actions log. |
 
