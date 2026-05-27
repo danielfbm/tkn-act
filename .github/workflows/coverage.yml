@@ -1,0 +1,60 @@
+name: coverage
+
+# Produces an aggregated total-coverage number across the test suites CI
+# runs and publishes it as a job summary (visible in the Actions UI) plus an
+# uploaded artifact (merged profile + browsable HTML).
+#
+# The total merges the DEFAULT test set with the `-tags integration` docker
+# suite via Go 1.20+ binary coverage (`go tool covdata`). Integration is what
+# lifts the docker backend (docker.go / sidecars.go) into the measured number
+# — without it the total reads artificially low.
+#
+# This job is a *report*, not a gate: a flaky integration run still yields a
+# number, and the docker-integration / coverage-no-drop workflows remain the
+# correctness gates. See .github/scripts/coverage-report.sh.
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: total coverage (unit + integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: docker info (sanity)
+        run: docker info >/dev/null && echo "docker ok"
+
+      - name: warm image cache
+        # Mirror docker-integration.yml: the integration fixtures run on
+        # alpine:3, and registry.k8s.io/pause:3.9 backs the per-Task netns
+        # owner. Pre-pulling keeps wall time on test work, not registry pulls.
+        run: |
+          docker pull alpine:3
+          docker pull registry.k8s.io/pause:3.9
+
+      - name: compute aggregated coverage
+        # Writes the Markdown summary to $GITHUB_STEP_SUMMARY and the profile /
+        # HTML / per-package table under ./coverage/.
+        run: bash .github/scripts/coverage-report.sh
+
+      - name: upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-report
+          path: coverage/
+          if-no-files-found: warn

@@ -12,7 +12,12 @@
 #     emitted by `go test`, and compares per-package.
 #   - A package on HEAD is a "drop" iff it existed on BASE with measurable
 #     coverage and its HEAD coverage is lower than BASE by more than the
-#     rounding tolerance (0.1%).
+#     noise tolerance (0.5pp). `go test -cover` is not bit-for-bit
+#     deterministic — goroutine scheduling and map iteration flip which
+#     blocks execute, so identical code can swing a few tenths of a point
+#     between runs (observed: 0.3pp on cmd/tkn-act for a no-Go-change PR).
+#     A real regression removes a whole tested path and clears 0.5pp easily;
+#     the headline number lives in coverage-report.sh / the coverage job.
 #   - New packages on HEAD that didn't exist on BASE: skipped (no baseline).
 #   - Packages removed on HEAD: not a drop; ignored.
 #   - Packages with `[no statements]` (no measurable code) are treated as
@@ -45,7 +50,8 @@ if git log --format=%B "$base_ref..$head_ref" 2>/dev/null | grep -qF '[skip-cove
   exit 0
 fi
 
-tolerance="0.1"   # percentage points
+tolerance="0.5"   # percentage points — absorbs go-test coverage measurement
+                  # noise (see header); a real regression clears it easily.
 
 tmpdir=$(mktemp -d -t tkn-act-coverage.XXXXXX)
 trap 'rm -rf "$tmpdir"' EXIT
