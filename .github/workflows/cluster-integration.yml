@@ -82,7 +82,10 @@ jobs:
           ./tkn-act doctor -o json
 
       - name: go test -tags cluster ./internal/clustere2e/...
-        run: go test -tags cluster -count=1 -timeout 25m ./internal/clustere2e/...
+        # -v surfaces per-test harness/controller logs in the CI console for
+        # easier debugging (complements the failure dump below; the step is
+        # already collapsible in the UI).
+        run: go test -v -tags cluster -count=1 -timeout 25m ./internal/clustere2e/...
 
       - name: dump cluster state on failure
         if: failure()

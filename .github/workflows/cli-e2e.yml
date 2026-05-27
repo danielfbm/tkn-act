@@ -102,6 +102,21 @@ jobs:
           test -s /tmp/pretty.log
           grep -q hello-from-tkn-act /tmp/pretty.log
 
+      - name: show pipeline logs (human-readable)
+        if: always()
+        # Every `tkn-act run` above captured -o json to a file for the jq
+        # contract assertions, so the console showed no readable logs — and
+        # under set -e a failing run/assertion aborts before any output. Replay
+        # each recorded run from the run-store in pretty form (collapsible per
+        # run) so step-by-step logs are visible on success and failure. The
+        # replay is side-effect-free and never changes the job's pass/fail.
+        run: |
+          for seq in $(./bin/tkn-act runs list --all -o json 2>/dev/null | jq -r '.[].seq' | sort -n); do
+            echo "::group::run #$seq"
+            ./bin/tkn-act logs "$seq" -o pretty --color always || true
+            echo "::endgroup::"
+          done
+
       - name: upload event streams on failure
         if: failure()
         uses: actions/upload-artifact@v4
