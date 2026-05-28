@@ -221,4 +221,3 @@ spec:
 		t.Errorf("calls = %d, want 1 (timeouts are not retried)", got)
 	}
 }
-

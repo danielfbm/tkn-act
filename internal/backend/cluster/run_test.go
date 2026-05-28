@@ -15,10 +15,10 @@ import (
 // docker engine would for the same outcome.
 func TestMapPipelineRunStatus(t *testing.T) {
 	cases := []struct {
-		name    string
-		status  string
-		reason  string
-		want    string
+		name   string
+		status string
+		reason string
+		want   string
 	}{
 		{"succeeded", "True", "Succeeded", "succeeded"},
 		{"true ignores reason", "True", "PipelineRunTimeout", "succeeded"},

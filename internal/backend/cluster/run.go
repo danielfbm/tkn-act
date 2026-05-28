@@ -437,10 +437,10 @@ func (b *Backend) collectTaskOutcomesWithSink(ctx context.Context, in backend.Pi
 	// Walking TaskRuns in childRefIdx order gives stable indices even
 	// when the List() returns them in arbitrary order.
 	type trWithIndex struct {
-		tr        *unstructured.Unstructured
-		childRef  int // -1 if absent
-		ptName    string
-		hasIndex  bool
+		tr       *unstructured.Unstructured
+		childRef int // -1 if absent
+		ptName   string
+		hasIndex bool
 	}
 	scored := make([]trWithIndex, 0, len(list.Items))
 	for i := range list.Items {

@@ -223,14 +223,14 @@ func TestParseColorMode(t *testing.T) {
 		want    reporter.ColorMode
 		wantErr bool
 	}{
-		"empty":       {"", reporter.ColorAuto, false},
-		"auto":        {"auto", reporter.ColorAuto, false},
-		"AUTO":        {"AUTO", reporter.ColorAuto, false},
-		"always":      {"always", reporter.ColorAlways, false},
-		"never":       {"never", reporter.ColorNever, false},
-		"on alias":    {"on", reporter.ColorAlways, false},
-		"off alias":   {"off", reporter.ColorNever, false},
-		"junk":        {"chartreuse", reporter.ColorAuto, true},
+		"empty":     {"", reporter.ColorAuto, false},
+		"auto":      {"auto", reporter.ColorAuto, false},
+		"AUTO":      {"AUTO", reporter.ColorAuto, false},
+		"always":    {"always", reporter.ColorAlways, false},
+		"never":     {"never", reporter.ColorNever, false},
+		"on alias":  {"on", reporter.ColorAlways, false},
+		"off alias": {"off", reporter.ColorNever, false},
+		"junk":      {"chartreuse", reporter.ColorAuto, true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

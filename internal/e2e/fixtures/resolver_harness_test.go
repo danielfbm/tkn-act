@@ -182,8 +182,8 @@ func TestNewResolverHarnessBundlesPushesAndDispatches(t *testing.T) {
 // layer.
 func TestExtractTektonNameKindFromYAML(t *testing.T) {
 	for _, c := range []struct {
-		body                 string
-		wantName, wantKind   string
+		body               string
+		wantName, wantKind string
 	}{
 		{
 			body:     "apiVersion: tekton.dev/v1\nkind: Task\nmetadata:\n  name: foo\nspec: {}\n",
