@@ -315,7 +315,7 @@ func (p *prettySink) Emit(e Event) {
 			sb.WriteString(e.Message)
 		}
 		sb.WriteByte('\n')
-		p.w.Write([]byte(sb.String()))
+		fmt.Fprint(p.w, sb.String())
 	}
 }
 

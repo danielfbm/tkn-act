@@ -57,7 +57,9 @@ func TestPersistSink_PreservesOrder(t *testing.T) {
 	sc := bufio.NewScanner(f)
 	for i := 0; sc.Scan(); i++ {
 		var ev reporter.Event
-		json.Unmarshal(sc.Bytes(), &ev)
+		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+			t.Fatalf("unmarshal line %d: %v", i, err)
+		}
 		if len(ev.Line) != i {
 			t.Errorf("line %d: got len(Line)=%d", i, len(ev.Line))
 		}
