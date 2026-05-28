@@ -72,7 +72,7 @@ func TestSetDebug_NilFallsBackToNop(t *testing.T) {
 // TestSetDebug_ConcurrentSwap: SetDebug racing with concurrent emit
 // reads must be safe (atomic.Pointer-backed). `go test -race` is the
 // real check.
-func TestSetDebug_ConcurrentSwap(t *testing.T) {
+func TestSetDebug_ConcurrentSwap(_ *testing.T) {
 	b := newTestBackend()
 	rep := &recordingReporter{}
 	b.SetDebug(debug.New(rep, true))

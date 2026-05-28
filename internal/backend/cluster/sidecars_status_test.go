@@ -113,7 +113,7 @@ func TestEmitSidecarTransitionsNonzeroExit(t *testing.T) {
 // helper must not panic when the invocation has no LogSink (the
 // engine guarantees one in production but unit tests may pass
 // PipelineRunInvocation{} fixtures).
-func TestEmitSidecarTransitionsNoLogSink(t *testing.T) {
+func TestEmitSidecarTransitionsNoLogSink(_ *testing.T) {
 	be := &Backend{}
 	tr := &unstructured.Unstructured{Object: map[string]any{
 		"status": map[string]any{

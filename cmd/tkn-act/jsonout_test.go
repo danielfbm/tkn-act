@@ -123,4 +123,3 @@ func TestValidateNoFilesUsageCode(t *testing.T) {
 		t.Errorf("exit code = %d, want %d", got, exitcode.Usage)
 	}
 }
-

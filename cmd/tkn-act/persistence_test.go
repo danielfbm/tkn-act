@@ -256,7 +256,7 @@ func TestOpenRunRecord_PrunesBeforeCreatingNewRun(t *testing.T) {
 	}
 	for i := 0; i < 5; i++ {
 		r, _ := pre.NewRun(time.Unix(int64(1_700_000_000+i), 0), "p", nil)
-		r.Finalize(time.Unix(int64(1_700_000_000+i)+1, 0), 0, "succeeded")
+		_ = r.Finalize(time.Unix(int64(1_700_000_000+i)+1, 0), 0, "succeeded")
 	}
 
 	t.Setenv("TKN_ACT_KEEP_RUNS", "2")

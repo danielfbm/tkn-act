@@ -54,7 +54,7 @@ func TestCluster_SetDebug_NilFallsBackToNop(t *testing.T) {
 // while goroutines are emitting via b.dbg(). go test -race catches
 // any data race; the assertion just makes sure the events ended up
 // somewhere reasonable.
-func TestCluster_SetDebug_ConcurrentSwap(t *testing.T) {
+func TestCluster_SetDebug_ConcurrentSwap(_ *testing.T) {
 	b := New(Options{})
 	rep := &recordingReporter{}
 	b.SetDebug(debug.New(rep, true))

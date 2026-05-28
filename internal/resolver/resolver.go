@@ -1,9 +1,10 @@
 // Package resolver performs Tekton-style variable substitution:
-//   $(params.name)          – scalar param
-//   $(params.obj.key)       – object param key
-//   $(params.arr[*])        – array param expanded into multiple args (only via SubstituteArgs)
-//   $(tasks.X.results.Y)    – named result from a previously-executed task
-//   $(context.taskRun.name) – synthesized context var
+//
+//	$(params.name)          – scalar param
+//	$(params.obj.key)       – object param key
+//	$(params.arr[*])        – array param expanded into multiple args (only via SubstituteArgs)
+//	$(tasks.X.results.Y)    – named result from a previously-executed task
+//	$(context.taskRun.name) – synthesized context var
 //
 // The double-dollar literal `$$` produces a single `$` and is not interpreted.
 package resolver

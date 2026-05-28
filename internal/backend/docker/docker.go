@@ -305,7 +305,7 @@ func (b *Backend) Prepare(ctx context.Context, run backend.RunSpec) error {
 	return nil
 }
 
-func (b *Backend) Cleanup(ctx context.Context) error {
+func (b *Backend) Cleanup(_ context.Context) error {
 	if b.remote {
 		// Best-effort: surface the first failure but always continue
 		// to scriptDir cleanup so a stager teardown error doesn't

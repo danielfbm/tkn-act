@@ -236,10 +236,10 @@ type secretDoc struct {
 func loadSecret(out *Bundle, data []byte) error {
 	var s secretDoc
 	if err := yaml.Unmarshal(data, &s); err != nil {
-		return fmt.Errorf("Secret: %w", err)
+		return fmt.Errorf("secret: %w", err)
 	}
 	if s.Metadata.Name == "" {
-		return fmt.Errorf("Secret: metadata.name is required")
+		return fmt.Errorf("secret: metadata.name is required")
 	}
 	if _, dup := out.Secrets[s.Metadata.Name]; dup {
 		return fmt.Errorf("duplicate Secret %q", s.Metadata.Name)
@@ -248,7 +248,7 @@ func loadSecret(out *Bundle, data []byte) error {
 	for k, v := range s.Data {
 		dec, err := base64.StdEncoding.DecodeString(v)
 		if err != nil {
-			return fmt.Errorf("Secret %q: data[%q] is not valid base64: %w", s.Metadata.Name, k, err)
+			return fmt.Errorf("secret %q: data[%q] is not valid base64: %w", s.Metadata.Name, k, err)
 		}
 		bytesByKey[k] = dec
 	}

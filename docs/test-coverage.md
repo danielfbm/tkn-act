@@ -15,7 +15,7 @@ Seven workflows live under `.github/workflows/`:
 
 | File | When it runs | What it runs |
 |---|---|---|
-| `ci.yml` | every push, every PR | `go vet`, `go build`, `go test -race -count=1 ./...` (untagged), `tkn-act help-json` smoke; matrix: ubuntu-latest + macos-latest. PR-only `tests-required`, `coverage`, `parity-check`, and `agentguide-freshness` jobs. |
+| `ci.yml` | every push, every PR | `go vet`, `go build`, `go test -race -count=1 ./...` (untagged), `tkn-act help-json` smoke; matrix: ubuntu-latest + macos-latest. PR-only `tests-required`, `coverage`, `parity-check`, and `agentguide-freshness` jobs. Blocking `lint` job (golangci-lint v2.12.2, ubuntu-latest, no build tags, no docker dependency) runs on every push and PR — any finding fails the PR. |
 | `docker-integration.yml` | `push` to `main`/`release/**` always; PR only when paths in its filter changed | `go test -tags integration -count=1 -timeout 15m ./internal/e2e/...` on ubuntu-latest. Pre-pulls `alpine:3`. |
 | `remote-docker-integration.yml` | same trigger pattern | Same fixture table as `docker-integration.yml`, but against a `docker:28-dind` service container (`DOCKER_HOST=tcp://localhost:2375`, `TKN_ACT_REMOTE_DOCKER=on`). Exercises the Phase 1–4 remote-daemon path end-to-end (auto-detect → Phase 3 per-run volume staging instead of bind mounts). A regression in the staging path that the local-daemon workflow would silently miss surfaces here because the dind daemon's filesystem can't see the runner's bind sources. `go test -tags integration -count=1 -timeout 20m ./internal/e2e/...`. |
 | `cluster-integration.yml` | same trigger pattern | installs `kubectl` + `k3d`, then `go test -tags cluster -coverpkg=./... -coverprofile=coverage-cluster.txt -count=1 -timeout 25m ./internal/clustere2e/...` on ubuntu-latest. **Matrix over Tekton LTS versions** (`v1.3.0` + `v1.12.0` as of 2026-05-13); each leg sets `TKN_ACT_TEKTON_VERSION` and runs the full fixture table. `fail-fast: false` so each leg reports independently. Dumps cluster state on failure. Each leg emits a "Cluster coverage (version)" section to the job summary and uploads a `coverage-cluster-<version>` artifact. |
@@ -245,9 +245,12 @@ In rough order of "you should be aware":
 
 ### Not run by CI
 
-- **Linters beyond `go vet`.** No `golangci-lint`, `staticcheck`,
-  `gosec`, or `govulncheck`. Style and security regressions would slip
-  through.
+- **`gosec` and `govulncheck`.** Not in the lint config; security and
+  vuln regressions are not mechanically gated. `golangci-lint` v2.12.2
+  (installed via `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`)
+  runs as a **blocking gate** (`lint` job in `ci.yml`) on every push
+  and PR — style, `go vet` equivalents, `staticcheck`, `revive`, and
+  `errcheck` findings all fail the PR.
 - **Coverage reporting (external).** No Codecov / Coveralls upload;
   no historical coverage dashboards. The PR-only `coverage` job in
   `ci.yml` enforces a per-package no-drop invariant (see "Coverage gate"
@@ -295,6 +298,7 @@ In rough order of "you should be aware":
 | Job fails | Look at |
 |---|---|
 | `build & test` | `go vet`, `go build`, or any unit test. Fast and local-reproducible: `go test -race ./...`. |
+| `lint` | golangci-lint v2.12.2 found a finding. Reproduce locally: `golangci-lint run ./...`. Fix the finding or, for a legitimate false-positive, add a `//nolint:<linter>` directive with a comment explaining why. |
 | `tests-required` | The PR has a Go code change without a `_test.go` change. Either add a test or include `[skip-test-check]` in a commit message. |
 | `coverage no-drop` | A package on HEAD has lower coverage than on BASE by more than 0.5pp. The job log prints a per-package table. Add tests for the affected package(s) or, for genuinely coverage-immune changes, include `[skip-coverage-check]` in a commit message. Reproduce locally: `bash .github/scripts/coverage-check.sh origin/main HEAD`. |
 | `docker e2e` | An `internal/e2e/` test failed under real Docker. Reproduce locally with `go test -tags integration ./internal/e2e/...`. |

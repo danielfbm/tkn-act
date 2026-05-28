@@ -22,7 +22,7 @@ var (
 // cacheListResult is the JSON shape printed by `tkn-act cache list -o json`.
 // Stable contract: agents may depend on the field names.
 type cacheListResult struct {
-	Root    string                  `json:"root"`
+	Root    string                   `json:"root"`
 	Entries []refresolver.CacheEntry `json:"entries"`
 }
 

@@ -62,9 +62,9 @@ func TestPrune_KeepsByAge(t *testing.T) {
 	young := now.Add(-1 * time.Hour)
 	s, _ := runstore.Open(dir, "v")
 	rOld, _ := s.NewRun(old, "p", nil)
-	rOld.Finalize(old.Add(time.Second), 0, "succeeded")
+	_ = rOld.Finalize(old.Add(time.Second), 0, "succeeded")
 	rYng, _ := s.NewRun(young, "p", nil)
-	rYng.Finalize(young.Add(time.Second), 0, "succeeded")
+	_ = rYng.Finalize(young.Add(time.Second), 0, "succeeded")
 
 	n, err := s.Prune(runstore.PruneOptions{KeepRuns: 0, KeepDays: 30, Now: now})
 	if err != nil {
@@ -95,7 +95,7 @@ func TestPrune_BothCountAndAge(t *testing.T) {
 			t0 = now.Add(-1 * time.Hour).Add(time.Duration(i) * time.Second)
 		}
 		r, _ := s.NewRun(t0, "p", nil)
-		r.Finalize(t0.Add(time.Millisecond), 0, "succeeded")
+		_ = r.Finalize(t0.Add(time.Millisecond), 0, "succeeded")
 	}
 	// KeepRuns=4 alone would keep 4; KeepDays=30 alone would keep 3
 	// (the 3 young runs). Intersection: keep min(4, 3) = 3.
@@ -164,7 +164,7 @@ func TestPrune_InFlightImmune_FromCountGate(t *testing.T) {
 	// FINALIZED run only (keep 2 finalized + 1 in-flight = 3 total).
 	for i := 0; i < 3; i++ {
 		r, _ := s.NewRun(time.Unix(int64(1_700_000_000+i), 0), "p", nil)
-		r.Finalize(time.Unix(int64(1_700_000_000+i)+1, 0), 0, "succeeded")
+		_ = r.Finalize(time.Unix(int64(1_700_000_000+i)+1, 0), 0, "succeeded")
 	}
 	inflight, _ := s.NewRun(time.Unix(1_700_000_100, 0), "p", nil)
 	_ = inflight // no Finalize call
@@ -186,7 +186,7 @@ func TestPrune_All_SkipsInFlight(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := runstore.Open(dir, "v")
 	r1, _ := s.NewRun(time.Unix(1_700_000_000, 0), "p", nil)
-	r1.Finalize(time.Unix(1_700_000_001, 0), 0, "succeeded")
+	_ = r1.Finalize(time.Unix(1_700_000_001, 0), 0, "succeeded")
 	inflight, _ := s.NewRun(time.Unix(1_700_000_002, 0), "p", nil)
 
 	n, err := s.Prune(runstore.PruneOptions{All: true})
@@ -210,7 +210,7 @@ func TestPrune_UnfinalizedRunsNotPrunedByAge(t *testing.T) {
 	old := now.Add(-60 * 24 * time.Hour)
 	s, _ := runstore.Open(dir, "v")
 	rOld, _ := s.NewRun(old, "p", nil)
-	rOld.Finalize(old.Add(time.Second), 0, "succeeded")
+	_ = rOld.Finalize(old.Add(time.Second), 0, "succeeded")
 	// In-flight run (no Finalize call).
 	rInflight, _ := s.NewRun(old, "p", nil)
 	_ = rInflight

@@ -43,7 +43,7 @@ and version. Returns exit code 3 if a required check fails.
 For AI agents: prefer 'tkn-act doctor -o json' for a stable, parseable report.`,
 		Example: `  tkn-act doctor
   tkn-act doctor -o json`,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			rep := buildDoctorReport(context.Background())
 			if gf.output == "json" {
 				enc := json.NewEncoder(os.Stdout)

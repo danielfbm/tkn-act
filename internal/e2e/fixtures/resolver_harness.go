@@ -236,7 +236,6 @@ func extractTektonNameKindFromYAML(body []byte) (name, kind string) {
 	return name, kind
 }
 
-
 // newServedFileServer returns an httptest.Server that serves files from
 // dir at their basename path (e.g. served/task.yaml at /task.yaml).
 func newServedFileServer(dir string) *httptest.Server {

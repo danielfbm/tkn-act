@@ -243,7 +243,7 @@ spec:
 	}
 	stub := &countingResolver{
 		name: "stub",
-		bytesFn: func(req refresolver.Request) ([]byte, error) {
+		bytesFn: func(_ refresolver.Request) ([]byte, error) {
 			return []byte(`apiVersion: tekton.dev/v1
 kind: Task
 metadata: {name: x}

@@ -205,7 +205,7 @@ spec:
       default: "https://proxy.golang.org,direct"
     - name: golangci-lint-version
       type: string
-      default: "v1.64.8"
+      default: "v2.12.2"
   workspaces:
     - name: source
     - name: cache
@@ -234,7 +234,7 @@ spec:
         set -eu
         apk add --no-cache git >/dev/null
         INSTALL_OK=1
-        go install "github.com/golangci/golangci-lint/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}" || INSTALL_OK=0
+        go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}" || INSTALL_OK=0
         if [ "$INSTALL_OK" = "1" ]; then
           set +e
           "$(go env GOPATH)/bin/golangci-lint" run $(params.packages)

@@ -23,6 +23,11 @@ const (
 	annotationName       = "dev.tekton.image.name"
 	annotationKind       = "dev.tekton.image.kind"
 	annotationAPIVersion = "dev.tekton.image.apiVersion"
+
+	// tarTypeRegLegacy is the null-byte typeflag ('\x00') used by pre-Go-1.11
+	// tar writers for regular files. tar.TypeRegA is the deprecated identifier
+	// for this value; comparing against the byte literal avoids SA1019.
+	tarTypeRegLegacy byte = '\x00'
 )
 
 // BundlesOptions configures a bundles resolver. All fields optional.
@@ -240,7 +245,7 @@ func readFirstTarFile(r io.Reader) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tarTypeRegLegacy {
 			continue
 		}
 		var buf bytes.Buffer

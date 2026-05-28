@@ -115,7 +115,7 @@ func TestStore_Resolve_Errors(t *testing.T) {
 	if _, err := s.Resolve("latest"); err == nil {
 		t.Errorf("Resolve(latest) on empty: want error")
 	}
-	s.NewRun(time.Now(), "", nil)
+	_, _ = s.NewRun(time.Now(), "", nil)
 	if _, err := s.Resolve("99"); err == nil {
 		t.Errorf("Resolve(99): want not-found")
 	}
@@ -143,7 +143,7 @@ func TestStore_Resolve_WrapsSentinels(t *testing.T) {
 		t.Errorf("Resolve(latest) on empty: errors.Is(ErrNoRuns) failed (err=%v)", err)
 	}
 
-	s.NewRun(time.Now(), "p", nil)
+	_, _ = s.NewRun(time.Now(), "p", nil)
 
 	// Bad seq → ErrNotFound.
 	_, err = s.Resolve("99")

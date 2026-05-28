@@ -22,6 +22,10 @@ agent working on this repo must walk this checklist. Each item is
 elaborated in the rule sections below; the checklist is the operating
 summary.
 
+- [ ] **`golangci-lint run ./...` is clean** — zero findings. CI's
+      blocking `lint` job (golangci-lint v2.12.2) refuses PRs with any
+      finding. Fix the finding or add a `//nolint:<linter>` directive
+      with a comment for legitimate false-positives.
 - [ ] **Tests added or updated** for every Go production-code change.
       CI's `tests-required` gate refuses PRs that fail this. Override
       token `[skip-test-check]` exists only for genuinely test-immune
@@ -320,10 +324,15 @@ Before opening a PR, run the same gates CI will run:
 ```sh
 go vet ./... && go vet -tags integration ./... && go vet -tags cluster ./...
 go test -race -count=1 ./...
+golangci-lint run ./...
 make check-agentguide
 .github/scripts/parity-check.sh
 .github/scripts/tests-required.sh main HEAD
 ```
+
+`golangci-lint` v2.12.2 is the blocking lint gate (`lint` job in
+`ci.yml`) — any finding fails the PR. Install:
+`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`.
 
 ---
 

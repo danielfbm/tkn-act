@@ -61,15 +61,15 @@ func ResolveColor(mode ColorMode, isTerminal bool, env func(string) (string, boo
 // through a struct keeps NewPretty free of magic strings and makes it easy to
 // disable color (just substitute a zero-value palette).
 type palette struct {
-	reset     string
-	dim       string
-	bold      string
-	green     string
-	red       string
-	yellow    string
-	cyan      string
-	gray      string
-	magenta   string
+	reset   string
+	dim     string
+	bold    string
+	green   string
+	red     string
+	yellow  string
+	cyan    string
+	gray    string
+	magenta string
 }
 
 func newPalette(on bool) palette {

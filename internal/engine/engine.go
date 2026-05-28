@@ -104,13 +104,10 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 		}
 		in.Bundle.Pipelines[name] = pl
 		in.Name = name
-	} else if in.Name == "" {
-		// No top-level resolver and no name — surface the failure if
-		// maybeResolveTopLevelPipelineRef reported one (it emitted a
-		// run-end already), else fall through to the not-found branch.
-		// We don't synthesize a "best guess" pipeline name here; the
-		// caller (CLI) disambiguates that.
 	}
+	// When in.Name == "" and no top-level resolver matched, fall through
+	// to the not-found branch below (Pipelines[""] lookup returns !ok,
+	// which then checks hasTopLevelPipelineRefResolver for a clean exit).
 	pl, ok := in.Bundle.Pipelines[in.Name]
 	if !ok {
 		// If the engine emitted a top-level resolver-end with status
@@ -856,7 +853,7 @@ func uniqueImages(b *loader.Bundle, pl tektontypes.Pipeline) []string {
 // provisionResultsDir is a thin wrapper that the CLI replaces with a real
 // workspace.Manager closure. For unit tests with the fake backend, it returns
 // an empty path which the fake ignores.
-var provisionResultsDir = func(parent, taskName string) (string, error) { return "", nil }
+var provisionResultsDir = func(_, _ string) (string, error) { return "", nil }
 
 // SetResultsDirProvisioner is called once by the CLI to wire the engine's
 // per-task results dir creation into a workspace.Manager. Tests don't need
@@ -1089,12 +1086,12 @@ func (e *Engine) emitClusterTaskEvents(pl tektontypes.Pipeline, bundle *loader.B
 // bounded so a giant resolved param doesn't bloat events.jsonl. Works
 // on runes (not bytes) so a multibyte UTF-8 boundary doesn't render
 // a replacement character.
-func truncate(s string, max int) string {
+func truncate(s string, maxVal int) string {
 	rs := []rune(s)
-	if len(rs) <= max {
+	if len(rs) <= maxVal {
 		return s
 	}
-	return string(rs[:max-1]) + "…"
+	return string(rs[:maxVal-1]) + "…"
 }
 
 // secretNamePatterns is the case-insensitive substring set that

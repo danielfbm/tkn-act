@@ -22,9 +22,9 @@ func runsFixture(t *testing.T, dir string) {
 		t.Fatalf("Open: %v", err)
 	}
 	r1, _ := s.NewRun(time.Unix(1_700_000_000, 0), "a.yaml", nil)
-	r1.Finalize(time.Unix(1_700_000_001, 0), 0, "succeeded")
+	_ = r1.Finalize(time.Unix(1_700_000_001, 0), 0, "succeeded")
 	r2, _ := s.NewRun(time.Unix(1_700_000_002, 0), "b.yaml", nil)
-	r2.Finalize(time.Unix(1_700_000_003, 0), 5, "failed")
+	_ = r2.Finalize(time.Unix(1_700_000_003, 0), 5, "failed")
 }
 
 func TestRunsList_JSON(t *testing.T) {
@@ -86,13 +86,15 @@ func TestRunsList_TruncatesTo20ByDefault(t *testing.T) {
 	s, _ := runstore.Open(dir, "v")
 	for i := 0; i < 25; i++ {
 		r, _ := s.NewRun(time.Unix(int64(1_700_000_000+i), 0), "p", nil)
-		r.Finalize(time.Unix(int64(1_700_000_000+i)+1, 0), 0, "succeeded")
+		_ = r.Finalize(time.Unix(int64(1_700_000_000+i)+1, 0), 0, "succeeded")
 	}
 	gf = globalFlags{output: "json", stateDir: dir}
 	var buf bytes.Buffer
-	runRunsList(&buf, false)
+	_ = runRunsList(&buf, false)
 	var got []runstore.IndexEntry
-	json.Unmarshal(buf.Bytes(), &got)
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
 	if len(got) != 20 {
 		t.Errorf("default truncation = %d, want 20", len(got))
 	}
@@ -103,8 +105,10 @@ func TestRunsList_TruncatesTo20ByDefault(t *testing.T) {
 
 	// --all shows everything.
 	buf.Reset()
-	runRunsList(&buf, true)
-	json.Unmarshal(buf.Bytes(), &got)
+	_ = runRunsList(&buf, true)
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
 	if len(got) != 25 {
 		t.Errorf("--all = %d, want 25", len(got))
 	}
@@ -157,7 +161,7 @@ func TestRunsPrune_AppliesPolicy(t *testing.T) {
 	s, _ := runstore.Open(dir, "v")
 	for i := 0; i < 5; i++ {
 		r, _ := s.NewRun(time.Unix(int64(1_700_000_000+i), 0), "p", nil)
-		r.Finalize(time.Unix(int64(1_700_000_000+i)+1, 0), 0, "succeeded")
+		_ = r.Finalize(time.Unix(int64(1_700_000_000+i)+1, 0), 0, "succeeded")
 	}
 	t.Setenv("TKN_ACT_KEEP_RUNS", "2")
 	t.Setenv("TKN_ACT_KEEP_DAYS", "0")
@@ -219,7 +223,7 @@ func TestRunsList_NoSideEffects(t *testing.T) {
 	// (no index.lock).
 	pre, _ := runstore.Open(dir, "v")
 	r, _ := pre.NewRun(time.Now(), "p", nil)
-	r.Finalize(time.Now(), 0, "succeeded")
+	_ = r.Finalize(time.Now(), 0, "succeeded")
 	before := must(os.ReadDir(dir))
 	if err := runRunsList(&buf, false); err != nil {
 		t.Fatalf("runRunsList: %v", err)
@@ -261,12 +265,12 @@ func TestRunsPrune_Pluralization(t *testing.T) {
 	s, _ := runstore.Open(dir, "v")
 	// 1 run + KeepRuns=0 (disable) + All=false: nothing pruned.
 	r, _ := s.NewRun(time.Now(), "p", nil)
-	r.Finalize(time.Now(), 0, "succeeded")
+	_ = r.Finalize(time.Now(), 0, "succeeded")
 	t.Setenv("TKN_ACT_KEEP_RUNS", "0")
 	t.Setenv("TKN_ACT_KEEP_DAYS", "0")
 	gf = globalFlags{stateDir: dir}
 	var buf bytes.Buffer
-	runRunsPrune(&buf, false, false)
+	_ = runRunsPrune(&buf, false, false)
 	if !strings.Contains(buf.String(), "Pruned 0 runs") {
 		t.Errorf("plural for 0: %q", buf.String())
 	}

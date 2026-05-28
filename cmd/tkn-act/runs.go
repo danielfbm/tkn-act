@@ -41,7 +41,7 @@ func newRunsListCmd() *cobra.Command {
 
   # everything, as JSON
   tkn-act runs list --all -o json`,
-		RunE: func(c *cobra.Command, _ []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			return runRunsList(os.Stdout, all)
 		},
 	}
@@ -106,7 +106,7 @@ func newRunsShowCmd() *cobra.Command {
 		Example: `  tkn-act runs show 7
   tkn-act runs show latest -o json
   tkn-act runs show 01HQYZAB`,
-		RunE: func(c *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			if args[0] == "" {
 				return exitcode.Wrap(exitcode.Usage,
 					errors.New("run id must not be empty; pass 'latest' to select the most recent run"))
@@ -171,7 +171,7 @@ TKN_ACT_KEEP_RUNS (default 50) AND drop runs older than
 TKN_ACT_KEEP_DAYS (default 30) days.
 
 --all wipes every recorded run; --yes/-y is required to confirm.`,
-		RunE: func(c *cobra.Command, _ []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			return runRunsPrune(os.Stdout, all, yes)
 		},
 	}

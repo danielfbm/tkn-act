@@ -437,10 +437,10 @@ func (b *Backend) collectTaskOutcomesWithSink(ctx context.Context, in backend.Pi
 	// Walking TaskRuns in childRefIdx order gives stable indices even
 	// when the List() returns them in arbitrary order.
 	type trWithIndex struct {
-		tr        *unstructured.Unstructured
-		childRef  int // -1 if absent
-		ptName    string
-		hasIndex  bool
+		tr       *unstructured.Unstructured
+		childRef int // -1 if absent
+		ptName   string
+		hasIndex bool
 	}
 	scored := make([]trWithIndex, 0, len(list.Items))
 	for i := range list.Items {
@@ -496,7 +496,7 @@ func (b *Backend) collectTaskOutcomesWithSink(ctx context.Context, in backend.Pi
 //
 // Returns nil when the parent isn't matrix-fanned (caller falls back
 // to the parent name as the outcomes-map key).
-func matchMatrixRowFromTaskRun(pl tektontypes.Pipeline, parent string, tr *unstructured.Unstructured, childRefIdx int, fallbackSeq map[string]int, rep reporter.Reporter) *tektontypes.MatrixInfo {
+func matchMatrixRowFromTaskRun(pl tektontypes.Pipeline, parent string, tr *unstructured.Unstructured, _ int, fallbackSeq map[string]int, rep reporter.Reporter) *tektontypes.MatrixInfo {
 	pt := findMatrixParent(pl, parent)
 	if pt == nil || pt.Matrix == nil {
 		return nil

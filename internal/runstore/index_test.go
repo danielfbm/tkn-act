@@ -52,9 +52,9 @@ func TestIndex_ByULIDPrefix(t *testing.T) {
 	dir := t.TempDir()
 	idx, _ := runstore.OpenIndex(dir)
 	defer idx.Close()
-	idx.Append(runstore.IndexEntry{ULID: "01HQAAAAA0000000000000001A"})
-	idx.Append(runstore.IndexEntry{ULID: "01HQBBBBB0000000000000002B"})
-	idx.Append(runstore.IndexEntry{ULID: "01HQBBBBB0000000000000003C"})
+	_, _ = idx.Append(runstore.IndexEntry{ULID: "01HQAAAAA0000000000000001A"})
+	_, _ = idx.Append(runstore.IndexEntry{ULID: "01HQBBBBB0000000000000002B"})
+	_, _ = idx.Append(runstore.IndexEntry{ULID: "01HQBBBBB0000000000000003C"})
 
 	// unique prefix matches one
 	e, err := idx.ByULIDPrefix("01HQAAAA")
@@ -120,8 +120,8 @@ func TestIndex_Latest(t *testing.T) {
 	if _, err := idx.Latest(); err == nil {
 		t.Errorf("Latest on empty index should error")
 	}
-	idx.Append(runstore.IndexEntry{ULID: "01HQYZAB000000000000000001"})
-	idx.Append(runstore.IndexEntry{ULID: "01HQYZAB000000000000000002"})
+	_, _ = idx.Append(runstore.IndexEntry{ULID: "01HQYZAB000000000000000001"})
+	_, _ = idx.Append(runstore.IndexEntry{ULID: "01HQYZAB000000000000000002"})
 	e, err := idx.Latest()
 	if err != nil {
 		t.Fatalf("Latest: %v", err)
@@ -179,8 +179,8 @@ func TestReadIndexEntries_EmptyFileReturnsEmpty(t *testing.T) {
 func TestReadIndexEntries_RoundTripFromOpenIndex(t *testing.T) {
 	dir := t.TempDir()
 	idx, _ := runstore.OpenIndex(dir)
-	idx.Append(runstore.IndexEntry{ULID: "01HQYZAB000000000000000001", PipelineRef: "a.yaml"})
-	idx.Append(runstore.IndexEntry{ULID: "01HQYZAB000000000000000002", PipelineRef: "b.yaml"})
+	_, _ = idx.Append(runstore.IndexEntry{ULID: "01HQYZAB000000000000000001", PipelineRef: "a.yaml"})
+	_, _ = idx.Append(runstore.IndexEntry{ULID: "01HQYZAB000000000000000002", PipelineRef: "b.yaml"})
 	idx.Close()
 
 	entries, err := runstore.ReadIndexEntries(dir)
@@ -209,7 +209,7 @@ func TestIndex_FlushAtomic_NoLeftoverTempFiles(t *testing.T) {
 	dir := t.TempDir()
 	idx, _ := runstore.OpenIndex(dir)
 	for i := 0; i < 5; i++ {
-		idx.Append(runstore.IndexEntry{ULID: "01HQYZAB00000000000000000" + string(rune('A'+i))})
+		_, _ = idx.Append(runstore.IndexEntry{ULID: "01HQYZAB00000000000000000" + string(rune('A'+i))})
 	}
 	idx.Close()
 	entries, err := os.ReadDir(dir)
@@ -227,7 +227,7 @@ func TestIndex_FlushAtomic_NoLeftoverTempFiles(t *testing.T) {
 func TestIndex_Persists(t *testing.T) {
 	dir := t.TempDir()
 	idx, _ := runstore.OpenIndex(dir)
-	idx.Append(runstore.IndexEntry{ULID: "01HQYZAB000000000000000001"})
+	_, _ = idx.Append(runstore.IndexEntry{ULID: "01HQYZAB000000000000000001"})
 	idx.Close()
 	// reopen and read
 	idx2, _ := runstore.OpenIndex(dir)
