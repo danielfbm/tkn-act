@@ -161,9 +161,10 @@ func (p *prettySink) Emit(e Event) {
 		// only the clean shutdown case unless we're in Verbose.
 		if e.Status != StatusSucceeded || e.ExitCode != 0 {
 			detail := e.Status
-			if e.Status == StatusInfraFailed {
+			switch e.Status {
+			case StatusInfraFailed:
 				detail = "failed to start"
-			} else if e.Status == StatusFailed {
+			case StatusFailed:
 				detail = "crashed"
 			}
 			fmt.Fprintf(p.w, "  %s %s sidecar exited %d (%s)\n",

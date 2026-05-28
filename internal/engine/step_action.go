@@ -95,7 +95,7 @@ func expandBundleStepActions(b *loader.Bundle, pl tektontypes.Pipeline) (map[str
 	for name, tk := range b.Tasks {
 		expanded, err := resolveStepActions(tk.Spec, b)
 		if err != nil {
-			return nil, tektontypes.Pipeline{}, fmt.Errorf("Task %q: %w", name, err)
+			return nil, tektontypes.Pipeline{}, fmt.Errorf("task %q: %w", name, err)
 		}
 		tk.Spec = expanded
 		tasksOut[name] = tk

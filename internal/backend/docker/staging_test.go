@@ -199,7 +199,10 @@ func wrapTarUnder(t *testing.T, src io.Reader, prefix string) io.Reader {
 		if err := tw.WriteHeader(hdr); err != nil {
 			t.Fatalf("wrap: write header: %v", err)
 		}
-		if hdr.Typeflag == tar.TypeReg || hdr.Typeflag == tar.TypeRegA {
+		// Pre-Go-1.11 tars use '\x00' (null-byte) as the typeflag for regular
+		// files; tar.TypeRegA is deprecated. Check both to avoid skipping the
+		// body copy for legacy entries, which would corrupt the re-packed stream.
+		if hdr.Typeflag == tar.TypeReg || hdr.Typeflag == '\x00' {
 			if _, err := io.Copy(tw, tr); err != nil {
 				t.Fatalf("wrap: copy body: %v", err)
 			}

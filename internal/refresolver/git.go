@@ -228,21 +228,21 @@ func cloneShallow(ctx context.Context, repoURL, revision, dir string) error {
 		SingleBranch:  true,
 		ReferenceName: plumbing.NewBranchReferenceName(revision),
 	}
-	repo, err := git.PlainCloneContext(ctx, dir, false, opts)
+	_, err := git.PlainCloneContext(ctx, dir, false, opts)
 	if err == nil {
 		return nil
 	}
 	// branch lookup failed; try as a tag.
 	_ = os.RemoveAll(dir)
 	opts.ReferenceName = plumbing.NewTagReferenceName(revision)
-	repo, err = git.PlainCloneContext(ctx, dir, false, opts)
+	_, err = git.PlainCloneContext(ctx, dir, false, opts)
 	if err == nil {
 		return nil
 	}
 	// tag lookup failed; might be a full SHA — fall back to a full clone
 	// and check out by revision.
 	_ = os.RemoveAll(dir)
-	repo, err = git.PlainCloneContext(ctx, dir, false, &git.CloneOptions{URL: repoURL})
+	repo, err := git.PlainCloneContext(ctx, dir, false, &git.CloneOptions{URL: repoURL})
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return fmt.Errorf("git: clone %s: %w", redactURL(repoURL), err)
