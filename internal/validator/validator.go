@@ -137,7 +137,7 @@ func ValidateWithOptions(b *loader.Bundle, pipelineName string, providedParams m
 // ValidateWithOptions. It does NOT examine resolver-backed taskRefs
 // (those are intentionally allowed to skip the "unknown Task" rule;
 // the resolver layer fetches them at dispatch time).
-func validateCore(b *loader.Bundle, pipelineName string, providedParams map[string]bool) []error {
+func validateCore(b *loader.Bundle, pipelineName string, _ map[string]bool) []error {
 	var errs []error
 
 	pl, ok := b.Pipelines[pipelineName]

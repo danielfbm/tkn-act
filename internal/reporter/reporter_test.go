@@ -349,11 +349,11 @@ func (c *captureSink) Emit(e reporter.Event) { c.events = append(c.events, e) }
 func (c *captureSink) Close() error          { return nil }
 
 func TestLogSinkStepLogPropagatesDisplayName(t *testing.T) {
-	cap := &captureSink{}
-	ls := reporter.NewLogSink(cap)
+	capN := &captureSink{}
+	ls := reporter.NewLogSink(capN)
 	ls.StepLog("t1", "s1", "Compile binary", "stdout", "hello\n")
 
-	got := cap.events
+	got := capN.events
 	if len(got) != 1 {
 		t.Fatalf("want 1 event, got %d", len(got))
 	}
@@ -375,20 +375,20 @@ func TestLogSinkStepLogPropagatesDisplayName(t *testing.T) {
 func TestLogSinkStepLogEmptyDisplayNameOmitsField(t *testing.T) {
 	// Coverage: empty displayName must produce an event whose JSON omits
 	// display_name (so agents fall back to e.Step).
-	cap := &captureSink{}
-	ls := reporter.NewLogSink(cap)
+	capN := &captureSink{}
+	ls := reporter.NewLogSink(capN)
 	ls.StepLog("t1", "s1", "", "stdout", "hello\n")
 
-	if len(cap.events) != 1 {
-		t.Fatalf("want 1 event, got %d", len(cap.events))
+	if len(capN.events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(capN.events))
 	}
-	if cap.events[0].DisplayName != "" {
-		t.Errorf("DisplayName = %q, want empty", cap.events[0].DisplayName)
+	if capN.events[0].DisplayName != "" {
+		t.Errorf("DisplayName = %q, want empty", capN.events[0].DisplayName)
 	}
 	// Encode and assert omitempty.
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
-	if err := enc.Encode(cap.events[0]); err != nil {
+	if err := enc.Encode(capN.events[0]); err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Contains(buf.Bytes(), []byte("display_name")) {

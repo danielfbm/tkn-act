@@ -17,11 +17,11 @@ type Runner interface {
 	Run(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error
 }
 
-type real struct{}
+type realRunner struct{}
 
-func New() Runner { return real{} }
+func New() Runner { return realRunner{} }
 
-func (real) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
+func (realRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -32,7 +32,7 @@ func (real) Output(ctx context.Context, name string, args ...string) ([]byte, er
 	return stdout.Bytes(), nil
 }
 
-func (real) Run(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+func (realRunner) Run(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -85,7 +85,7 @@ func (r *fakeRunner) Output(_ context.Context, name string, args ...string) ([]b
 	return resp.out, resp.err
 }
 
-func (r *fakeRunner) Run(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+func (r *fakeRunner) Run(ctx context.Context, stdout, _ io.Writer, name string, args ...string) error {
 	out, err := r.Output(ctx, name, args...)
 	if stdout != nil && len(out) > 0 {
 		_, _ = stdout.Write(out)

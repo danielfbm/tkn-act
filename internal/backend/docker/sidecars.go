@@ -373,7 +373,7 @@ func (b *Backend) checkSidecarLiveness(ctx context.Context, inv backend.TaskInvo
 // still-living sidecar, drains its logs, emits the terminal
 // sidecar-end event, and removes the container. Always runs on a
 // background context so a cancelled run still drains.
-func (b *Backend) stopSidecars(ctx context.Context, inv backend.TaskInvocation, sidecars []runningSidecar) {
+func (b *Backend) stopSidecars(_ context.Context, inv backend.TaskInvocation, sidecars []runningSidecar) {
 	stopGrace := b.opts.SidecarStopGrace
 	if stopGrace <= 0 {
 		stopGrace = 30 * time.Second

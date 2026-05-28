@@ -176,7 +176,7 @@ func (b *Backend) Cleanup(_ context.Context) error { return nil }
 
 // RunTask delegates to RunPipeline by wrapping the single TaskRun call into a
 // trivial one-task pipeline. The engine should prefer RunPipeline directly.
-func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (backend.TaskResult, error) {
+func (b *Backend) RunTask(_ context.Context, _ backend.TaskInvocation) (backend.TaskResult, error) {
 	return backend.TaskResult{}, fmt.Errorf("cluster backend: per-task RunTask not supported; call RunPipeline")
 }
 

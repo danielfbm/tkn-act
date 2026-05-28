@@ -29,7 +29,7 @@ from the given directory (default: cwd).`,
 
   # JSON output (stable shape, easy for AI agents to parse)
   tkn-act list -o json`,
-		RunE: func(c *cobra.Command, _ []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			if dir == "" {
 				dir = "."
 			}

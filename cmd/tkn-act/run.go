@@ -56,7 +56,7 @@ If -f is not given, tkn-act discovers Tekton YAML in the current directory
 
   # Run on the ephemeral k3d cluster instead of plain Docker
   tkn-act run --cluster -f pipeline.yaml`,
-		RunE: func(c *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			return runWith(rf)
 		},
 	}

@@ -37,7 +37,7 @@ flags as 'tkn-act run'.`,
   # replay by ULID prefix
   tkn-act logs 01HQYZAB`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(c *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			id := ""
 			if len(args) == 1 {
 				if args[0] == "" {

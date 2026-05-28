@@ -20,6 +20,6 @@ func (f *fake) RunTask(_ context.Context, t backend.TaskInvocation) (backend.Tas
 }
 func (f *fake) Cleanup(_ context.Context) error { f.cleaned = true; return nil }
 
-func TestFakeImplementsBackend(t *testing.T) {
+func TestFakeImplementsBackend(_ *testing.T) {
 	var _ backend.Backend = (*fake)(nil) // compile-time assertion
 }

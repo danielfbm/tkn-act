@@ -382,13 +382,13 @@ func labelOf(name, displayName string) string {
 // Truncation works on runes, not bytes — slicing a UTF-8 string at a
 // byte index can land mid-codepoint and emit a malformed sequence.
 func formatResultValue(v any) string {
-	const max = 80
+	const maxVal = 80
 	truncate := func(s string) string {
 		rs := []rune(s)
-		if len(rs) <= max {
+		if len(rs) <= maxVal {
 			return s
 		}
-		return string(rs[:max-1]) + "…"
+		return string(rs[:maxVal-1]) + "…"
 	}
 	switch t := v.(type) {
 	case string:

@@ -294,9 +294,9 @@ func TestMatchMatrixRowFromTaskRunFallbackChildRefOrder(t *testing.T) {
 		}},
 	}}
 	type capture struct{ events []reporter.Event }
-	cap := &capture{}
+	capN := &capture{}
 	// Stub Reporter capturing emitted events.
-	r := reporterFunc(func(e reporter.Event) { cap.events = append(cap.events, e) })
+	r := reporterFunc(func(e reporter.Event) { capN.events = append(capN.events, e) })
 	tr := &unstructured.Unstructured{Object: map[string]any{
 		"metadata": map[string]any{"name": "p-build-mystery"},
 		"spec":     map[string]any{}, // no params
@@ -306,8 +306,8 @@ func TestMatchMatrixRowFromTaskRunFallbackChildRefOrder(t *testing.T) {
 	if mi == nil || mi.Index != 0 {
 		t.Fatalf("fallback row 0 = %+v, want Index=0", mi)
 	}
-	if len(cap.events) != 1 || cap.events[0].Kind != reporter.EvtError {
-		t.Errorf("expected one EvtError warning; got %v", cap.events)
+	if len(capN.events) != 1 || capN.events[0].Kind != reporter.EvtError {
+		t.Errorf("expected one EvtError warning; got %v", capN.events)
 	}
 	tr2 := &unstructured.Unstructured{Object: map[string]any{
 		"metadata": map[string]any{"name": "p-build-mystery2"},
@@ -317,8 +317,8 @@ func TestMatchMatrixRowFromTaskRunFallbackChildRefOrder(t *testing.T) {
 	if mi2 == nil || mi2.Index != 1 {
 		t.Fatalf("fallback row 1 = %+v, want Index=1", mi2)
 	}
-	if len(cap.events) != 2 {
-		t.Errorf("expected 2 EvtError warnings; got %d", len(cap.events))
+	if len(capN.events) != 2 {
+		t.Errorf("expected 2 EvtError warnings; got %d", len(capN.events))
 	}
 }
 

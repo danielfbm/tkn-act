@@ -129,8 +129,8 @@ func expandPipelineTaskSpecs(b *loader.Bundle, pts []tektontypes.PipelineTask) (
 		if err != nil {
 			return nil, fmt.Errorf("PipelineTask %q: %w", pts[i].Name, err)
 		}
-		copy := expanded
-		pts[i].TaskSpec = &copy
+		copied := expanded
+		pts[i].TaskSpec = &copied
 	}
 	return pts, nil
 }

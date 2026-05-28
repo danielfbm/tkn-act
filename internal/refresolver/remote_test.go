@@ -760,7 +760,7 @@ func TestRemoteResolverConditionStatusUnknown(t *testing.T) {
 		}, "status", "conditions")
 		return false, obj, nil
 	})
-	dyn.PrependReactor("get", gvrV1Beta1.Resource, func(action clienttesting.Action) (bool, runtime.Object, error) {
+	dyn.PrependReactor("get", gvrV1Beta1.Resource, func(_ clienttesting.Action) (bool, runtime.Object, error) {
 		// Second and subsequent Gets flip status to True.
 		if attempt.Add(1) >= 2 {
 			obj := &unstructured.Unstructured{Object: map[string]interface{}{
@@ -793,7 +793,7 @@ func TestRemoteResolverConditionStatusUnknown(t *testing.T) {
 // silently retried as v1alpha1.
 func TestRemoteResolverCreateError(t *testing.T) {
 	dyn := newFakeRemoteDynamic()
-	dyn.PrependReactor("create", gvrV1Beta1.Resource, func(action clienttesting.Action) (bool, runtime.Object, error) {
+	dyn.PrependReactor("create", gvrV1Beta1.Resource, func(_ clienttesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("forbidden: user cannot create resolutionrequests")
 	})
 	r := newRemoteResolverWithDynamic(dyn, refresolver.RemoteResolverOptions{Namespace: "default", Timeout: time.Second})

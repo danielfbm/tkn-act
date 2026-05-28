@@ -60,7 +60,7 @@ func TestWaitForDefaultServiceAccountTimeout(t *testing.T) {
 	// Make every Get return NotFound (the fake clientset already does
 	// this, but we set a reactor explicitly so the test is robust to
 	// future fake-client behavior changes).
-	kube.PrependReactor("get", "serviceaccounts", func(action clienttesting.Action) (handled bool, ret runtime.Object, err error) {
+	kube.PrependReactor("get", "serviceaccounts", func(_ clienttesting.Action) (handled bool, ret runtime.Object, err error) {
 		gvr := schema.GroupResource{Group: "", Resource: "serviceaccounts"}
 		return true, nil, apierrors.NewNotFound(gvr, "default")
 	})
