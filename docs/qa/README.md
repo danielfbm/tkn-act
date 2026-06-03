@@ -11,7 +11,11 @@ suites (`go test ./...`, `-tags integration`, `-tags cluster`) inventoried in
 | [`README.md`](README.md) | This file — scope, environment, conventions, how to run, how findings become issues. |
 | [`exploratory-test-plan.md`](exploratory-test-plan.md) | The thinking artifact: every command area, normal paths **and** edge cases, with charters and questions to probe. Use it when you want breadth and to find *new* bugs. |
 | [`regression-suite.md`](regression-suite.md) | The durable artifact: numbered, reproducible specs (`AREA-NNN`) with exact command, preconditions, and expected exit code / observable output. Use it to confirm nothing *regressed*. |
-| [`findings-log.md`](findings-log.md) | Append-only log of each execution pass: date, environment, what passed/failed, and the GitHub issue opened for each confirmed defect. |
+
+These are the **plan and the specs** — the durable, reviewable artifacts. The
+output of an actual *execution pass* is not committed here: confirmed defects
+become **GitHub issues** (label `qa`, see the rubric below), and any new
+reproducible behaviour worth guarding becomes a new spec in `regression-suite.md`.
 
 ## Why this exists
 
@@ -45,8 +49,8 @@ Out of scope (covered elsewhere or non-goals):
 
 ## Environment baseline
 
-Record the actual environment in `findings-log.md` for every pass. The plan
-assumes:
+Note the actual environment (and quote it in any issue you file) for every
+pass. The plan assumes:
 
 - `bin/tkn-act` built from the branch under test (`go build -o bin/tkn-act ./cmd/tkn-act`).
 - `tkn-act doctor -o json` reports `ok: true` for the `default` checks (Docker
@@ -67,13 +71,13 @@ assumes:
 ## How a pass is run
 
 1. Build the binary from the branch under test.
-2. Snapshot the environment into `findings-log.md` (versions, OS/arch, doctor
-   output).
-3. Walk `regression-suite.md` top to bottom; record PASS/FAIL/BLOCKED per spec.
+2. Note the environment (versions, OS/arch, `doctor -o json`) so it can be
+   quoted in any issue you file.
+3. Walk `regression-suite.md` top to bottom; for each spec confirm PASS, or
+   for a FAIL open a GitHub issue with the repro.
 4. Walk the `exploratory-test-plan.md` charters; for each, timebox the
-   session, note observations, and promote any *reproducible surprise* into
-   (a) a new regression spec and (b) a GitHub issue.
-5. Summarise the pass in `findings-log.md`.
+   session and promote any *reproducible surprise* into (a) a new regression
+   spec and (b) a GitHub issue.
 
 Fixtures live under the repo's existing `testdata/e2e/` and `pipelines/`
 trees wherever possible; ad-hoc fixtures a charter needs are created inline in

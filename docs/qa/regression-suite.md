@@ -18,8 +18,9 @@ Conventions:
   README). Fixtures referenced as `testdata/e2e/<name>` already exist in-tree;
   inline YAML is given where a spec needs a fixture that doesn't.
 
-Result columns to fill per pass in `findings-log.md`: `PASS` / `FAIL` /
-`BLOCKED` (+ issue id on FAIL).
+Each spec resolves to `PASS` / `FAIL` / `BLOCKED` per pass. A `FAIL` becomes a
+GitHub issue (label `qa`) carrying the spec id and repro; passes and blocks are
+not recorded in-repo.
 
 ---
 
@@ -249,8 +250,8 @@ these run offline. `NET` only where a public endpoint is unavoidable.
 - When a charter in the exploratory plan finds a reproducible behaviour worth
   guarding, add a spec here with the next free `AREA-NNN`.
 - When a filed issue is fixed, the spec that caught it becomes the
-  regression guard — link the issue and PR in the row's notes in
-  `findings-log.md`.
+  regression guard — reference the issue/PR from the spec row and, ideally,
+  port it into an in-tree Go/CLI test so CI keeps it green.
 - Keep this file in sync with the stable-contract tables in `AGENTS.md` and
   `../agent-guide/README.md`; a new event kind, exit code, or flag should
   appear as a spec here in the same PR that adds it.
