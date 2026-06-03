@@ -237,6 +237,9 @@ func validateCore(b *loader.Bundle, pipelineName string, _ map[string]bool) []er
 	g := dag.New()
 	main := map[string]bool{}
 	for _, pt := range pl.Spec.Tasks {
+		if main[pt.Name] {
+			errs = append(errs, fmt.Errorf("duplicate pipeline task %q", pt.Name))
+		}
 		g.AddNode(pt.Name)
 		main[pt.Name] = true
 	}
