@@ -59,3 +59,31 @@ func TestCobraUsageErrorsExitWithUsageCode(t *testing.T) {
 		})
 	}
 }
+
+func TestCommandGroupsRejectUnknownSubcommands(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{name: "cluster unknown subcommand", args: []string{"cluster", "bogus"}, want: exitcode.Usage},
+		{name: "cache unknown subcommand", args: []string{"cache", "bogus"}, want: exitcode.Usage},
+		{name: "runs unknown subcommand", args: []string{"runs", "bogus"}, want: exitcode.Usage},
+		{name: "bare cluster stays success", args: []string{"cluster"}, want: exitcode.OK},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := runRoot(t, tc.args)
+			if got := exitcode.From(err); got != tc.want {
+				t.Fatalf("exit code for %v = %d, want %d; err=%v", tc.args, got, tc.want, err)
+			}
+			if tc.want != exitcode.OK && err == nil {
+				t.Fatalf("expected error for args %v", tc.args)
+			}
+		})
+	}
+}

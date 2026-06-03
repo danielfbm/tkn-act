@@ -48,12 +48,16 @@ func newClusterCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cluster",
 		Short: "Manage the local k3d cluster used by --cluster",
+		Args:  cobra.NoArgs,
 		Long: `Manage the ephemeral k3d cluster used by 'tkn-act run --cluster'.
 
 Requires k3d and kubectl on PATH; run 'tkn-act doctor' to verify.`,
 		Example: `  tkn-act cluster up
   tkn-act cluster status -o json
   tkn-act cluster down -y`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
 	}
 	cmd.AddCommand(newClusterUpCmd(), newClusterDownCmd(), newClusterStatusCmd())
 	return cmd
