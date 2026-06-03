@@ -32,3 +32,30 @@ func TestSidecarInfraFailExitCodeDistinctFromTimeout(t *testing.T) {
 		t.Fatalf("exitcode.Pipeline (%d) must NOT equal exitcode.Timeout (%d)", exitcode.Pipeline, exitcode.Timeout)
 	}
 }
+
+func TestCobraUsageErrorsExitWithUsageCode(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{name: "unknown flag", args: []string{"--bogus"}},
+		{name: "missing flag arg", args: []string{"run", "--param"}},
+		{name: "invalid flag value", args: []string{"cache", "prune", "--older-than", "banana"}},
+		{name: "unknown command", args: []string{"bogus"}},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := runRoot(t, tc.args)
+			if err == nil {
+				t.Fatalf("expected error for args %v", tc.args)
+			}
+			if got := exitcode.From(err); got != exitcode.Usage {
+				t.Fatalf("exit code for %v = %d, want %d; err=%v", tc.args, got, exitcode.Usage, err)
+			}
+		})
+	}
+}

@@ -8,7 +8,12 @@
 // reuse.
 package exitcode
 
-import "errors"
+import (
+	"errors"
+	"strings"
+
+	"github.com/spf13/pflag"
+)
 
 const (
 	OK        = 0   // success
@@ -56,5 +61,31 @@ func From(err error) int {
 	if errors.As(err, &e) {
 		return e.Code
 	}
+	if isUsageError(err) {
+		return Usage
+	}
 	return Generic
+}
+
+func isUsageError(err error) bool {
+	var notExist *pflag.NotExistError
+	if errors.As(err, &notExist) {
+		return true
+	}
+	var valueRequired *pflag.ValueRequiredError
+	if errors.As(err, &valueRequired) {
+		return true
+	}
+	var invalidValue *pflag.InvalidValueError
+	if errors.As(err, &invalidValue) {
+		return true
+	}
+	var invalidSyntax *pflag.InvalidSyntaxError
+	if errors.As(err, &invalidSyntax) {
+		return true
+	}
+
+	// Cobra's unknown-command path returns a plain fmt.Errorf, not a
+	// dedicated exported error type, so classify the stable message prefix.
+	return strings.HasPrefix(err.Error(), "unknown command ")
 }
