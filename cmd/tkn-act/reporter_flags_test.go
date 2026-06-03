@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/danielfbm/tkn-act/internal/exitcode"
@@ -78,5 +79,22 @@ func TestRunRoot_QuietAndVerboseExitsWithUsageCode(t *testing.T) {
 	}
 	if errors.Is(err, errors.New("unknown flag")) { // sanity, unreachable
 		t.Fatalf("flags rejected: %v", err)
+	}
+}
+
+func TestRunRoot_RejectsUnknownOutputFormat(t *testing.T) {
+	_, _, err := runRoot(t, []string{"version", "--output", "garbage"})
+	if err == nil {
+		t.Fatal("expected error for unknown --output value")
+	}
+	if got := exitcode.From(err); got != exitcode.Usage {
+		t.Fatalf("exit code = %d, want %d", got, exitcode.Usage)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `unknown output format "garbage"`) {
+		t.Fatalf("error should name bad value, got %q", msg)
+	}
+	if !strings.Contains(msg, "valid: pretty, json") {
+		t.Fatalf("error should name valid formats, got %q", msg)
 	}
 }
