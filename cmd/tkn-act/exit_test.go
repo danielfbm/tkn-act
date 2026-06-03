@@ -34,8 +34,6 @@ func TestSidecarInfraFailExitCodeDistinctFromTimeout(t *testing.T) {
 }
 
 func TestCobraUsageErrorsExitWithUsageCode(t *testing.T) {
-	t.Parallel()
-
 	cases := []struct {
 		name string
 		args []string
@@ -61,8 +59,6 @@ func TestCobraUsageErrorsExitWithUsageCode(t *testing.T) {
 }
 
 func TestCommandGroupsRejectUnknownSubcommands(t *testing.T) {
-	t.Parallel()
-
 	cases := []struct {
 		name string
 		args []string
