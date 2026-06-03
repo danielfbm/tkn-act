@@ -18,6 +18,23 @@ type validateResult struct {
 	Errors   []string `json:"errors"`
 }
 
+func emitValidateJSONResult(res validateResult) {
+	if gf.output != "json" {
+		return
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(res)
+}
+
+func emitValidateJSONError(pipeline string, err error) {
+	emitValidateJSONResult(validateResult{
+		OK:       false,
+		Pipeline: pipeline,
+		Errors:   []string{err.Error()},
+	})
+}
+
 func newValidateCmd() *cobra.Command {
 	var (
 		files []string
@@ -43,17 +60,21 @@ tkn-act; exit code 4 means the YAML was rejected.`,
 				}
 				disc, err := discovery.Find(dir)
 				if err != nil {
+					emitValidateJSONError("", err)
 					return exitcode.Wrap(exitcode.Usage, err)
 				}
 				files = disc
 			}
 			b, err := loader.LoadFiles(files)
 			if err != nil {
+				emitValidateJSONError("", err)
 				return exitcode.Wrap(exitcode.Validate, err)
 			}
 			if pipe == "" {
 				if len(b.Pipelines) != 1 {
-					return exitcode.Wrap(exitcode.Usage, fmt.Errorf("multiple pipelines loaded; specify -p"))
+					err := fmt.Errorf("multiple pipelines loaded; specify -p")
+					emitValidateJSONError("", err)
+					return exitcode.Wrap(exitcode.Usage, err)
 				}
 				for n := range b.Pipelines {
 					pipe = n
@@ -65,9 +86,7 @@ tkn-act; exit code 4 means the YAML was rejected.`,
 				msgs[i] = e.Error()
 			}
 			if gf.output == "json" {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				_ = enc.Encode(validateResult{OK: len(errs) == 0, Pipeline: pipe, Errors: msgs})
+				emitValidateJSONResult(validateResult{OK: len(errs) == 0, Pipeline: pipe, Errors: msgs})
 			} else {
 				for _, m := range msgs {
 					fmt.Println("error:", m)
