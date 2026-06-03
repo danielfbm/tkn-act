@@ -117,8 +117,32 @@ deterministic and documented here rather than filed.
 - **#64** [S3/P2] `list -o json` empty dir exits 2.
 - **#65** [S4/P3] `runs list` order contradicts docs.
 
+### Signal sub-pass (Claude, SIG-001/002 + duration probe)
+Ran the exit-130 path that has no in-tree test (`test-coverage.md` §3). Two
+high-value defects, both deterministic (3 trials, SIGINT and SIGTERM):
+
+| Spec | Result | Exit | Note |
+|---|---|---:|---|
+| SIG-001/002 (exit code) | **FAIL** | 6 | SIGINT/SIGTERM → `status:"timeout"`, exit 6, not the documented 130 → **#67** |
+| SIG-001/002 (teardown) | PASS | — | no leaked `tkn-act-*` containers after the interrupted run |
+| duration probe | **FAIL** | — | `durationMs` is nanoseconds on **every** event (hello: wall ~218ms ↔ `durationMs:181659000`); root cause `internal/reporter/event.go:61` `Duration time.Duration json:"durationMs"` → **#66** |
+
+`#66` is the highest-reach correctness bug found: a stable JSON-contract field
+wrong by 1e6 for all runs, not just the signal path.
+
+### Issues filed in signal sub-pass
+- **#66** [S2/P1] `durationMs` contains nanoseconds, not milliseconds (every event).
+- **#67** [S2/P1] SIGINT/SIGTERM classified as timeout (exit 6) not cancelled (exit 130).
+
 ### Remaining for a follow-up pass
 - Area G live-server resolvers (RES-006..012) — stand up local git/http/OCI.
 - Area K cluster backend (CLS-001..008) — `cluster up` then the fixture diff.
 - Area L remote-docker (RMT-001..004).
-- SIG-001..003 (signal teardown, exit 130) and CNC-001/002 (concurrency).
+- SIG-003 (double Ctrl-C), CNC-001/002 (concurrency).
+- The `timeout` fixtures fire ~11s after a 1s declared timeout (image-pull
+  time + teardown is included in the budget?) — worth a focused look; not yet
+  filed pending confirmation it isn't just pull latency.
+
+### Pass tally
+**13 issues filed: #55–#67.** Severity mix: 0×S1, 10×S2, 2×S3, 1×S4.
+Priority mix: 1×P0 (#58 dup task names), 9×P1, 2×P2, 1×P3.

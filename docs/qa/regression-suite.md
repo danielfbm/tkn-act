@@ -109,6 +109,7 @@ Inline fixtures are minimal; paste into a scratch file `bad.yaml` per spec.
 | RUN-019 | `--max-parallel 1` vs default on a multi-task level | Both exit 0; ordering still correct; with `1`, no two tasks overlap. |
 | RUN-020 | `--max-parallel 0` / `-1` | Deterministic: either rejected (exit 2) or clamped; pin and document; no deadlock. |
 | RUN-021 | `--cleanup` on success and on failure | Workspace tmpdirs removed in both cases (inspect state/cache dirs after). |
+| RUN-022 | `run -f testdata/e2e/hello/pipeline.yaml -o json` then read `run-end.durationMs` | `durationMs` is in **milliseconds**: a sub-second run is in the low hundreds, not ~1e8. (Currently FAILS — emits nanoseconds, **#66**.) |
 
 ## F — volumes, templates, step shapes `DOCKER`
 
@@ -226,8 +227,8 @@ these run offline. `NET` only where a public endpoint is unavoidable.
 
 | ID | Cmd | Expect |
 |---|---|---|
-| SIG-001 | Ctrl-C (SIGINT) during a long step `DOCKER`+`SIG` | Exit 130; coherent terminal output; containers/volumes/networks torn down (`docker ps -a` shows no leaked `tkn-act-*`). |
-| SIG-002 | SIGTERM during image pull `DOCKER`+`SIG` | Exit 130; no orphaned resources. |
+| SIG-001 | Ctrl-C (SIGINT) during a long step `DOCKER`+`SIG` | (a) Exit **130** with `status:"cancelled"` (NOT timeout). Currently FAILS → exit 6/`status:"timeout"`, **#67**. (b) Containers/volumes/networks torn down — `docker ps -a` shows no leaked `tkn-act-*`. Currently PASSES. |
+| SIG-002 | SIGTERM during a long step `DOCKER`+`SIG` | Same as SIG-001; deterministic across SIGINT/SIGTERM. |
 | SIG-003 | double Ctrl-C `DOCKER`+`SIG` | Still exits 130; no panic; teardown best-effort. |
 | ABU-001 | 50MB YAML to `validate` | Bounded memory; deterministic exit; no OOM/panic. |
 | ABU-002 | YAML alias/anchor bomb | Loader bounds expansion; no hang/OOM; exit 4. |
