@@ -126,28 +126,28 @@ type Event struct {
 }
 
 type eventJSON struct {
-	Kind        EventKind     `json:"kind"`
-	Time        time.Time     `json:"time"`
-	RunID       string        `json:"runId,omitempty"`
-	Pipeline    string        `json:"pipeline,omitempty"`
-	Task        string        `json:"task,omitempty"`
-	Step        string        `json:"step,omitempty"`
-	Stream      string        `json:"stream,omitempty"`
-	Line        string        `json:"line,omitempty"`
-	Status      string        `json:"status,omitempty"`
-	ExitCode    int           `json:"exitCode,omitempty"`
-	Duration    int64         `json:"durationMs,omitempty"`
-	Message     string        `json:"message,omitempty"`
-	Attempt     int           `json:"attempt,omitempty"`
+	Kind        EventKind      `json:"kind"`
+	Time        time.Time      `json:"time"`
+	RunID       string         `json:"runId,omitempty"`
+	Pipeline    string         `json:"pipeline,omitempty"`
+	Task        string         `json:"task,omitempty"`
+	Step        string         `json:"step,omitempty"`
+	Stream      string         `json:"stream,omitempty"`
+	Line        string         `json:"line,omitempty"`
+	Status      string         `json:"status,omitempty"`
+	ExitCode    int            `json:"exitCode,omitempty"`
+	Duration    int64          `json:"durationMs,omitempty"`
+	Message     string         `json:"message,omitempty"`
+	Attempt     int            `json:"attempt,omitempty"`
 	Results     map[string]any `json:"results,omitempty"`
-	DisplayName string        `json:"display_name,omitempty"`
-	Description string        `json:"description,omitempty"`
-	Resolver    string        `json:"resolver,omitempty"`
-	Cached      bool          `json:"cached,omitempty"`
-	SHA256      string        `json:"sha256,omitempty"`
-	Source      string        `json:"source,omitempty"`
-	Matrix      *MatrixEvent  `json:"matrix,omitempty"`
-	Component   string        `json:"component,omitempty"`
+	DisplayName string         `json:"display_name,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Resolver    string         `json:"resolver,omitempty"`
+	Cached      bool           `json:"cached,omitempty"`
+	SHA256      string         `json:"sha256,omitempty"`
+	Source      string         `json:"source,omitempty"`
+	Matrix      *MatrixEvent   `json:"matrix,omitempty"`
+	Component   string         `json:"component,omitempty"`
 	Fields      map[string]any `json:"fields,omitempty"`
 }
 
