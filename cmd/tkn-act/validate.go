@@ -71,13 +71,23 @@ tkn-act; exit code 4 means the YAML was rejected.`,
 				return exitcode.Wrap(exitcode.Validate, err)
 			}
 			if pipe == "" {
-				if len(b.Pipelines) != 1 {
-					err := fmt.Errorf("multiple pipelines loaded; specify -p")
+				switch len(b.Pipelines) {
+				case 0:
+					err := fmt.Errorf("no Pipeline found in loaded files")
 					emitValidateJSONError("", err)
 					return exitcode.Wrap(exitcode.Usage, err)
-				}
-				for n := range b.Pipelines {
-					pipe = n
+				case 1:
+					for n := range b.Pipelines {
+						pipe = n
+					}
+				default:
+					names := make([]string, 0, len(b.Pipelines))
+					for n := range b.Pipelines {
+						names = append(names, n)
+					}
+					err := fmt.Errorf("multiple pipelines loaded (%v); specify -p", names)
+					emitValidateJSONError("", err)
+					return exitcode.Wrap(exitcode.Usage, err)
 				}
 			}
 			errs := validator.Validate(b, pipe, nil)
