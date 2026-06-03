@@ -33,7 +33,7 @@ Result columns to fill per pass in `findings-log.md`: `PASS` / `FAIL` /
 | CLI-004 | `$B --frobnicate` | Exit 2 (usage); stderr names the unknown flag; no panic/stacktrace. |
 | CLI-005 | `$B nonexistent-subcommand` | Exit 2; stderr `unknown command`; no panic. |
 | CLI-006 | `$B run --param` (missing value) | Exit 2; message indicates a value is required. |
-| CLI-007 | `$B agent-guide --list` | Exit 0; lists section names that 1:1 match `docs/agent-guide/*.md` basenames. |
+| CLI-007 | `$B agent-guide --list` | Exit 0; section names match the curated order in `cmd/tkn-act/internal/agentguide/order.go`. Note: `README.md` is surfaced as the curated name `overview` — that mapping is intentional, not a mismatch. |
 | CLI-008 | `$B agent-guide --section resolvers` | Exit 0; prints the resolvers section only. |
 | CLI-009 | `$B agent-guide --section does-not-exist` | Non-zero exit; message lists/points to valid sections; no panic. |
 | CLI-010 | `$B version --output garbage` | Defined behaviour: either exit 2 (unknown format) **or** documented fallback — pin the observed behaviour; must not panic or emit half-JSON. |
@@ -114,7 +114,7 @@ Inline fixtures are minimal; paste into a scratch file `bad.yaml` per spec.
 
 | ID | Cmd | Expect |
 |---|---|---|
-| VOL-001 | `$B run -f testdata/e2e/volumes/pipeline.yaml -o json` | Exit 0; inline configMap + emptyDir mounted & readable. |
+| VOL-001 | `$B run -f testdata/e2e/volumes/pipeline.yaml --configmap app-config=greeting=hello-from-cm -o json` | Exit 0; configMap + emptyDir mounted & readable. NOTE: the fixture's `app-config` configMap is seeded by the Go e2e harness (`internal/e2e/fixtures.go`, descriptor `ConfigMaps`), so the standalone CLI invocation must supply it via `--configmap` (or `--configmap-dir`); a bare `run -f` is *expected* to fail with `source "app-config" has no keys`. |
 | VOL-002 | `$B run -f testdata/e2e/configmap-from-yaml/pipeline.yaml -o json` | Exit 0; embedded `kind: ConfigMap` mounted. |
 | VOL-003 | `$B run -f testdata/e2e/secret-from-yaml/pipeline.yaml -o json` | Exit 0; both `data` (base64) and `stringData` projected; stringData wins. |
 | VOL-004 | inline + dir + embedded same `(name,key)` | Precedence inline > dir > embedded observed in mounted value. |
@@ -175,7 +175,7 @@ these run offline. `NET` only where a public endpoint is unavoidable.
 | LOG-005 | `$B logs` with empty store | Deterministic non-zero exit; clear message; no panic. |
 | LOG-006 | `$B logs 999` (out of range) | Deterministic non-zero exit; clear "not found". |
 | LOG-007 | `$B run` a **failing** pipeline, then `$B logs latest -o json` `DOCKER` | Failed run persisted and replays with the failure status intact. |
-| LOG-008 | ambiguous ulid prefix `$B logs 0` | Error "ambiguous" (not arbitrary pick). |
+| LOG-008 | ambiguous id `$B logs <ambiguous-ulid-prefix>` | Error "ambiguous" (not arbitrary pick). NOTE: an all-digit id like `0` is parsed as a *sequence number* (rejected as non-positive), not as a ULID prefix — that precedence is by design; use a real shared base32 prefix to exercise the ambiguous-prefix path. |
 | LOG-009 | `$B logs latest --task <t> --step <s> -o json` | Same filtering on replay as live. |
 | RNS-001 | `TKN_ACT_KEEP_RUNS=2 $B runs prune` after ≥3 runs | Keeps newest 2. |
 | RNS-002 | `TKN_ACT_KEEP_RUNS=0 $B runs prune` | Count gate disabled; nothing pruned by count. |
