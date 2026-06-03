@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"time"
 
+	"github.com/danielfbm/tkn-act/internal/exitcode"
 	"github.com/spf13/cobra"
 )
 
@@ -104,6 +106,9 @@ Designed for both humans and AI agents:
 		RunE: func(c *cobra.Command, args []string) error {
 			return runDefault(c, args)
 		},
+		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+			return validateGlobalFlags()
+		},
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -170,4 +175,14 @@ Designed for both humans and AI agents:
 	cmd.AddCommand(newLogsCmd())
 	cmd.AddCommand(newRunsCmd())
 	return cmd
+}
+
+func validateGlobalFlags() error {
+	switch gf.output {
+	case "pretty", "json":
+		return nil
+	default:
+		return exitcode.Wrap(exitcode.Usage,
+			fmt.Errorf("unknown output format %q; valid: pretty, json", gf.output))
+	}
 }

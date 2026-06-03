@@ -110,7 +110,7 @@ Inline fixtures are minimal; paste into a scratch file `bad.yaml` per spec.
 | RUN-019 | `--max-parallel 1` vs default on a multi-task level | Both exit 0; ordering still correct; with `1`, no two tasks overlap. |
 | RUN-020 | `--max-parallel 0` / `-1` | Deterministic: either rejected (exit 2) or clamped; pin and document; no deadlock. |
 | RUN-021 | `--cleanup` on success and on failure | Workspace tmpdirs removed in both cases (inspect state/cache dirs after). |
-| RUN-022 | `run -f testdata/e2e/hello/pipeline.yaml -o json` then read `run-end.durationMs` | `durationMs` is in **milliseconds**: a sub-second run is in the low hundreds, not ~1e8. (Currently FAILS — emits nanoseconds, **#66**.) |
+| RUN-022 | `run -f testdata/e2e/hello/pipeline.yaml -o json` then read `run-end.durationMs` | `durationMs` is in **milliseconds**: a sub-second run is in the low hundreds, not ~1e8. (Fixed in **#66**; guarded by `internal/reporter/event_test.go`.) |
 
 ## F — volumes, templates, step shapes `DOCKER`
 

@@ -43,6 +43,7 @@ func newCacheCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cache",
 		Short: "Inspect and manage the resolver cache",
+		Args:  cobra.NoArgs,
 		Long: `Inspect and manage the on-disk resolver cache populated by every
 direct/remote resolver dispatch. The cache root defaults to
 $XDG_CACHE_HOME/tkn-act/resolved/ and can be overridden with
@@ -60,6 +61,9 @@ Subcommands: list, prune, clear.`,
 
   # Wipe everything (-y required for non-interactive use)
   tkn-act cache clear -y`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
 	}
 
 	listCmd := &cobra.Command{

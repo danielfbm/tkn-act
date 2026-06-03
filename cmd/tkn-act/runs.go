@@ -19,6 +19,7 @@ func newRunsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "runs",
 		Short: "Manage the local store of past tkn-act runs",
+		Args:  cobra.NoArgs,
 		Long: `Inspect and prune the on-disk store populated by 'tkn-act run'.
 
 The state-dir defaults to $XDG_DATA_HOME/tkn-act (override via
@@ -26,6 +27,9 @@ The state-dir defaults to $XDG_DATA_HOME/tkn-act (override via
 record there; retention defaults keep the most recent 50 runs and
 drop anything older than 30 days (configurable via
 TKN_ACT_KEEP_RUNS / TKN_ACT_KEEP_DAYS).`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
 	}
 	cmd.AddCommand(newRunsListCmd(), newRunsShowCmd(), newRunsPruneCmd())
 	return cmd

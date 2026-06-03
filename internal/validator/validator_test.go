@@ -860,6 +860,35 @@ spec:
 	}
 }
 
+func TestValidateDuplicatePipelineTaskName(t *testing.T) {
+	b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps:
+    - {name: s, image: alpine:3, script: 'true'}
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - {name: build, taskRef: {name: t}}
+    - {name: build, taskRef: {name: t}}
+`)
+	errs := validator.Validate(b, "p", nil)
+	if len(errs) == 0 {
+		t.Fatal("expected error for duplicate pipeline task name")
+	}
+	for _, err := range errs {
+		if strings.Contains(err.Error(), `duplicate pipeline task "build"`) {
+			return
+		}
+	}
+	t.Fatalf("expected duplicate pipeline task error, got %v", errs)
+}
+
 func TestValidateSidecarNameCollidesWithStep(t *testing.T) {
 	b := mustLoad(t, `
 apiVersion: tekton.dev/v1

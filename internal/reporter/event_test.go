@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/danielfbm/tkn-act/internal/reporter"
 )
@@ -59,5 +60,37 @@ func TestNonDebugEvent_OmitsComponentAndFields(t *testing.T) {
 	}
 	if strings.Contains(string(b), `"fields"`) {
 		t.Errorf("unexpected fields key: %s", b)
+	}
+}
+
+func TestEventDurationJSONUsesMilliseconds(t *testing.T) {
+	e := reporter.Event{
+		Kind:     reporter.EvtTaskEnd,
+		Task:     "build",
+		Duration: 1500 * time.Millisecond,
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"durationMs":1500`) {
+		t.Fatalf("durationMs should be milliseconds, got %s", b)
+	}
+	if strings.Contains(string(b), `"durationMs":1500000000`) {
+		t.Fatalf("durationMs leaked raw nanoseconds: %s", b)
+	}
+}
+
+func TestEventDurationJSONOmitsZero(t *testing.T) {
+	e := reporter.Event{
+		Kind: reporter.EvtTaskEnd,
+		Task: "build",
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), `"durationMs"`) {
+		t.Fatalf("zero duration should be omitted, got %s", b)
 	}
 }
