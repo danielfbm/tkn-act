@@ -356,6 +356,29 @@ func validateCore(b *loader.Bundle, pipelineName string, _ map[string]bool) []er
 		}
 	}
 
+	// 8d. PipelineTask.params: every $(tasks.X.results.Y) reference must
+	// name a task that exists in spec.tasks ∪ spec.finally.
+	if len(all) > 0 {
+		known := map[string]bool{}
+		for _, pt := range pl.Spec.Tasks {
+			known[pt.Name] = true
+		}
+		for _, pt := range pl.Spec.Finally {
+			known[pt.Name] = true
+		}
+		for _, pt := range all {
+			for _, p := range pt.Params {
+				collectStrings(p.Value, func(s string) {
+					for _, ref := range extractTaskRefs(s) {
+						if !known[ref] {
+							errs = append(errs, fmt.Errorf("pipeline task %q references unknown task %q in $(tasks...results...) (must be in spec.tasks or spec.finally)", pt.Name, ref))
+						}
+					}
+				})
+			}
+		}
+	}
+
 	// 9. Step.OnError values must be empty, "continue", or "stopAndFail".
 	for taskName, spec := range resolvedTasks {
 		for _, st := range spec.Steps {
