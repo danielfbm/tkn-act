@@ -104,6 +104,36 @@ binaryData:
 	}
 }
 
+func TestRejectsPathTraversalConfigMapAndSecretKeys(t *testing.T) {
+	t.Run("configmap", func(t *testing.T) {
+		yaml := []byte(`
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: c}
+data:
+  "../escape": nope
+`)
+		_, err := loader.LoadBytes(yaml)
+		if err == nil || !strings.Contains(err.Error(), `key "../escape" must be a relative path without ".."`) {
+			t.Fatalf("err = %v, want path traversal error", err)
+		}
+	})
+
+	t.Run("secret", func(t *testing.T) {
+		yaml := []byte(`
+apiVersion: v1
+kind: Secret
+metadata: {name: s}
+stringData:
+  "../escape": nope
+`)
+		_, err := loader.LoadBytes(yaml)
+		if err == nil || !strings.Contains(err.Error(), `key "../escape" must be a relative path without ".."`) {
+			t.Fatalf("err = %v, want path traversal error", err)
+		}
+	})
+}
+
 func TestRejectsDuplicateConfigMap(t *testing.T) {
 	yaml := []byte(`
 apiVersion: v1

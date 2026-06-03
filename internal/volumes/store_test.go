@@ -110,6 +110,19 @@ func TestMaterializeConfigMap(t *testing.T) {
 	}
 }
 
+func TestMaterializeConfigMapRejectsTraversalKeyInDefaultProjection(t *testing.T) {
+	cm := volumes.NewStore("")
+	cm.Add("greeter", "../escape", "nope")
+
+	_, err := volumes.MaterializeForTask("t", []tektontypes.Volume{{
+		Name:      "g",
+		ConfigMap: &tektontypes.ConfigMapSource{Name: "greeter"},
+	}}, t.TempDir(), cm, nil)
+	if err == nil || !strings.Contains(err.Error(), `must be a relative path without ".."`) {
+		t.Fatalf("err = %v, want path traversal error", err)
+	}
+}
+
 func TestMaterializeConfigMapWithItems(t *testing.T) {
 	cm := volumes.NewStore("")
 	cm.Add("g", "msg", "hello")
