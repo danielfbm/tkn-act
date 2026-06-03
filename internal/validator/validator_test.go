@@ -889,6 +889,67 @@ spec:
 	t.Fatalf("expected duplicate pipeline task error, got %v", errs)
 }
 
+func TestValidatePipelineTaskParamTaskResultRefs(t *testing.T) {
+	t.Run("rejects unknown task", func(t *testing.T) {
+		b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps:
+    - {name: s, image: alpine:3, script: 'true'}
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - {name: build, taskRef: {name: t}}
+    - name: use
+      taskRef: {name: t}
+      params:
+        - name: v
+          value: "$(tasks.nope.results.x)"
+`)
+		errs := validator.Validate(b, "p", nil)
+		if len(errs) == 0 {
+			t.Fatal("expected unknown task result ref error")
+		}
+		for _, err := range errs {
+			if strings.Contains(err.Error(), `unknown task "nope"`) {
+				return
+			}
+		}
+		t.Fatalf("expected error mentioning unknown task nope, got %v", errs)
+	})
+
+	t.Run("accepts existing task", func(t *testing.T) {
+		b := mustLoad(t, `
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps:
+    - {name: s, image: alpine:3, script: 'true'}
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - {name: build, taskRef: {name: t}}
+    - name: use
+      taskRef: {name: t}
+      params:
+        - name: v
+          value: "$(tasks.build.results.x)"
+`)
+		if errs := validator.Validate(b, "p", nil); len(errs) != 0 {
+			t.Fatalf("unexpected errors: %v", errs)
+		}
+	})
+}
+
 func TestValidateSidecarNameCollidesWithStep(t *testing.T) {
 	b := mustLoad(t, `
 apiVersion: tekton.dev/v1

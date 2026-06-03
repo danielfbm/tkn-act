@@ -204,6 +204,9 @@ func materializeKeyValueDir(dst string, store *Store, name string, items []tekto
 	if len(items) == 0 {
 		// Default: every key becomes <name-of-key> in dst.
 		for k, v := range bytesByKey {
+			if err := validateProjectedPath(k); err != nil {
+				return "", err
+			}
 			if err := os.WriteFile(filepath.Join(dst, k), v, 0o644); err != nil {
 				return "", err
 			}
@@ -221,8 +224,8 @@ func materializeKeyValueDir(dst string, store *Store, name string, items []tekto
 			path = it.Key
 		}
 		// Disallow path escapes via subpath traversal.
-		if strings.HasPrefix(path, "/") || strings.Contains(path, "..") {
-			return "", fmt.Errorf("items.path %q must be a relative path inside the volume", path)
+		if err := validateProjectedPath(path); err != nil {
+			return "", fmt.Errorf("items.path %q must be a relative path inside the volume: %w", path, err)
 		}
 		full := filepath.Join(dst, path)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -233,4 +236,11 @@ func materializeKeyValueDir(dst string, store *Store, name string, items []tekto
 		}
 	}
 	return dst, nil
+}
+
+func validateProjectedPath(path string) error {
+	if filepath.IsAbs(path) || strings.Contains(path, "..") {
+		return fmt.Errorf("must be a relative path without \"..\" (path traversal)")
+	}
+	return nil
 }

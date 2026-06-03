@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/danielfbm/tkn-act/internal/exitcode"
@@ -113,6 +114,36 @@ func TestValidateExitCodeOnBadFile(t *testing.T) {
 	}
 }
 
+func TestValidateJSONOnLoadError(t *testing.T) {
+	tmp := t.TempDir()
+	bad := filepath.Join(tmp, "unsupported.yaml")
+	if werr := os.WriteFile(bad, []byte(`
+apiVersion: tekton.dev/v99
+kind: Pipeline
+metadata: {name: p}
+spec: {}
+`), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	stdout, _, err := runRoot(t, []string{"validate", "-f", bad, "-o", "json"})
+	if err == nil {
+		t.Fatal("expected error for unsupported apiVersion")
+	}
+	if got := exitcode.From(err); got != exitcode.Validate {
+		t.Fatalf("exit code = %d, want %d", got, exitcode.Validate)
+	}
+	var got validateResult
+	if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil {
+		t.Fatalf("decode: %v\nout=%s", jerr, stdout)
+	}
+	if got.OK {
+		t.Fatalf("ok = true, want false; got %+v", got)
+	}
+	if len(got.Errors) == 0 {
+		t.Fatalf("expected non-empty errors, got %+v", got)
+	}
+}
+
 func TestValidateNoFilesUsageCode(t *testing.T) {
 	tmp := t.TempDir()
 	_, _, err := runRoot(t, []string{"validate", "-C", tmp})
@@ -121,5 +152,35 @@ func TestValidateNoFilesUsageCode(t *testing.T) {
 	}
 	if got := exitcode.From(err); got != exitcode.Usage {
 		t.Errorf("exit code = %d, want %d", got, exitcode.Usage)
+	}
+}
+
+func TestValidateEmptyFileMatchesRunNoPipelineMessage(t *testing.T) {
+	tmp := t.TempDir()
+	empty := filepath.Join(tmp, "empty.yaml")
+	if werr := os.WriteFile(empty, nil, 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+
+	_, _, validateErr := runRoot(t, []string{"validate", "-f", empty})
+	if validateErr == nil {
+		t.Fatal("expected validate error for empty file")
+	}
+	if got := exitcode.From(validateErr); got != exitcode.Usage {
+		t.Fatalf("validate exit code = %d, want %d", got, exitcode.Usage)
+	}
+	if strings.Contains(validateErr.Error(), "multiple pipelines loaded") {
+		t.Fatalf("validate error = %q, want no-pipeline message", validateErr.Error())
+	}
+
+	_, _, runErr := runRoot(t, []string{"run", "-f", empty})
+	if runErr == nil {
+		t.Fatal("expected run error for empty file")
+	}
+	if got := exitcode.From(runErr); got != exitcode.Usage {
+		t.Fatalf("run exit code = %d, want %d", got, exitcode.Usage)
+	}
+	if validateErr.Error() != runErr.Error() {
+		t.Fatalf("validate error = %q, run error = %q; want exact match", validateErr.Error(), runErr.Error())
 	}
 }

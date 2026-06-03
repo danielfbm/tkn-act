@@ -7,7 +7,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	"sigs.k8s.io/yaml"
@@ -215,6 +217,9 @@ func loadConfigMap(out *Bundle, data []byte) error {
 	}
 	bytesByKey := make(map[string][]byte, len(cm.Data))
 	for k, v := range cm.Data {
+		if err := validateVolumeDataKey("ConfigMap", cm.Metadata.Name, k); err != nil {
+			return err
+		}
 		bytesByKey[k] = []byte(v)
 	}
 	out.ConfigMaps[cm.Metadata.Name] = bytesByKey
@@ -246,6 +251,9 @@ func loadSecret(out *Bundle, data []byte) error {
 	}
 	bytesByKey := make(map[string][]byte, len(s.Data)+len(s.StringData))
 	for k, v := range s.Data {
+		if err := validateVolumeDataKey("Secret", s.Metadata.Name, k); err != nil {
+			return err
+		}
 		dec, err := base64.StdEncoding.DecodeString(v)
 		if err != nil {
 			return fmt.Errorf("secret %q: data[%q] is not valid base64: %w", s.Metadata.Name, k, err)
@@ -254,9 +262,19 @@ func loadSecret(out *Bundle, data []byte) error {
 	}
 	// stringData wins over data on the same key (kube projection rule).
 	for k, v := range s.StringData {
+		if err := validateVolumeDataKey("Secret", s.Metadata.Name, k); err != nil {
+			return err
+		}
 		bytesByKey[k] = []byte(v)
 	}
 	out.Secrets[s.Metadata.Name] = bytesByKey
+	return nil
+}
+
+func validateVolumeDataKey(kind, name, key string) error {
+	if filepath.IsAbs(key) || strings.Contains(key, "..") {
+		return fmt.Errorf("%s %q: key %q must be a relative path without \"..\" (path traversal)", kind, name, key)
+	}
 	return nil
 }
 
