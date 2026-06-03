@@ -3,6 +3,7 @@
 package reporter
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -122,6 +123,93 @@ type Event struct {
 	// "image": "alpine"}). Set only on EvtDebug. Encoded as a JSON
 	// object; values must be JSON-serializable.
 	Fields map[string]any `json:"fields,omitempty"`
+}
+
+type eventJSON struct {
+	Kind        EventKind     `json:"kind"`
+	Time        time.Time     `json:"time"`
+	RunID       string        `json:"runId,omitempty"`
+	Pipeline    string        `json:"pipeline,omitempty"`
+	Task        string        `json:"task,omitempty"`
+	Step        string        `json:"step,omitempty"`
+	Stream      string        `json:"stream,omitempty"`
+	Line        string        `json:"line,omitempty"`
+	Status      string        `json:"status,omitempty"`
+	ExitCode    int           `json:"exitCode,omitempty"`
+	Duration    int64         `json:"durationMs,omitempty"`
+	Message     string        `json:"message,omitempty"`
+	Attempt     int           `json:"attempt,omitempty"`
+	Results     map[string]any `json:"results,omitempty"`
+	DisplayName string        `json:"display_name,omitempty"`
+	Description string        `json:"description,omitempty"`
+	Resolver    string        `json:"resolver,omitempty"`
+	Cached      bool          `json:"cached,omitempty"`
+	SHA256      string        `json:"sha256,omitempty"`
+	Source      string        `json:"source,omitempty"`
+	Matrix      *MatrixEvent  `json:"matrix,omitempty"`
+	Component   string        `json:"component,omitempty"`
+	Fields      map[string]any `json:"fields,omitempty"`
+}
+
+func (e Event) MarshalJSON() ([]byte, error) {
+	return json.Marshal(eventJSON{
+		Kind:        e.Kind,
+		Time:        e.Time,
+		RunID:       e.RunID,
+		Pipeline:    e.Pipeline,
+		Task:        e.Task,
+		Step:        e.Step,
+		Stream:      e.Stream,
+		Line:        e.Line,
+		Status:      e.Status,
+		ExitCode:    e.ExitCode,
+		Duration:    e.Duration.Milliseconds(),
+		Message:     e.Message,
+		Attempt:     e.Attempt,
+		Results:     e.Results,
+		DisplayName: e.DisplayName,
+		Description: e.Description,
+		Resolver:    e.Resolver,
+		Cached:      e.Cached,
+		SHA256:      e.SHA256,
+		Source:      e.Source,
+		Matrix:      e.Matrix,
+		Component:   e.Component,
+		Fields:      e.Fields,
+	})
+}
+
+func (e *Event) UnmarshalJSON(data []byte) error {
+	var dec eventJSON
+	if err := json.Unmarshal(data, &dec); err != nil {
+		return err
+	}
+	*e = Event{
+		Kind:        dec.Kind,
+		Time:        dec.Time,
+		RunID:       dec.RunID,
+		Pipeline:    dec.Pipeline,
+		Task:        dec.Task,
+		Step:        dec.Step,
+		Stream:      dec.Stream,
+		Line:        dec.Line,
+		Status:      dec.Status,
+		ExitCode:    dec.ExitCode,
+		Duration:    time.Duration(dec.Duration) * time.Millisecond,
+		Message:     dec.Message,
+		Attempt:     dec.Attempt,
+		Results:     dec.Results,
+		DisplayName: dec.DisplayName,
+		Description: dec.Description,
+		Resolver:    dec.Resolver,
+		Cached:      dec.Cached,
+		SHA256:      dec.SHA256,
+		Source:      dec.Source,
+		Matrix:      dec.Matrix,
+		Component:   dec.Component,
+		Fields:      dec.Fields,
+	}
+	return nil
 }
 
 // MatrixEvent identifies one expansion of a matrix-fanned
