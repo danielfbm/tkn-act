@@ -39,7 +39,7 @@ func newRunsListCmd() *cobra.Command {
 	var all bool
 	c := &cobra.Command{
 		Use:   "list",
-		Short: "List recent stored runs (newest last)",
+		Short: "List recent stored runs (newest first)",
 		Example: `  # 20 most-recent runs as a table
   tkn-act runs list
 
@@ -69,7 +69,14 @@ func runRunsList(w io.Writer, all bool) error {
 	if !all && len(entries) > defaultListLimit {
 		entries = entries[len(entries)-defaultListLimit:]
 	}
-	return emitRunsList(w, entries)
+	// ReadIndexEntries returns oldest-first; present newest-first to match the
+	// agent-guide/README contract (and `logs`, which defaults to the newest
+	// run). Reverse a copy so we don't mutate the caller's slice.
+	reversed := make([]runstore.IndexEntry, len(entries))
+	for i, e := range entries {
+		reversed[len(entries)-1-i] = e
+	}
+	return emitRunsList(w, reversed)
 }
 
 func emitRunsList(w io.Writer, entries []runstore.IndexEntry) error {

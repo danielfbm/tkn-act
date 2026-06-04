@@ -43,8 +43,36 @@ func TestRunsList_JSON(t *testing.T) {
 	if len(got) != 2 {
 		t.Errorf("len = %d, want 2", len(got))
 	}
-	if got[1].ExitCode != 5 || got[1].Status != "failed" {
-		t.Errorf("second entry = %+v", got[1])
+	// Newest-first: the failed run (b.yaml, recorded second) is first.
+	if got[0].ExitCode != 5 || got[0].Status != "failed" {
+		t.Errorf("first entry = %+v, want the newest (failed) run", got[0])
+	}
+}
+
+// #65: `runs list` must be newest-first, matching the canonical agent-guide
+// (and README). runsFixture records seq 1 (a.yaml, succeeded) then seq 2
+// (b.yaml, failed), so the newest (seq 2) must appear first.
+func TestRunsList_NewestFirst(t *testing.T) {
+	dir := t.TempDir()
+	runsFixture(t, dir)
+	gf = globalFlags{output: "json", stateDir: dir}
+
+	var buf bytes.Buffer
+	if err := runRunsList(&buf, false); err != nil {
+		t.Fatalf("runRunsList: %v", err)
+	}
+	var got []runstore.IndexEntry
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].Seq != 2 || got[0].Status != "failed" {
+		t.Errorf("first entry = {seq:%d status:%q}, want newest (seq 2, failed) first", got[0].Seq, got[0].Status)
+	}
+	if got[1].Seq != 1 {
+		t.Errorf("last entry seq = %d, want oldest (seq 1) last", got[1].Seq)
 	}
 }
 
@@ -98,9 +126,13 @@ func TestRunsList_TruncatesTo20ByDefault(t *testing.T) {
 	if len(got) != 20 {
 		t.Errorf("default truncation = %d, want 20", len(got))
 	}
-	// Truncation keeps the MOST RECENT entries.
-	if got[len(got)-1].Seq != 25 {
-		t.Errorf("last entry seq = %d, want 25", got[len(got)-1].Seq)
+	// Truncation keeps the MOST RECENT entries, newest-first: seq 25 leads,
+	// seq 6 is the oldest of the kept 20-run window.
+	if got[0].Seq != 25 {
+		t.Errorf("first entry seq = %d, want 25 (newest)", got[0].Seq)
+	}
+	if got[len(got)-1].Seq != 6 {
+		t.Errorf("last entry seq = %d, want 6 (oldest kept)", got[len(got)-1].Seq)
 	}
 
 	// --all shows everything.
