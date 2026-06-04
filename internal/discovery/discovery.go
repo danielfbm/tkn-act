@@ -3,12 +3,19 @@
 package discovery
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 )
+
+// ErrNoneFound is returned (wrapped) by Find when the directory contains no
+// Tekton YAML. Callers that treat "nothing here" as a valid empty result
+// (e.g. `list`) detect it with errors.Is; callers that need a pipeline to act
+// on (`run`, `validate`) surface it as a usage error.
+var ErrNoneFound = errors.New("no tekton YAML found")
 
 // Find returns YAML files in dir that look like Tekton resources, in
 // deterministic order. Returns an error if nothing is found.
@@ -44,7 +51,7 @@ func Find(dir string) ([]string, error) {
 		out = append(out, found...)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("no tekton YAML found in %s (looked for pipeline.yaml, pipelinerun.yaml, .tekton/, tekton/)", dir)
+		return nil, fmt.Errorf("%w in %s (looked for pipeline.yaml, pipelinerun.yaml, .tekton/, tekton/)", ErrNoneFound, dir)
 	}
 	return out, nil
 }
