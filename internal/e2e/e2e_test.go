@@ -57,6 +57,92 @@ func TestE2E(t *testing.T) {
 	}
 }
 
+func TestBadImageStillEmitsTaskLifecycle(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: broken-task}
+spec:
+  steps:
+    - name: broken
+      image: does-not-exist.invalid/nope:nope
+      script: "true"
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: bad-image}
+spec:
+  tasks:
+    - name: broken
+      taskRef: {name: broken-task}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resultsRoot := t.TempDir()
+	engine.SetResultsDirProvisioner(func(_, taskName string) (string, error) {
+		p := filepath.Join(resultsRoot, taskName)
+		return p, os.MkdirAll(p, 0o755)
+	})
+
+	be, err := docker.New(docker.Options{
+		Remote:     os.Getenv("TKN_ACT_REMOTE_DOCKER"),
+		PauseImage: os.Getenv("TKN_ACT_PAUSE_IMAGE"),
+	})
+	if err != nil {
+		t.Skipf("docker: %v", err)
+	}
+
+	var eventBuf bytes.Buffer
+	jsonRep := reporter.NewJSON(&eventBuf)
+	cap := &captureSink{}
+	rep := reporter.NewTee(jsonRep, cap)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("event stream:\n%s", eventBuf.String())
+		}
+	})
+
+	res, err := engine.New(be, rep, engine.Options{MaxParallel: 1}).RunPipeline(
+		context.Background(),
+		engine.PipelineInput{
+			Bundle: b,
+			Name:   "bad-image",
+		},
+	)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if res.Status != "failed" {
+		t.Fatalf("status = %q, want failed", res.Status)
+	}
+
+	var sawTaskStart bool
+	var taskEnd reporter.Event
+	for _, ev := range cap.snapshot() {
+		switch ev.Kind {
+		case reporter.EvtTaskStart:
+			if ev.Task == "broken" {
+				sawTaskStart = true
+			}
+		case reporter.EvtTaskEnd:
+			if ev.Task == "broken" {
+				taskEnd = ev
+			}
+		}
+	}
+	if !sawTaskStart {
+		t.Fatal("missing task-start for broken task")
+	}
+	if taskEnd.Kind != reporter.EvtTaskEnd {
+		t.Fatal("missing task-end for broken task")
+	}
+	if taskEnd.Status != "infrafailed" {
+		t.Fatalf("task-end status = %q, want infrafailed", taskEnd.Status)
+	}
+}
+
 func runFixtureDocker(t *testing.T, f fixtures.Fixture) {
 	t.Helper()
 	ctx := context.Background()

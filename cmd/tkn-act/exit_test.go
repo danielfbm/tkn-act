@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/danielfbm/tkn-act/internal/exitcode"
@@ -55,6 +56,19 @@ func TestCobraUsageErrorsExitWithUsageCode(t *testing.T) {
 				t.Fatalf("exit code for %v = %d, want %d; err=%v", tc.args, got, exitcode.Usage, err)
 			}
 		})
+	}
+}
+
+func TestRunStatusCancelledMapsToExit130(t *testing.T) {
+	err := runStatusError("p", "cancelled")
+	if err == nil {
+		t.Fatal("expected error for cancelled run status")
+	}
+	if got := exitcode.From(err); got != exitcode.Cancelled {
+		t.Fatalf("exit code = %d, want %d", got, exitcode.Cancelled)
+	}
+	if !strings.Contains(err.Error(), `pipeline "p" cancelled`) {
+		t.Fatalf("error = %q, want contains pipeline cancelled message", err.Error())
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"github.com/danielfbm/tkn-act/internal/backend"
 	"github.com/danielfbm/tkn-act/internal/engine"
 	"github.com/danielfbm/tkn-act/internal/loader"
+	"github.com/danielfbm/tkn-act/internal/reporter"
 )
 
 // hangBackend blocks every RunTask until ctx is cancelled, so that any
@@ -19,6 +20,69 @@ func (hangBackend) Cleanup(_ context.Context) error                    { return 
 func (hangBackend) RunTask(ctx context.Context, _ backend.TaskInvocation) (backend.TaskResult, error) {
 	<-ctx.Done()
 	return backend.TaskResult{Status: backend.TaskInfraFailed, Err: ctx.Err()}, nil
+}
+
+type cancelAwareBackend struct {
+	started chan struct{}
+}
+
+func (b *cancelAwareBackend) Prepare(_ context.Context, _ backend.RunSpec) error { return nil }
+func (b *cancelAwareBackend) Cleanup(_ context.Context) error                    { return nil }
+func (b *cancelAwareBackend) RunTask(ctx context.Context, _ backend.TaskInvocation) (backend.TaskResult, error) {
+	close(b.started)
+	<-ctx.Done()
+	return backend.TaskResult{Status: backend.TaskInfraFailed, Err: ctx.Err()}, nil
+}
+
+func TestRootContextCancellationIsCancelledNotTimeout(t *testing.T) {
+	b, err := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps: [{name: s, image: alpine, script: 'sleep 60'}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - {name: a, taskRef: {name: t}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	be := &cancelAwareBackend{started: make(chan struct{})}
+	sink := &sliceSink{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	var res engine.RunResult
+	go func() {
+		defer close(done)
+		res, err = engine.New(be, sink, engine.Options{}).RunPipeline(ctx, engine.PipelineInput{Bundle: b, Name: "p"})
+	}()
+
+	<-be.started
+	cancel()
+	<-done
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "cancelled" {
+		t.Fatalf("status = %q, want cancelled", res.Status)
+	}
+	for _, ev := range sink.events {
+		if ev.Kind == reporter.EvtRunEnd {
+			if ev.Status != "cancelled" {
+				t.Fatalf("run-end status = %q, want cancelled", ev.Status)
+			}
+			return
+		}
+	}
+	t.Fatalf("no run-end event in %d events", len(sink.events))
 }
 
 func TestPipelineLevelTimeoutTriggers(t *testing.T) {

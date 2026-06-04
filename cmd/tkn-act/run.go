@@ -301,13 +301,19 @@ func runWith(rf runFlags) (retErr error) {
 	if !gf.cleanup {
 		fmt.Fprintf(os.Stderr, "workspace tmpdirs preserved at: %s\n", filepath.Join(cacheRoot, "run"))
 	}
-	switch res.Status {
+	return runStatusError(pipe, res.Status)
+}
+
+func runStatusError(pipe, status string) error {
+	switch status {
 	case "succeeded":
 		return nil
 	case "timeout":
-		return exitcode.Wrap(exitcode.Timeout, fmt.Errorf("pipeline %q %s", pipe, res.Status))
+		return exitcode.Wrap(exitcode.Timeout, fmt.Errorf("pipeline %q %s", pipe, status))
+	case "cancelled":
+		return exitcode.Wrap(exitcode.Cancelled, fmt.Errorf("pipeline %q %s", pipe, status))
 	default:
-		return exitcode.Wrap(exitcode.Pipeline, fmt.Errorf("pipeline %q %s", pipe, res.Status))
+		return exitcode.Wrap(exitcode.Pipeline, fmt.Errorf("pipeline %q %s", pipe, status))
 	}
 }
 

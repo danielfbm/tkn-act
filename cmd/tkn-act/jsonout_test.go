@@ -63,6 +63,31 @@ func TestListJSON(t *testing.T) {
 	}
 }
 
+// #64: `list -o json` in a directory with no Tekton YAML is a valid empty
+// result (exit 0 + empty arrays), not a usage error. Mirrors the shape the
+// agent-guide documents. `run`/`validate` keep their "nothing to run" errors.
+func TestListJSON_EmptyDirReturnsEmptyResult(t *testing.T) {
+	dir := t.TempDir() // empty: no pipeline.yaml, no .tekton/
+	stdout, _, err := runRoot(t, []string{"list", "-C", dir, "-o", "json"})
+	if err != nil {
+		t.Fatalf("list on an empty dir should succeed (exit 0), got error: %v", err)
+	}
+	var got listResult
+	if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil {
+		t.Fatalf("decode: %v\nout=%s", jerr, stdout)
+	}
+	if got.Pipelines == nil || len(got.Pipelines) != 0 {
+		t.Errorf("pipelines = %v, want empty []", got.Pipelines)
+	}
+	if got.Tasks == nil || len(got.Tasks) != 0 {
+		t.Errorf("tasks = %v, want empty []", got.Tasks)
+	}
+	// Must serialize as [] not null (stable agent contract).
+	if !strings.Contains(stdout, `"pipelines": []`) || !strings.Contains(stdout, `"tasks": []`) {
+		t.Errorf("want [] arrays in JSON, got:\n%s", stdout)
+	}
+}
+
 func TestValidateJSON(t *testing.T) {
 	repoRoot, _ := filepath.Abs("../../")
 	dir := filepath.Join(repoRoot, "testdata/e2e/hello")

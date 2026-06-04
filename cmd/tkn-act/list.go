@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -35,6 +36,13 @@ from the given directory (default: cwd).`,
 			}
 			files, err := discovery.Find(dir)
 			if err != nil {
+				// A directory with no Tekton YAML is a valid empty result for
+				// `list` (a query), not a usage error — emit empty arrays and
+				// exit 0. Any other discovery error (e.g. unreadable dir) is
+				// still a usage error.
+				if errors.Is(err, discovery.ErrNoneFound) {
+					return emitListResult(listResult{Pipelines: []string{}, Tasks: []string{}})
+				}
 				return exitcode.Wrap(exitcode.Usage, err)
 			}
 			b, err := loader.LoadFiles(files)
@@ -51,23 +59,29 @@ from the given directory (default: cwd).`,
 			}
 			sort.Strings(pipes)
 			sort.Strings(tasks)
-
-			if gf.output == "json" {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				return enc.Encode(listResult{Pipelines: pipes, Tasks: tasks})
-			}
-			fmt.Println("Pipelines:")
-			for _, n := range pipes {
-				fmt.Printf("  - %s\n", n)
-			}
-			fmt.Println("Tasks:")
-			for _, n := range tasks {
-				fmt.Printf("  - %s\n", n)
-			}
-			return nil
+			return emitListResult(listResult{Pipelines: pipes, Tasks: tasks})
 		},
 	}
 	cmd.Flags().StringVarP(&dir, "dir", "C", "", "directory to scan (default: cwd)")
 	return cmd
+}
+
+// emitListResult writes the discovered Pipelines/Tasks in the requested
+// format. Empty slices serialize as [] (never null) so the JSON shape stays
+// stable for agents even when nothing was discovered.
+func emitListResult(res listResult) error {
+	if gf.output == "json" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(res)
+	}
+	fmt.Println("Pipelines:")
+	for _, n := range res.Pipelines {
+		fmt.Printf("  - %s\n", n)
+	}
+	fmt.Println("Tasks:")
+	for _, n := range res.Tasks {
+		fmt.Printf("  - %s\n", n)
+	}
+	return nil
 }

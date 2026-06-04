@@ -228,7 +228,7 @@ these run offline. `NET` only where a public endpoint is unavoidable.
 
 | ID | Cmd | Expect |
 |---|---|---|
-| SIG-001 | Ctrl-C (SIGINT) during a long step `DOCKER`+`SIG` | (a) Exit **130** with `status:"cancelled"` (NOT timeout). Currently FAILS → exit 6/`status:"timeout"`, **#67**. (b) Containers/volumes/networks torn down — `docker ps -a` shows no leaked `tkn-act-*`. Currently PASSES. |
+| SIG-001 | Ctrl-C (SIGINT) during a long step `DOCKER`+`SIG` | (a) Exit **130** with `run-end status:"cancelled"` (NOT timeout) — fixed in **#67**, guarded by `internal/engine` + `cmd/tkn-act` tests; a declared timeout still reports `timeout`/exit 6. (b) Containers/volumes/networks torn down — `docker ps -a` shows no leaked `tkn-act-*`. |
 | SIG-002 | SIGTERM during a long step `DOCKER`+`SIG` | Same as SIG-001; deterministic across SIGINT/SIGTERM. |
 | SIG-003 | double Ctrl-C `DOCKER`+`SIG` | Still exits 130; no panic; teardown best-effort. |
 | ABU-001 | 50MB YAML to `validate` | Bounded memory; deterministic exit; no OOM/panic. |

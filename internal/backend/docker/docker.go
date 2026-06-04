@@ -293,9 +293,10 @@ func (b *Backend) Prepare(ctx context.Context, run backend.RunSpec) error {
 	}
 	b.scriptDir = d
 	for _, img := range run.Images {
-		if err := b.ensureImage(ctx, img, "IfNotPresent"); err != nil {
-			return err
-		}
+		// Best-effort warm-the-cache pull. The per-step ensureImage path in
+		// RunTask is authoritative and surfaces pull failures with task
+		// attribution, so Prepare must not abort the run here.
+		_ = b.ensureImage(ctx, img, "IfNotPresent")
 	}
 	if b.remote {
 		if err := b.startRemoteStaging(ctx, run.RunID, run.Workspaces); err != nil {
