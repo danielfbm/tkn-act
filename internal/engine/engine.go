@@ -5,6 +5,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -394,6 +395,9 @@ levelLoop:
 	// even if backends reported infrafailed mid-flight).
 	if pipeCtx.Err() != nil || finallyCtx.Err() != nil {
 		overall = "timeout"
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		overall = "cancelled"
 	}
 
 	// Resolve Pipeline.spec.results once every task (incl. finally) is
@@ -945,6 +949,9 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 	if err != nil {
 		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Duration: dur, Message: err.Error(), DisplayName: pl.Spec.DisplayName})
 		return RunResult{Status: "failed"}, err
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		res.Status = "cancelled"
 	}
 	e.emitClusterTaskEvents(pl, in.Bundle, res.Tasks)
 	// Cross-backend EvtError parity for dropped pipeline results: the

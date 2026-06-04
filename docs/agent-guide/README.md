@@ -113,8 +113,8 @@ attempts of a retried task; the terminal `task-end` carries `attempt: N`.
 `debug` events only appear with `--debug` set; they carry `component`
 (`backend`/`resolver`/`engine`) and a `fields` map — see
 [`debug.md`](debug.md) for the full enumeration.
-Task statuses: `succeeded`, `failed`, `infrafailed`, `skipped`, `not-run`,
-`timeout`. The exit code follows the table below.
+Run/task statuses: `succeeded`, `failed`, `infrafailed`, `skipped`,
+`not-run`, `timeout`, `cancelled`. The exit code follows the table below.
 
 ### Other JSON outputs
 
