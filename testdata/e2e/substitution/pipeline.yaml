@@ -48,7 +48,9 @@ spec:
     - name: whole
       taskRef: {name: check-args}
       params:
-        - {name: items, value: "$(params.arr[*])"}
+        # Canonical upstream form (docs/pipelines.md@v1.15.5). The bare
+        # string form `value: "$(params.arr[*])"` is unit-tested only.
+        - {name: items, value: ["$(params.arr[*])"]}
         - {name: want, value: "a b"}
     - name: spliced
       taskRef: {name: check-args}
