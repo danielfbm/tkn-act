@@ -15,6 +15,7 @@ var Order = []string{
 	"overview",
 	"docker-backend",
 	"variables",
+	"cluster-backend",
 	"step-template",
 	"sidecars",
 	"step-actions",

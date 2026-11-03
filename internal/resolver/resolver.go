@@ -83,6 +83,11 @@ type Context struct {
 	// finally task" and both refs error, matching Tekton.
 	TasksStatus  string
 	TaskStatuses map[string]string
+	// WorkspacePaths maps a Task workspace name to its in-container
+	// mount path (the declared mountPath). Names absent from the map
+	// resolve $(workspaces.<name>.path) to Tekton's default
+	// /workspace/<name>.
+	WorkspacePaths map[string]string
 }
 
 // substMode selects which lookup errors a substitution pass tolerates.
@@ -542,6 +547,9 @@ func lookupWorkspace(key string, ctx Context) (string, error) {
 	name, attr := rest[:dot], rest[dot+1:]
 	switch attr {
 	case "path":
+		if p, ok := ctx.WorkspacePaths[name]; ok && p != "" {
+			return p, nil
+		}
 		return "/workspace/" + name, nil
 	case "bound":
 		if ctx.BoundWorkspaces == nil {

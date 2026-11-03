@@ -624,6 +624,7 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		BoundWorkspaces: boundWorkspaces(spec, pt),
 	}
 
+	taskCtx.WorkspacePaths = workspaceMountPaths(spec.Workspaces)
 	// Substitute throughout the resolved Task spec. A substitution
 	// error fails the task: never run a step whose fields were blanked.
 	resolved, serr := substituteSpec(spec, taskCtx)

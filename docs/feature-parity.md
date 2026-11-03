@@ -119,6 +119,7 @@ The columns:
 | Feature | Spec field | Status | Backends | e2e fixture | Limitations fixture | Plan / Spec / PR |
 |---|---|---|---|---|---|---|
 | Workspaces (PVC on cluster, bind-mount on docker) | `Pipeline.spec.workspaces`, `PipelineTask.workspaces` | shipped | both | workspaces | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
+| Workspace `subPath` / Task workspace `mountPath` / `readOnly` | `PipelineTask.workspaces[].subPath`, `Task.spec.workspaces[].{mountPath,readOnly}` | shipped | both | workspace-subpath | none | docs/superpowers/plans/2026-11-03-audit-and-tekton-v1.15.md (WS-D D9). Docker creates a missing subPath dir (0777) like kubelet; `$(workspaces.X.path)` follows `mountPath`. |
 | `volumes.emptyDir` | `Task.spec.volumes` | shipped | both | volumes | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
 | `volumes.hostPath` | `Task.spec.volumes` | shipped | both | volumes | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
 | `volumes.configMap` | `Task.spec.volumes` | shipped | both | volumes | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
@@ -149,6 +150,10 @@ The columns:
 | Step state isolation (cwd / env / `/tmp`) | n/a — fundamental | by-design | both | none | step-state | This is correct Tekton behavior; the limitations example documents the foot-gun. |
 | `Task.stepTemplate` | `TaskSpec.stepTemplate` | shipped | both | step-template | none | docs/superpowers/plans/2026-05-03-step-template.md (Track 1 #4) |
 | `Task.sidecars` (long-lived helper containers) | `Task.spec.sidecars` | shipped | both | sidecars | none | docs/superpowers/plans/2026-05-04-task-sidecars.md (Track 1 #1) |
+| `Step.computeResources` (v1; v1beta1 `resources` accepted as alias) | `Step.computeResources`, `StepTemplate.computeResources`, `Sidecar.computeResources` | shipped | both | step-security-context | none | docs/superpowers/plans/2026-11-03-audit-and-tekton-v1.15.md (WS-D D7). Docker maps `limits.cpu` / `limits.memory`; other resource names are forwarded to cluster only. |
+| `Step.securityContext` | `Step.securityContext`, `StepTemplate.securityContext`, `Sidecar.securityContext` | shipped | both | step-security-context | none | WS-D D7. Docker honours runAsUser / runAsGroup / runAsNonRoot / privileged / readOnlyRootFilesystem / allowPrivilegeEscalation / capabilities / seccompProfile (RuntimeDefault, Unconfined); any other sub-field fails the Task on docker (never silently dropped). |
+| `Step.timeout` | `Step.timeout` | shipped | both | step-timeout | none | WS-D D7. Docker stops the step container and records exit 1 (`onError: continue` still applies). |
+| `Step.envFrom` / `env[].valueFrom` | `Step.envFrom`, `Step.env[].valueFrom` | gap | cluster | none | none | WS-D D7. Passed through verbatim on `--cluster`; the docker backend fails the Task with "not supported on the docker backend" instead of dropping it. |
 | `displayName` / `description` on Task / Pipeline / Step | various | shipped | both | display-name-description | none | docs/superpowers/plans/2026-05-04-display-name-description.md (Track 1 #7) |
 
 ### Resolution & catalogs

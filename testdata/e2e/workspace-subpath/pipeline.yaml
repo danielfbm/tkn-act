@@ -1,0 +1,47 @@
+# Workspace binding subPath, Task workspace mountPath and readOnly.
+#   - `write` mounts the `sub` subPath of the shared workspace at a
+#     custom mountPath and writes a file there;
+#   - `read` mounts the whole workspace read-only at the default path,
+#     finds the file under sub/, and proves writes are refused.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: write-sub}
+spec:
+  workspaces: [{name: data, mountPath: /custom/data}]
+  steps:
+    - name: w
+      image: alpine:3
+      script: |
+        set -e
+        test "$(workspaces.data.path)" = /custom/data
+        echo hello > /custom/data/greeting
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: read-all}
+spec:
+  workspaces: [{name: data, readOnly: true}]
+  steps:
+    - name: r
+      image: alpine:3
+      script: |
+        set -e
+        grep -q hello $(workspaces.data.path)/sub/greeting
+        if touch $(workspaces.data.path)/nope 2>/dev/null; then
+          echo "readOnly workspace was writable"
+          exit 1
+        fi
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: workspace-subpath}
+spec:
+  workspaces: [{name: shared}]
+  tasks:
+    - name: write
+      taskRef: {name: write-sub}
+      workspaces: [{name: data, workspace: shared, subPath: sub}]
+    - name: read
+      taskRef: {name: read-all}
+      runAfter: [write]
+      workspaces: [{name: data, workspace: shared}]

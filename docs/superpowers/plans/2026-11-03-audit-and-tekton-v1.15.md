@@ -56,16 +56,16 @@ of `64c55be`.
 
 ## WS-D — Backends
 
-- [ ] D1 `untarToDir` refuses writes through symlinked parents (`internal/backend/docker/staging.go:595-614`).
-- [ ] D2 Log scanner handles >1MiB lines (truncate/split, drain on error) — `docker.go:841-857`, `sidecars.go:464-480`.
-- [ ] D3 Join log goroutines (bounded wait) before container removal / task end — docker + cluster.
-- [ ] D4 Cluster: wait for container running/terminated before `GetLogs(Follow)`, retry with backoff (`cluster/run.go:931-959`).
-- [ ] D5 SSH: deadline on raw conn during handshake; `Ping` with timeout; `HostKeyAlgorithms` from known_hosts (`sshdial.go`).
-- [ ] D6 Cluster watch re-establishes on close; context cancel patches PipelineRun `spec.status: Cancelled`; document namespace retention.
-- [ ] D7 Step `computeResources` (v1) accepted, `resources` kept as alias; `securityContext`, `envFrom`, `env[].valueFrom`, step `timeout` either supported or rejected by the validator (no silent drop).
-- [ ] D8 Results / step-results / workspace dirs `0o777` (docker local + remote staging).
-- [ ] D9 Docker workspace `subPath`, `mountPath`, `readOnly` honoured (mount + `$(workspaces.X.path)`).
-- [ ] D10 Sub-second stop grace rounds up to 1s; ConfigMap non-UTF-8 → `BinaryData`; `ImagePull` sends credentials from docker config.
+- [x] D1 `untarToDir` refuses writes through symlinked parents (`internal/backend/docker/staging.go:595-614`).
+- [x] D2 Log scanner handles >1MiB lines (truncate/split, drain on error) — `docker.go:841-857`, `sidecars.go:464-480`.
+- [x] D3 Join log goroutines (bounded wait) before container removal / task end — docker + cluster.
+- [x] D4 Cluster: wait for container running/terminated before `GetLogs(Follow)`, retry with backoff (`cluster/run.go:931-959`).
+- [x] D5 SSH: deadline on raw conn during handshake; `Ping` with timeout; `HostKeyAlgorithms` from known_hosts (`sshdial.go`).
+- [x] D6 Cluster watch re-establishes on close; context cancel patches PipelineRun `spec.status: Cancelled`; document namespace retention.
+- [x] D7 Step `computeResources` (v1) accepted, `resources` kept as alias; `securityContext`, `envFrom`, `env[].valueFrom`, step `timeout` either supported or rejected by the validator (no silent drop).
+- [x] D8 Results / step-results / workspace dirs `0o777` (docker local + remote staging).
+- [x] D9 Docker workspace `subPath`, `mountPath`, `readOnly` honoured (mount + `$(workspaces.X.path)`).
+- [x] D10 Sub-second stop grace rounds up to 1s; ConfigMap non-UTF-8 → `BinaryData`; `ImagePull` sends credentials from docker config.
 
 ## WS-E — CLI, validator, runstore
 

@@ -1,13 +1,11 @@
 package cluster
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -311,78 +309,113 @@ func shortRunID(rid string) string {
 func (b *Backend) watchPipelineRun(ctx context.Context, in backend.PipelineRunInvocation, ns, name string) (backend.PipelineRunResult, error) {
 	res := backend.PipelineRunResult{Started: time.Now(), Tasks: map[string]backend.TaskOutcomeOnCluster{}}
 
-	w, err := b.client.Dynamic.Resource(gvrPipelineRun).Namespace(ns).Watch(ctx, metav1.ListOptions{
-		FieldSelector: "metadata.name=" + name,
-	})
-	if err != nil {
-		return res, fmt.Errorf("watch PipelineRun: %w", err)
-	}
-	defer w.Stop()
-
-	// Stream logs for each TaskRun pod as it appears.
-	streamed := map[string]bool{}
-	go b.streamAllTaskRunLogs(ctx, in, ns, streamed)
-
-	for ev := range w.ResultChan() {
-		if ev.Type == watch.Deleted || ev.Object == nil {
-			continue
+	// Stream logs for each TaskRun pod as it appears. The TaskRun
+	// watcher runs on trCtx and the per-container log streams on
+	// streamCtx so that, once the PipelineRun is terminal, we can stop
+	// discovering pods, sweep up any the watch missed, and join the
+	// streams (bounded) before returning — the last log lines then
+	// precede run-end instead of racing it.
+	trCtx, stopTR := context.WithCancel(ctx)
+	streamCtx, stopStreams := context.WithCancel(ctx)
+	tracker := newTaskRunLogTracker(streamCtx, b, in, ns)
+	trDone := make(chan struct{})
+	go func() {
+		defer close(trDone)
+		tracker.watch(trCtx)
+	}()
+	defer func() {
+		stopTR()
+		<-trDone
+		if ctx.Err() == nil {
+			tracker.sweep(ctx)
 		}
-		un, ok := ev.Object.(*unstructured.Unstructured)
+		tracker.join()
+		stopStreams()
+	}()
+
+	open := func(ctx context.Context, rv string) (watch.Interface, error) {
+		return b.client.Dynamic.Resource(gvrPipelineRun).Namespace(ns).Watch(ctx, metav1.ListOptions{
+			FieldSelector:   "metadata.name=" + name,
+			ResourceVersion: rv,
+		})
+	}
+	var terminal bool
+	werr := watchLoop(ctx, open, func(evType watch.EventType, un *unstructured.Unstructured) bool {
+		if evType == watch.Deleted {
+			return false
+		}
+		terminal = b.applyPipelineRunStatus(ctx, in, ns, un, &res)
+		return terminal
+	})
+	if terminal {
+		return res, nil
+	}
+	if ctx.Err() != nil {
+		// Ctrl-C / run timeout: ask Tekton to stop the pods rather than
+		// leaving them running in the retained namespace.
+		b.cancelPipelineRun(ns, name)
+		return res, fmt.Errorf("PipelineRun %s: %w", name, ctx.Err())
+	}
+	if werr != nil {
+		return res, fmt.Errorf("watch PipelineRun: %w", werr)
+	}
+	return res, fmt.Errorf("PipelineRun watch closed before terminal status")
+}
+
+// applyPipelineRunStatus folds a PipelineRun object into res and
+// reports whether it carries a terminal Succeeded condition.
+func (b *Backend) applyPipelineRunStatus(ctx context.Context, in backend.PipelineRunInvocation, ns string, un *unstructured.Unstructured, res *backend.PipelineRunResult) bool {
+	conds, _, _ := unstructured.NestedSlice(un.Object, "status", "conditions")
+	for _, c := range conds {
+		cm, ok := c.(map[string]any)
 		if !ok {
 			continue
 		}
-		conds, _, _ := unstructured.NestedSlice(un.Object, "status", "conditions")
-		for _, c := range conds {
-			cm, ok := c.(map[string]any)
-			if !ok {
-				continue
-			}
-			if cm["type"] != "Succeeded" {
-				continue
-			}
-			status, _ := cm["status"].(string)
-			if status != "True" && status != "False" {
-				continue
-			}
-			reason, _ := cm["reason"].(string)
-			message, _ := cm["message"].(string)
-			res.Status = mapPipelineRunStatus(status, reason)
-			res.Reason = reason
-			res.Message = message
-			res.Ended = time.Now()
-			res.Tasks = b.collectTaskOutcomesWithSink(ctx, in, ns, matrixWarnSinkFor(in))
-			res.Results = extractPipelineResults(un)
-			// `spec.timeouts.{pipeline,tasks,finally}` exhaustion does
-			// NOT always set the PipelineRun condition reason to a
-			// timeout — depending on which budget fired and how Tekton
-			// observed it, the PR can end with reason `Failed` while
-			// the underlying cause was a timeout. Two distinct fallback
-			// signals exist on the PR object:
-			//
-			//   1. TaskRuns that were running when the budget fired are
-			//      cancelled with `TaskRunCancelledByPipelineTimeoutMsg`
-			//      on `spec.statusMessage`. taskRunToOutcome surfaces
-			//      that as per-task `timeout`.
-			//   2. Tasks that hadn't launched yet are recorded in
-			//      `status.skippedTasks` with a SkippingReason of
-			//      `PipelineRun timeout has been reached` /
-			//      `PipelineRun Tasks timeout has been reached` /
-			//      `PipelineRun Finally timeout has been reached`
-			//      (no TaskRun is ever created for them, so #1 misses).
-			//
-			// Re-classify to `timeout` if either signal fires. Without
-			// #2, the cluster-CI `pipeline-timeout` fixture intermittently
-			// reports `failed` in well under the budget when the
-			// reconciler skips the only task before launching it.
-			if res.Status == "failed" {
-				if anyTaskTimedOut(res.Tasks) || anySkippedDueToTimeout(un) {
-					res.Status = "timeout"
-				}
-			}
-			return res, nil
+		if cm["type"] != "Succeeded" {
+			continue
 		}
+		status, _ := cm["status"].(string)
+		if status != "True" && status != "False" {
+			continue
+		}
+		reason, _ := cm["reason"].(string)
+		message, _ := cm["message"].(string)
+		res.Status = mapPipelineRunStatus(status, reason)
+		res.Reason = reason
+		res.Message = message
+		res.Ended = time.Now()
+		res.Tasks = b.collectTaskOutcomesWithSink(ctx, in, ns, matrixWarnSinkFor(in))
+		res.Results = extractPipelineResults(un)
+		// `spec.timeouts.{pipeline,tasks,finally}` exhaustion does
+		// NOT always set the PipelineRun condition reason to a
+		// timeout — depending on which budget fired and how Tekton
+		// observed it, the PR can end with reason `Failed` while
+		// the underlying cause was a timeout. Two distinct fallback
+		// signals exist on the PR object:
+		//
+		//   1. TaskRuns that were running when the budget fired are
+		//      cancelled with `TaskRunCancelledByPipelineTimeoutMsg`
+		//      on `spec.statusMessage`. taskRunToOutcome surfaces
+		//      that as per-task `timeout`.
+		//   2. Tasks that hadn't launched yet are recorded in
+		//      `status.skippedTasks` with a SkippingReason of
+		//      `PipelineRun timeout has been reached` /
+		//      `PipelineRun Tasks timeout has been reached` /
+		//      `PipelineRun Finally timeout has been reached`
+		//      (no TaskRun is ever created for them, so #1 misses).
+		//
+		// Re-classify to `timeout` if either signal fires. Without
+		// #2, the cluster-CI `pipeline-timeout` fixture intermittently
+		// reports `failed` in well under the budget when the
+		// reconciler skips the only task before launching it.
+		if res.Status == "failed" {
+			if anyTaskTimedOut(res.Tasks) || anySkippedDueToTimeout(un) {
+				res.Status = "timeout"
+			}
+		}
+		return true
 	}
-	return res, fmt.Errorf("PipelineRun watch closed before terminal status")
+	return false
 }
 
 // collectTaskOutcomes walks every TaskRun owned by this PipelineRun and
@@ -820,57 +853,6 @@ func mapPipelineRunStatus(condStatus, reason string) string {
 	return "failed"
 }
 
-func (b *Backend) streamAllTaskRunLogs(ctx context.Context, in backend.PipelineRunInvocation, ns string, streamed map[string]bool) {
-	w, err := b.client.Dynamic.Resource(gvrTaskRun).Namespace(ns).Watch(ctx, metav1.ListOptions{
-		LabelSelector: "tekton.dev/pipelineRun=" + in.PipelineRunName,
-	})
-	if err != nil {
-		return
-	}
-	defer w.Stop()
-	// Per-TaskRun sidecar lifecycle tracker. We diff the
-	// status.sidecars[] slice between events and emit
-	// EvtSidecarStart / EvtSidecarEnd as states transition.
-	// Cross-backend fidelity is a hard project rule — the same
-	// `sidecars` e2e fixture must produce equivalent JSON event
-	// shapes on docker and cluster.
-	sidecarSeen := map[string]map[string]sidecarSeenState{} // taskRunName → sidecarName → state
-	taskRunsSeen := map[string]bool{}
-	for ev := range w.ResultChan() {
-		un, ok := ev.Object.(*unstructured.Unstructured)
-		if !ok {
-			continue
-		}
-		taskName, _, _ := unstructured.NestedString(un.Object, "metadata", "labels", "tekton.dev/pipelineTask")
-		trName := un.GetName()
-		if !taskRunsSeen[trName] {
-			taskRunsSeen[trName] = true
-			b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
-				return "taskrun seen", map[string]any{
-					"name":          trName,
-					"pipeline_task": taskName,
-				}
-			})
-		}
-		// Diff sidecar statuses and emit transition events.
-		b.emitSidecarTransitions(in, taskName, trName, un, sidecarSeen)
-
-		podName, found, _ := unstructured.NestedString(un.Object, "status", "podName")
-		if !found || streamed[podName] {
-			continue
-		}
-		streamed[podName] = true
-		b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
-			return "pod attached", map[string]any{
-				"pod":           podName,
-				"taskrun":       trName,
-				"pipeline_task": taskName,
-			}
-		})
-		go b.streamPodLogs(ctx, in, ns, podName, taskName)
-	}
-}
-
 // sidecarSeenState tracks which lifecycle events have already been
 // emitted for a given (taskRun, sidecar) pair. Both flags monotonic
 // — once set they never flip back, so we never emit duplicate
@@ -926,51 +908,6 @@ func (b *Backend) emitSidecarTransitions(in backend.PipelineRunInvocation, taskN
 			st.terminatedEmitted = true
 		}
 		seen[trName][s.Name] = st
-	}
-}
-
-func (b *Backend) streamPodLogs(ctx context.Context, in backend.PipelineRunInvocation, ns, pod, taskName string) {
-	if in.LogSink == nil {
-		return
-	}
-	// Wait briefly for the pod to have containers.
-	time.Sleep(500 * time.Millisecond)
-	p, err := b.client.Kube.CoreV1().Pods(ns).Get(ctx, pod, metav1.GetOptions{})
-	if err != nil {
-		return
-	}
-	// Build a step-name -> displayName lookup from the input bundle so
-	// log events can carry the same display_name docker mode does.
-	// Source-of-truth is the input YAML, NOT the controller verdict.
-	stepDisplayByName := stepDisplayNameLookup(in, taskName)
-	for _, c := range p.Spec.Containers {
-		var stepName, sidecarName string
-		switch {
-		case strings.HasPrefix(c.Name, "step-"):
-			stepName = strings.TrimPrefix(c.Name, "step-")
-		case strings.HasPrefix(c.Name, "sidecar-"):
-			sidecarName = strings.TrimPrefix(c.Name, "sidecar-")
-		default:
-			continue
-		}
-		stepDisplayName := stepDisplayByName[stepName]
-		req := b.client.Kube.CoreV1().Pods(ns).GetLogs(pod, &corev1.PodLogOptions{Container: c.Name, Follow: true})
-		rc, err := req.Stream(ctx)
-		if err != nil {
-			continue
-		}
-		go func(stepName, stepDisplayName, sidecarName string, rc io.ReadCloser) {
-			defer rc.Close()
-			s := bufio.NewScanner(rc)
-			s.Buffer(make([]byte, 64*1024), 1024*1024)
-			for s.Scan() {
-				if sidecarName != "" {
-					in.LogSink.SidecarLog(taskName, sidecarName, "sidecar-stdout", s.Text())
-				} else {
-					in.LogSink.StepLog(taskName, stepName, stepDisplayName, "stdout", s.Text())
-				}
-			}
-		}(stepName, stepDisplayName, sidecarName, rc)
 	}
 }
 

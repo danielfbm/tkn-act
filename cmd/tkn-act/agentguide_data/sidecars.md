@@ -35,7 +35,11 @@ Lifecycle on `--docker` (per Task with at least one sidecar):
 7. Sidecars are sent SIGTERM after the last Step ends, with a
    `--sidecar-stop-grace` window (default `30s`, matches upstream
    Tekton's `terminationGracePeriodSeconds`) before SIGKILL. The
-   pause container is then stopped (hard 1s grace).
+   window is rounded up to whole seconds (Docker's granularity), so a
+   sub-second value such as `500ms` still gets 1s rather than an
+   immediate SIGKILL. The sidecar's remaining log lines are flushed
+   (bounded 5s) before its `sidecar-end` event. The pause container is
+   then stopped (hard 1s grace).
 8. Workspace teardown (existing).
 
 Tasks with zero sidecars pay no extra cost — no pause container, no

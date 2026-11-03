@@ -180,6 +180,9 @@ fixtures under `testdata/e2e/`:
 | `tasks-timeout/`    | `tasks` budget fires; `finally` block still runs to completion |
 | `finally-timeout/`  | `finally` budget fires; `tasks` block already succeeded |
 | `step-template/`    | `Task.spec.stepTemplate` inheritance: image + env, with one Step overriding env |
+| `step-security-context/` | non-root Step (`securityContext.runAsUser: 65532`) writes a Task result; `computeResources` on Step + stepTemplate |
+| `step-timeout/`     | `Step.timeout: 2s` stops a sleeping step; run ends `failed` |
+| `workspace-subpath/` | workspace binding `subPath`, Task workspace `mountPath`, and `readOnly` enforcement |
 | `step-actions/`     | `Step.ref` → `StepAction` resolution: caller-param override of default + result via `$(steps.X.results.Y)` |
 | `pipeline-results/` | `Pipeline.spec.results`: string + array result, one referencing finally output |
 | `display-name-description/` | `displayName` + `description` on Pipeline / PipelineTask / Task / Step; asserts JSON event fields |
