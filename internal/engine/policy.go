@@ -60,6 +60,13 @@ func (e *Engine) runOneWithPolicy(
 		if parentDead {
 			break
 		}
+		// runOne reports "timeout" itself for resolver-backed taskRefs,
+		// whose Task.spec.timeout is only known after lazy resolution
+		// (taskTimeoutFor can't see it). Same no-retry rule as above.
+		if oc.Status == "timeout" {
+			oc.Attempt = attempt
+			break
+		}
 		if oc.Status == "succeeded" || oc.Status == "skipped" {
 			oc.Attempt = attempt
 			return oc
@@ -105,7 +112,8 @@ func withMaybeTimeout(parent context.Context, d time.Duration) (context.Context,
 
 // taskTimeoutFor returns the resolved task timeout. The PipelineTask itself
 // doesn't carry a timeout in v1.2 — it lives on the resolved TaskSpec, so we
-// have to look it up.
+// have to look it up. Resolver-backed taskRefs return 0 here: their spec
+// is fetched lazily inside runOne, which applies the timeout itself.
 func taskTimeoutFor(in PipelineInput, pt tektontypes.PipelineTask) (time.Duration, error) {
 	var spec tektontypes.TaskSpec
 	switch {

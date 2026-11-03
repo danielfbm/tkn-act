@@ -53,7 +53,29 @@ type TaskOutcome struct {
 	// Threaded into reporter.Event.Matrix at task-start / task-end /
 	// task-skip emission.
 	Matrix *tektontypes.MatrixInfo
+
+	// skip classifies a not-run / skipped outcome for scheduling. A
+	// when-skip (skipWhen) does not block runAfter dependents; every
+	// other skip does. Unexported: scheduling detail, not part of the
+	// RunResult contract.
+	skip skipKind
 }
+
+// skipKind classifies why a task did not run. The zero value means
+// "not skipped" (the task ran, or has no outcome yet).
+type skipKind int
+
+const (
+	// skipWhen: the task's own `when` expressions evaluated false.
+	// Tekton's WhenExpressionsSkip — ordering-only dependents still run.
+	skipWhen skipKind = iota + 1
+	// skipBlocked: an upstream failed, a parent was skipped for a
+	// non-when reason, or a referenced result is missing. Cascades.
+	skipBlocked
+	// skipStopped: the tasks/finally/pipeline budget fired or the run
+	// was cancelled before the task could start. Cascades.
+	skipStopped
+)
 
 func newRunID() string {
 	var b [6]byte
