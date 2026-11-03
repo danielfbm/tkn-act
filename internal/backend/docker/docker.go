@@ -4,7 +4,6 @@
 package docker
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -23,7 +22,6 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/system"
 	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
 )
 
 type Options struct {
@@ -815,7 +813,19 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 	if err != nil {
 		return 0, fmt.Errorf("logs %s: %w", containerName, err)
 	}
-	go streamLogs(logRC, inv.LogSink, inv.TaskName, step.Name, step.DisplayName)
+	logsDone := make(chan struct{})
+	go func() {
+		defer close(logsDone)
+		streamLogs(logRC, inv.LogSink, inv.TaskName, step.Name, step.DisplayName)
+	}()
+	// Join the log stream (bounded) before returning, so a Step's last
+	// lines are reported before its task-end and before the deferred
+	// ContainerRemove tears the stream down.
+	defer func() {
+		if !waitLogs(logsDone, logJoinTimeout) {
+			_ = logRC.Close()
+		}
+	}()
 
 	statusCh, errCh := b.cli.ContainerWait(ctx, created.ID, container.WaitConditionNotRunning)
 	select {
@@ -833,28 +843,14 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 }
 
 func streamLogs(rc io.ReadCloser, sink backend.LogSink, taskName, stepName, stepDisplayName string) {
-	defer func() { _ = rc.Close() }()
 	if sink == nil {
+		defer func() { _ = rc.Close() }()
 		_, _ = io.Copy(io.Discard, rc)
 		return
 	}
-	stdoutR, stdoutW := io.Pipe()
-	stderrR, stderrW := io.Pipe()
-	go func() {
-		_, _ = stdcopy.StdCopy(stdoutW, stderrW, rc)
-		_ = stdoutW.Close()
-		_ = stderrW.Close()
-	}()
-	go scan(stdoutR, sink, taskName, stepName, stepDisplayName, "stdout")
-	scan(stderrR, sink, taskName, stepName, stepDisplayName, "stderr")
-}
-
-func scan(r io.Reader, sink backend.LogSink, taskName, stepName, stepDisplayName, stream string) {
-	s := bufio.NewScanner(r)
-	s.Buffer(make([]byte, 64*1024), 1024*1024)
-	for s.Scan() {
-		sink.StepLog(taskName, stepName, stepDisplayName, stream, s.Text())
-	}
+	demuxLogs(rc, func(stream, line string) {
+		sink.StepLog(taskName, stepName, stepDisplayName, stream, line)
+	}, "stdout", "stderr")
 }
 
 func parseMemory(s string) (int64, error) {

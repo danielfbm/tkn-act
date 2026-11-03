@@ -1,7 +1,6 @@
 package docker
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -14,7 +13,6 @@ import (
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/pkg/stdcopy"
 )
 
 // defaultPauseImage is the per-Task netns owner used when
@@ -64,6 +62,9 @@ type runningSidecar struct {
 	// event has been emitted (either at mid-run liveness check or
 	// at teardown). Prevents duplicate emission.
 	terminated bool
+	// logsDone closes when the sidecar's log stream has been fully
+	// forwarded; nil when log streaming could not be attached.
+	logsDone <-chan struct{}
 }
 
 // startPause creates and starts the per-Task pause container that
@@ -98,7 +99,7 @@ func (b *Backend) stopPause(pauseID string) {
 	}
 	stopCtx, cancel := context.WithTimeout(context.Background(), pauseStopGrace+5*time.Second)
 	defer cancel()
-	grace := int(pauseStopGrace.Seconds())
+	grace := graceSeconds(pauseStopGrace)
 	_ = b.cli.ContainerStop(stopCtx, pauseID, container.StopOptions{Timeout: &grace})
 	_ = b.cli.ContainerRemove(context.Background(), pauseID, container.RemoveOptions{Force: true})
 }
@@ -116,7 +117,7 @@ func (b *Backend) stopPause(pauseID string) {
 func (b *Backend) startSidecars(ctx context.Context, inv backend.TaskInvocation, pauseID string) ([]runningSidecar, error) {
 	out := make([]runningSidecar, 0, len(inv.Task.Sidecars))
 	for _, sc := range inv.Task.Sidecars {
-		id, err := b.startOneSidecar(ctx, inv, sc, pauseID)
+		id, logsDone, err := b.startOneSidecar(ctx, inv, sc, pauseID)
 		if err != nil {
 			// Surface a terminal sidecar-end with infrafailed for
 			// the one that failed to start (no preceding
@@ -125,7 +126,7 @@ func (b *Backend) startSidecars(ctx context.Context, inv backend.TaskInvocation,
 			emitSidecarEndWith(inv, sc.Name, 0, backend.TaskInfraFailed, fmt.Sprintf("failed to start: %v", err))
 			return out, fmt.Errorf("sidecar %q: %w", sc.Name, err)
 		}
-		out = append(out, runningSidecar{name: sc.Name, containerID: id})
+		out = append(out, runningSidecar{name: sc.Name, containerID: id, logsDone: logsDone})
 		emitSidecarStart(inv, sc.Name)
 	}
 
@@ -168,7 +169,7 @@ func (b *Backend) startSidecars(ctx context.Context, inv backend.TaskInvocation,
 // The sidecar joins the pause container's netns and (where
 // applicable) the same Task workspaces / volume hosts as Steps.
 // Logs are streamed in the background.
-func (b *Backend) startOneSidecar(ctx context.Context, inv backend.TaskInvocation, sc tektontypes.Sidecar, pauseID string) (string, error) {
+func (b *Backend) startOneSidecar(ctx context.Context, inv backend.TaskInvocation, sc tektontypes.Sidecar, pauseID string) (string, <-chan struct{}, error) {
 	// Image pre-pull. The engine already adds sidecar images to
 	// RunSpec.Images, so this is the IfNotPresent fast-path in the
 	// common case; we still call ensureImage so that an inline
@@ -178,7 +179,7 @@ func (b *Backend) startOneSidecar(ctx context.Context, inv backend.TaskInvocatio
 		policy = b.opts.PullPolicyOverride
 	}
 	if err := b.ensureImage(ctx, sc.Image, policy); err != nil {
-		return "", fmt.Errorf("pull %s: %w", sc.Image, err)
+		return "", nil, fmt.Errorf("pull %s: %w", sc.Image, err)
 	}
 
 	cmd := sc.Command
@@ -199,7 +200,7 @@ func (b *Backend) startOneSidecar(ctx context.Context, inv backend.TaskInvocatio
 		base := sidecarScriptBase(inv.TaskRunName, sc.Name)
 		if b.remote {
 			if err := b.pushScript(ctx, base, []byte(body)); err != nil {
-				return "", err
+				return "", nil, err
 			}
 			extraMounts = append(extraMounts, b.remoteVolumeMount(
 				"/tekton/scripts/script.sh",
@@ -209,7 +210,7 @@ func (b *Backend) startOneSidecar(ctx context.Context, inv backend.TaskInvocatio
 		} else {
 			host := filepath.Join(b.scriptDir, base+".sh")
 			if err := os.WriteFile(host, []byte(body), 0o755); err != nil {
-				return "", err
+				return "", nil, err
 			}
 			extraMounts = append(extraMounts, mount.Mount{
 				Type:     mount.TypeBind,
@@ -228,7 +229,7 @@ func (b *Backend) startOneSidecar(ctx context.Context, inv backend.TaskInvocatio
 		if b.remote {
 			pipelineName, ok := b.pipelineWorkspaceName(wm.HostPath)
 			if !ok {
-				return "", fmt.Errorf("sidecar %q workspace %q: cannot map host path %q to a Pipeline workspace name", sc.Name, tName, wm.HostPath)
+				return "", nil, fmt.Errorf("sidecar %q workspace %q: cannot map host path %q to a Pipeline workspace name", sc.Name, tName, wm.HostPath)
 			}
 			extraMounts = append(extraMounts, b.remoteVolumeMount(
 				"/workspace/"+tName,
@@ -249,7 +250,7 @@ func (b *Backend) startOneSidecar(ctx context.Context, inv backend.TaskInvocatio
 	for _, vm := range sc.VolumeMounts {
 		hostPath, ok := inv.VolumeHosts[vm.Name]
 		if !ok {
-			return "", fmt.Errorf("volumeMount %q: no host path for volume", vm.Name)
+			return "", nil, fmt.Errorf("volumeMount %q: no host path for volume", vm.Name)
 		}
 		if b.remote {
 			sub := filepath.Join(stageVolumes, inv.TaskRunName, vm.Name)
@@ -303,11 +304,11 @@ func (b *Backend) startOneSidecar(ctx context.Context, inv backend.TaskInvocatio
 	name := sidecarContainerName(inv.RunID, inv.TaskRunName, sc.Name)
 	created, err := b.cli.ContainerCreate(ctx, cfg, hostConf, nil, nil, name)
 	if err != nil {
-		return "", fmt.Errorf("create %s: %w", name, err)
+		return "", nil, fmt.Errorf("create %s: %w", name, err)
 	}
 	if err := b.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
 		_ = b.cli.ContainerRemove(context.Background(), created.ID, container.RemoveOptions{Force: true})
-		return "", fmt.Errorf("start %s: %w", name, err)
+		return "", nil, fmt.Errorf("start %s: %w", name, err)
 	}
 
 	// Stream logs in the background. The goroutine ends when Docker
@@ -315,10 +316,15 @@ func (b *Backend) startOneSidecar(ctx context.Context, inv backend.TaskInvocatio
 	logRC, err := b.cli.ContainerLogs(ctx, created.ID, container.LogsOptions{
 		ShowStdout: true, ShowStderr: true, Follow: true, Timestamps: false,
 	})
-	if err == nil {
-		go streamSidecarLogs(logRC, inv.LogSink, inv.TaskName, sc.Name)
+	if err != nil {
+		return created.ID, nil, nil
 	}
-	return created.ID, nil
+	logsDone := make(chan struct{})
+	go func() {
+		defer close(logsDone)
+		streamSidecarLogs(logRC, inv.LogSink, inv.TaskName, sc.Name)
+	}()
+	return created.ID, logsDone, nil
 }
 
 // checkSidecarLiveness inspects every still-living sidecar. Any
@@ -397,13 +403,18 @@ func (b *Backend) stopSidecars(_ context.Context, inv backend.TaskInvocation, si
 		}
 		if !alreadyExited {
 			stopCtx, cancel := context.WithTimeout(context.Background(), stopGrace+5*time.Second)
-			grace := int(stopGrace.Seconds())
+			grace := graceSeconds(stopGrace)
 			_ = b.cli.ContainerStop(stopCtx, rs.containerID, container.StopOptions{Timeout: &grace})
 			cancel()
 			// Re-inspect for the final exit code.
 			if insp2, err2 := b.cli.ContainerInspect(context.Background(), rs.containerID); err2 == nil && insp2.State != nil {
 				exit = insp2.State.ExitCode
 			}
+		}
+		// Drain the sidecar's remaining log lines (bounded) before
+		// removal so they land ahead of its sidecar-end event.
+		if rs.logsDone != nil {
+			waitLogs(rs.logsDone, logJoinTimeout)
 		}
 		_ = b.cli.ContainerRemove(context.Background(), rs.containerID, container.RemoveOptions{Force: true})
 		if !rs.terminated {
@@ -456,26 +467,23 @@ type sidecarEventEmitter interface {
 // through the LogSink as EvtSidecarLog events. Mirrors streamLogs
 // for steps but uses sidecar-stdout / sidecar-stderr stream values.
 func streamSidecarLogs(rc io.ReadCloser, sink backend.LogSink, taskName, sidecarName string) {
-	defer func() { _ = rc.Close() }()
 	if sink == nil {
+		defer func() { _ = rc.Close() }()
 		_, _ = io.Copy(io.Discard, rc)
 		return
 	}
-	stdoutR, stdoutW := io.Pipe()
-	stderrR, stderrW := io.Pipe()
-	go func() {
-		_, _ = stdcopy.StdCopy(stdoutW, stderrW, rc)
-		_ = stdoutW.Close()
-		_ = stderrW.Close()
-	}()
-	go scanSidecar(stdoutR, sink, taskName, sidecarName, sidecarStdout)
-	scanSidecar(stderrR, sink, taskName, sidecarName, sidecarStderr)
+	demuxLogs(rc, func(stream, line string) {
+		sink.SidecarLog(taskName, sidecarName, stream, line)
+	}, sidecarStdout, sidecarStderr)
 }
 
-func scanSidecar(r io.Reader, sink backend.LogSink, taskName, sidecarName, stream string) {
-	s := bufio.NewScanner(r)
-	s.Buffer(make([]byte, 64*1024), 1024*1024)
-	for s.Scan() {
-		sink.SidecarLog(taskName, sidecarName, stream, s.Text())
+// graceSeconds converts a stop-grace duration to the whole seconds the
+// Docker API takes, rounding up so a sub-second grace (e.g. 500ms)
+// still gets a SIGTERM window instead of truncating to 0 = immediate
+// SIGKILL. Non-positive durations map to 0.
+func graceSeconds(d time.Duration) int {
+	if d <= 0 {
+		return 0
 	}
+	return int((d + time.Second - 1) / time.Second)
 }
