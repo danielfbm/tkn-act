@@ -108,13 +108,20 @@ func (b *Backend) dbg() debug.Emitter {
 	return debug.Nop()
 }
 
+// daemonPingTimeout bounds the reachability probe in New so an
+// unresponsive daemon (or SSH host) fails fast instead of hanging.
+const daemonPingTimeout = 30 * time.Second
+
 func New(opts Options) (*Backend, error) {
 	dockerHost := resolveDockerHost(opts.Host)
 	cli, err := newDockerClient(dockerHost)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := cli.Ping(context.Background()); err != nil {
+	pingCtx, cancelPing := context.WithTimeout(context.Background(), daemonPingTimeout)
+	_, err = cli.Ping(pingCtx)
+	cancelPing()
+	if err != nil {
 		return nil, fmt.Errorf("docker daemon not reachable: %w", err)
 	}
 	if opts.SidecarStartGrace == 0 {
