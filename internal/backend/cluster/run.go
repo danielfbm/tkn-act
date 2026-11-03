@@ -316,7 +316,7 @@ func (b *Backend) watchPipelineRun(ctx context.Context, in backend.PipelineRunIn
 	// precede run-end instead of racing it.
 	trCtx, stopTR := context.WithCancel(ctx)
 	streamCtx, stopStreams := context.WithCancel(ctx)
-	tracker := newTaskRunLogTracker(b, in, ns, streamCtx)
+	tracker := newTaskRunLogTracker(streamCtx, b, in, ns)
 	trDone := make(chan struct{})
 	go func() {
 		defer close(trDone)

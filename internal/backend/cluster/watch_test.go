@@ -204,7 +204,7 @@ func TestTaskRunLogTracker_JoinsStreams(t *testing.T) {
 		"metadata": map[string]any{"name": "tr-1", "labels": map[string]any{"tekton.dev/pipelineTask": "t"}},
 		"status":   map[string]any{"podName": "pod-1"},
 	}}
-	tk := newTaskRunLogTracker(b, backendInv(sink), "ns", context.Background())
+	tk := newTaskRunLogTracker(context.Background(), b, backendInv(sink), "ns")
 	tk.observe(tr)
 	tk.observe(tr) // second observation must not double-attach
 	tk.join()

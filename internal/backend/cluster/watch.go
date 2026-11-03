@@ -163,7 +163,7 @@ type taskRunLogTracker struct {
 	sidecarSeen  map[string]map[string]sidecarSeenState // taskRun → sidecar → state
 }
 
-func newTaskRunLogTracker(b *Backend, in backend.PipelineRunInvocation, ns string, streamCtx context.Context) *taskRunLogTracker {
+func newTaskRunLogTracker(streamCtx context.Context, b *Backend, in backend.PipelineRunInvocation, ns string) *taskRunLogTracker {
 	return &taskRunLogTracker{
 		b: b, in: in, ns: ns, streamCtx: streamCtx,
 		streamed:     map[string]bool{},
