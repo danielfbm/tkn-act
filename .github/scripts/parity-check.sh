@@ -14,6 +14,10 @@
 #      column names a directory has that directory present on disk.
 #   5. Every directory under testdata/limitations/ (other than the
 #      README) is referenced by at least one row's limitations column.
+#   6. A `shipped` row's Backends column agrees with its fixture's
+#      DockerOnly / ClusterOnly flags in fixtures.go: `both` requires
+#      neither flag; `docker` forbids ClusterOnly; `cluster` forbids
+#      DockerOnly. Backends must be one of both|docker|cluster.
 #
 # A failure prints the offending row and the invariant it broke. Run
 # locally before opening a PR; CI runs it as the `parity-check` job.
@@ -56,6 +60,22 @@ if [ "${#rows[@]}" -eq 0 ]; then
   fail_msg "no feature rows parsed from $parity_doc — table format may be broken"
 fi
 
+# fixture_flags <dir> — print the DockerOnly / ClusterOnly flags set to
+# true on the fixtures.go descriptor whose `Dir: "<dir>"` matches. The
+# descriptor is scanned from its Dir line until its braces balance, which
+# handles both one-line `{Dir: "x", ...},` entries and multi-line ones
+# whose opening `{` sits on the line before `Dir:`.
+fixture_flags() {
+  awk -v d="Dir: \"$1\"" '
+    !f && index($0, d) { f = 1; depth = ($0 ~ /^[ \t]*\{/) ? 0 : 1 }
+    f {
+      print
+      depth += gsub(/\{/, "{") - gsub(/\}/, "}")
+      if (depth <= 0) exit
+    }
+  ' "$fixtures_go" | grep -oE '(DockerOnly|ClusterOnly): *true' | cut -d: -f1 | sort -u | tr '\n' ' ' || true
+}
+
 # Collect the e2e fixture names referenced by `shipped` rows.
 declare -A shipped_e2e=()
 declare -A all_referenced_lims=()
@@ -74,6 +94,7 @@ for line in "${rows[@]}"; do
 
   feature=$(echo "${cells[1]}" | sed -e 's/^ *//' -e 's/ *$//')
   status=$(echo "${cells[3]}" | sed -e 's/^ *//' -e 's/ *$//')
+  backends=$(echo "${cells[4]}" | sed -e 's/^ *//' -e 's/ *$//')
   e2e=$(echo "${cells[5]}" | sed -e 's/^ *//' -e 's/ *$//')
   lim=$(echo "${cells[6]}" | sed -e 's/^ *//' -e 's/ *$//')
 
@@ -87,6 +108,28 @@ for line in "${rows[@]}"; do
           fail_msg "row '$feature' is shipped but testdata/e2e/$e2e/ does not exist"
         fi
         shipped_e2e["$e2e"]=1
+        # Invariant 6: Backends column vs DockerOnly / ClusterOnly.
+        flags=$(fixture_flags "$e2e")
+        case "$backends" in
+          both)
+            if [ -n "$flags" ]; then
+              fail_msg "row '$feature' claims backends 'both' but fixture '$e2e' is flagged ${flags% } in internal/e2e/fixtures/fixtures.go (set Backends to the backend that actually runs it, or drop the flag)"
+            fi
+            ;;
+          docker)
+            case "$flags" in *ClusterOnly*)
+              fail_msg "row '$feature' claims backends 'docker' but fixture '$e2e' is ClusterOnly" ;;
+            esac
+            ;;
+          cluster)
+            case "$flags" in *DockerOnly*)
+              fail_msg "row '$feature' claims backends 'cluster' but fixture '$e2e' is DockerOnly" ;;
+            esac
+            ;;
+          *)
+            fail_msg "row '$feature' is shipped with unknown backends '$backends' (must be both|docker|cluster)"
+            ;;
+        esac
       fi
       # Invariant 2: limitations fixture must be 'none'.
       if [ "$lim" != "none" ] && [ -n "$lim" ]; then

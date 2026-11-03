@@ -330,8 +330,8 @@ func All() []Fixture {
 			// DockerOnly: same historical limitation as `matrix`, plus
 			// include-row semantics differed — v0.65 didn't emit
 			// TaskRuns for include-only-introduced params (rows without
-			// an overlapping cross-product param). The newer LTS pins
-			// (v1.3 / v1.12) may resolve either or both. Re-validate by
+			// an overlapping cross-product param). The current CI matrix
+			// (v1.9.9 / v1.15.5) may resolve either or both. Re-validate by
 			// temporarily dropping DockerOnly on a probe branch and
 			// reading the cluster-integration matrix output; if both
 			// legs pass, flip this row to cross-backend.

@@ -20,6 +20,10 @@ ensures the table doesn't lie:
    column names a directory MUST have that directory exist on disk.
 4. Every directory under `testdata/limitations/` MUST be referenced by
    at least one `gap` / `in-progress` row (no orphan limitations).
+5. A `shipped` row's `backends` cell MUST agree with its fixture's
+   `DockerOnly` / `ClusterOnly` flag in `internal/e2e/fixtures.All()`:
+   `both` requires neither flag, `docker` forbids `ClusterOnly`,
+   `cluster` forbids `DockerOnly`.
 
 A failing `parity-check` blocks the PR the same way `tests-required` does.
 
@@ -133,7 +137,7 @@ The columns:
 | Feature | Spec field | Status | Backends | e2e fixture | Limitations fixture | Plan / Spec / PR |
 |---|---|---|---|---|---|---|
 | `Pipeline.spec.timeouts.{pipeline,tasks,finally}` | `PipelineSpec.timeouts` | shipped | both | pipeline-timeout | none | docs/superpowers/plans/2026-05-03-pipelinerun-timeouts.md (Track 1 #2); also covered by `tasks-timeout`, `finally-timeout` |
-| `PipelineTask.matrix` (parameter-matrix fan-out) | `PipelineTask.matrix` | shipped | both | matrix | none | docs/superpowers/plans/2026-05-04-pipeline-matrix.md (Track 1 #3); also covered by `matrix-include`. Both e2e fixtures are currently flagged DockerOnly: historically Tekton v0.65 did not surface matrix-fanned task results as Pipeline-level results via `$(tasks.X.results.Y[*])` even with `enable-api-fields=alpha`. Cluster-mode reconstruction of per-TaskRun MatrixInfo is exercised by `internal/backend/cluster/run_test.go::TestMatchMatrixRowFromTaskRun*`. Re-validate via the 2026-05-13 Tekton bump (default → v1.12.0; CI matrix v1.3.0 + v1.12.0) — see [docs/superpowers/specs/2026-05-13-tekton-bump-and-matrix-design.md](superpowers/specs/2026-05-13-tekton-bump-and-matrix-design.md). |
+| `PipelineTask.matrix` (parameter-matrix fan-out) | `PipelineTask.matrix` | shipped | docker | matrix | none | docs/superpowers/plans/2026-05-04-pipeline-matrix.md (Track 1 #3); also covered by `matrix-include`. **Docker-verified only:** both e2e fixtures are flagged DockerOnly in `internal/e2e/fixtures.All()`, so cluster-integration does not run them. Historically Tekton v0.65 did not surface matrix-fanned task results as Pipeline-level results via `$(tasks.X.results.Y[*])` even with `enable-api-fields=alpha`. `--cluster` still runs matrix pipelines (expansion is done by the Tekton controller) and per-TaskRun MatrixInfo reconstruction is unit-tested by `internal/backend/cluster/run_test.go::TestMatchMatrixRowFromTaskRun*`, but the end-to-end cluster leg is **pending re-validation against the current CI matrix (Tekton v1.9.9 + v1.15.5)**: flip this cell to `both` once a probe PR that drops DockerOnly passes cluster-integration. See [docs/superpowers/specs/2026-11-03-audit-and-tekton-v1.15-design.md](superpowers/specs/2026-11-03-audit-and-tekton-v1.15-design.md). |
 | `PipelineTask.matrix.include` overlap with cross-product param | `PipelineTask.matrix.include` (overlap fold) | gap | both | none | matrix-include-overlap | Real Tekton folds the include row into the matching cross-product row; tkn-act validate-rejects the overlap to prevent docker-vs-cluster divergence. Tracked as Track 1 #3 follow-up; see docs/superpowers/specs/2026-05-04-pipeline-matrix-design.md § 7. |
 
 ### Task structure
