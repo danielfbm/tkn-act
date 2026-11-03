@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danielfbm/tkn-act/internal/backend"
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
@@ -78,7 +79,7 @@ func TestStreamLogs_LongLineDoesNotStall(t *testing.T) {
 	if !strings.HasPrefix(first, "stdout:xxx") || !strings.Contains(first, "truncated") {
 		t.Errorf("first line not truncated with marker: %.40q...%q", first, first[len(first)-60:])
 	}
-	if len(first) > maxLogLineBytes+200 {
+	if len(first) > backend.MaxLogLineBytes+200 {
 		t.Errorf("truncated line still %d bytes", len(first))
 	}
 	var gotLast, gotErr bool
@@ -102,20 +103,6 @@ func TestStreamSidecarLogs_LongLineDoesNotStall(t *testing.T) {
 	})
 	if len(sink.sides) != 12 {
 		t.Fatalf("got %d sidecar lines, want 12", len(sink.sides))
-	}
-}
-
-func TestScanLines_Semantics(t *testing.T) {
-	var got []string
-	scanLines(strings.NewReader("a\r\n\nb\nlast-no-newline"), func(s string) { got = append(got, s) })
-	want := []string{"a", "", "b", "last-no-newline"}
-	if fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Errorf("got %q, want %q", got, want)
-	}
-	got = nil
-	scanLines(strings.NewReader(""), func(s string) { got = append(got, s) })
-	if len(got) != 0 {
-		t.Errorf("empty input emitted %q", got)
 	}
 }
 
