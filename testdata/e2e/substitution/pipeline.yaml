@@ -1,0 +1,79 @@
+# Variable-substitution edge cases that must behave identically on the
+# docker backend and a real Tekton controller:
+#   - shell command substitution `$(pwd)` / `$(date)` is NOT a Tekton
+#     variable and reaches the container verbatim;
+#   - a Pipeline array param passed through whole (`$(params.arr[*])` as
+#     the value) and spliced into a longer array value;
+#   - `$(tasks.status)` / `$(tasks.<t>.status)` in finally params + when.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: check-args}
+spec:
+  params:
+    - {name: items, type: array}
+    - {name: want, type: string}
+  steps:
+    - name: check
+      image: alpine:3
+      command: [sh, -c]
+      args:
+        - 'echo "cwd=$(pwd) items=[$*]"; [ "$*" = "$0" ] || { echo "want [$0]"; exit 1; }'
+        - $(params.want)
+        - $(params.items[*])
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: assert-eq}
+spec:
+  params:
+    - {name: got, type: string}
+    - {name: want, type: string}
+  steps:
+    - name: check
+      image: alpine:3
+      script: |
+        #!/bin/sh
+        now=$(date)
+        echo "at $now: got [$(params.got)]"
+        [ "$(params.got)" = "$(params.want)" ] || { echo "want [$(params.want)]"; exit 1; }
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: substitution}
+spec:
+  params:
+    - {name: arr, type: array, default: [a, b]}
+    - {name: env, type: string, default: dev}
+  tasks:
+    - name: whole
+      taskRef: {name: check-args}
+      params:
+        - {name: items, value: "$(params.arr[*])"}
+        - {name: want, value: "a b"}
+    - name: spliced
+      taskRef: {name: check-args}
+      params:
+        - name: items
+          value: ["$(params.arr[*])", c]
+        - {name: want, value: "a b c"}
+    - name: prod-only
+      taskRef: {name: check-args}
+      when:
+        - {input: $(params.env), operator: in, values: [prod]}
+      params:
+        - name: items
+          value: [x]
+        - {name: want, value: x}
+  finally:
+    - name: report
+      taskRef: {name: assert-eq}
+      params:
+        - {name: got, value: "$(tasks.status)|$(tasks.whole.status)|$(tasks.prod-only.status)"}
+        - {name: want, value: "Completed|Succeeded|None"}
+    - name: on-completed
+      taskRef: {name: assert-eq}
+      when:
+        - {input: $(tasks.status), operator: in, values: [Completed]}
+      params:
+        - {name: got, value: ok}
+        - {name: want, value: ok}

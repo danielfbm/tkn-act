@@ -194,6 +194,12 @@ func All() []Fixture {
 			Params: map[string]string{"env": "prod"}, WantStatus: "succeeded",
 			Name: "when-and-finally_prod",
 		},
+		{
+			// Shell $(cmd) left literal, array-param pass-through
+			// ($(params.arr[*]) whole + spliced), $(tasks.status) /
+			// $(tasks.<t>.status) in finally params + when.
+			Dir: "substitution", Pipeline: "substitution", WantStatus: "succeeded",
+		},
 		{Dir: "failure-propagation", Pipeline: "failprop", WantStatus: "failed"},
 		{Dir: "onerror", Pipeline: "best-effort", WantStatus: "succeeded"},
 		{Dir: "retries", Pipeline: "retries", WantStatus: "succeeded"},
