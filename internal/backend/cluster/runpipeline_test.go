@@ -908,7 +908,7 @@ func TestRunPipelineSurfacesResults(t *testing.T) {
 // hand-written conversion can't silently drop these fields.
 //
 // Step-level displayName / description are intentionally NOT carried
-// onto the inlined PipelineRun: through v1.12 (current LTS pin) Step
+// onto the inlined PipelineRun: through v1.15 (current LTS pin) Step
 // has at most displayName (no description), and historically v0.65
 // had neither. The admission webhook strict-decodes and rejects
 // unknown fields. We consume both locally for the docker backend and

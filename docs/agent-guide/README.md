@@ -268,13 +268,23 @@ pin a different version — for example to match an environment that
 ships an older LTS — pass `--tekton-version`:
 
 ```sh
-tkn-act cluster up --tekton-version v1.3.0
+tkn-act cluster up --tekton-version v1.9.9
 ```
 
 The `TKN_ACT_TEKTON_VERSION` environment variable is honored when the
 flag is unset, which is the form CI matrices use. Precedence is flag
-> env > built-in default. Supported values are any Tekton Pipelines
-release tag the public installer URL resolves to.
+> env > built-in default. `run --cluster` (which has no
+`--tekton-version` flag) honors the env var too. Supported values are
+any Tekton Pipelines release tag the public installer URL resolves to.
+The built-in default is `v1.15.5` (latest patch of the newest Tekton
+LTS); CI also exercises `v1.9.9`, the oldest still-supported LTS.
+
+On an existing cluster, `cluster up` and `run --cluster` read the
+installed version from the `tekton-pipelines/pipelines-info` ConfigMap
+and re-apply the requested release when it differs (upgrade or
+downgrade) or when the controller/webhook deployments are missing
+(an interrupted earlier install). `cluster up` prints the version the
+cluster actually reports on its `tekton version:` line.
 
 ### 4. Discover what's in a repo
 

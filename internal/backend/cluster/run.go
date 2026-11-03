@@ -69,7 +69,7 @@ func (b *Backend) ensureNamespace(ctx context.Context, name string) error {
 	// `serviceaccounts "default" not found. Maybe invalid TaskSpec`
 	// whenever the reconciler is faster than the SA controller. The
 	// 2026-05-13 cluster-CI matrix surfaced this against Tekton
-	// v1.12.0; older pins (v0.65, v1.3.0) happened to never race in
+	// v1.12.0 (then the default pin); older pins (v0.65, v1.3.0) never raced in
 	// practice, but the gap is timing, not version-specific. 30s
 	// matches Tekton's own integration tests.
 	return b.waitForDefaultServiceAccount(ctx, name, 30*time.Second)
@@ -251,8 +251,9 @@ func taskSpecToMap(ts tektontypes.TaskSpec) map[string]any {
 	// Strip Step.displayName / Step.description before submission.
 	// History: Tekton v0.65 (tkn-act's first cluster pin) had neither
 	// field on Step — only Pipeline.spec, PipelineTask, and TaskSpec
-	// did. As of v1.12 (current LTS pin) Step.displayName exists but
-	// Step.description still doesn't, so a wholesale strip is still
+	// did. In every supported LTS (v1.9 through v1.15, the default pin)
+	// Step.displayName exists but Step.description still doesn't, so a
+	// wholesale strip is still
 	// defensive. The admission webhook strict-decodes the inlined
 	// PipelineRun and rejects unknown fields. tkn-act's docker backend
 	// is the source of truth for both: it consumes Step.DisplayName /

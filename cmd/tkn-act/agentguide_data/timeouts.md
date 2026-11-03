@@ -18,6 +18,15 @@ exceeded"`. The run-end status is `timeout`.
 `tasks` and `finally` are independent budgets — exhausting `tasks` does not
 shorten `finally`, and vice versa.
 
+**Cluster mode on Tekton < v1.13:** before upstream's
+`PipelineRunTimeoutRunningFinally` handling landed in v1.13, a
+`timeouts.tasks` expiry terminates the whole PipelineRun before the
+finally tasks complete. Under `--cluster` with such a release (e.g. the
+`v1.9.9` leg of the CI matrix, or `--tekton-version v1.9.9`) finally
+tasks may therefore be cut short or never start, where the docker
+backend and Tekton ≥ v1.13 (including the `v1.15.5` default) run them
+to completion.
+
 We do not default `timeouts.pipeline` to `1h` the way upstream Tekton does;
 omission means "no budget at this level." This may change in a future
 release.

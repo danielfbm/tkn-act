@@ -323,7 +323,7 @@ hard-fail? Pin this — agents care whether `run` is coupled to the store.
 **Charter K1 — cluster lifecycle.**
 - Normal: `cluster up` (idempotent? re-running while up?); `cluster status -o
   json` shape `{name,exists,running,detail,kubeconfig}`; `cluster down -y`.
-- Edge: `cluster up --tekton-version v1.3.0` and `TKN_ACT_TEKTON_VERSION` env
+- Edge: `cluster up --tekton-version v1.9.9` and `TKN_ACT_TEKTON_VERSION` env
   (flag > env precedence); `cluster up` with an invalid version tag (clean
   error?); `cluster down` without `-y` (prompt vs refuse); `cluster status`
   when no cluster exists (`exists:false`, exit 0); `run --cluster` when cluster

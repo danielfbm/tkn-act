@@ -209,7 +209,7 @@ these run offline. `NET` only where a public endpoint is unavoidable.
 | CLS-001 | `$B cluster up` then again | Second call idempotent (no error, no double-install). |
 | CLS-002 | `$B cluster status -o json` (up) | `{name,exists:true,running:true,detail,kubeconfig}`; exit 0. |
 | CLS-003 | `$B cluster status -o json` (none) | `exists:false`; exit 0. |
-| CLS-004 | `TKN_ACT_TEKTON_VERSION=v1.3.0 $B cluster up --tekton-version v1.12.0` | Flag wins (v1.12.0 installed); precedence flag>env. |
+| CLS-004 | `TKN_ACT_TEKTON_VERSION=v1.9.9 $B cluster up --tekton-version v1.15.5` | Flag wins (v1.15.5 installed, printed on the `tekton version:` line); precedence flag>env. |
 | CLS-005 | `$B cluster up --tekton-version v0.0.0-bogus` | Clean error (no half-installed cluster); deterministic non-zero exit. |
 | CLS-006 | `$B cluster down` (no `-y`) | Pin: prompt vs refuse; non-destructive without confirm. |
 | CLS-007 | `$B run --cluster -f testdata/e2e/hello/pipeline.yaml -o json` (cluster down) | Deterministic: either auto-ups or exit 3 telling you to `cluster up`. |

@@ -23,8 +23,8 @@ output's log-line prefix.
 In cluster mode, `Step.displayName` and `Step.description` are
 **stripped** from the inlined PipelineRun before submission to Tekton.
 History: through v0.65 (tkn-act's first cluster pin) the upstream `Step`
-schema had neither field; as of v1.12 (current LTS default)
-`Step.displayName` is supported but `Step.description` still isn't.
+schema had neither field; in every supported LTS (v1.9 through v1.15,
+the default) `Step.displayName` is supported but `Step.description` still isn't.
 The admission webhook strict-decodes and rejects unknown fields, so
 stripping both is defensive across the matrix of supported Tekton
 versions. The fields still surface on tkn-act's JSON event stream and
