@@ -1,7 +1,7 @@
 # Full-project audit fixes + Tekton v1.15 LTS bump
 
 **Date:** 2026-11-03
-**Status:** Draft — implementation in same PR
+**Status:** Implemented in the same PR
 **Plan:** [`docs/superpowers/plans/2026-11-03-audit-and-tekton-v1.15.md`](../plans/2026-11-03-audit-and-tekton-v1.15.md)
 
 ## Problem
@@ -48,7 +48,7 @@
 - Bring all docs (README, agent-guide, feature-parity, test-coverage,
   short-term-goals, QA plans) in line with the code.
 
-## Non-goals (follow-ups filed as issues)
+## Non-goals (follow-ups, listed in the PR description)
 
 - Artifact Hub support for the `hub` resolver (`type: artifact`, the
   upstream default). This PR makes `type` explicit: `tekton` works,

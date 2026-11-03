@@ -8,7 +8,7 @@ of `64c55be`.
 
 ## Pre-flight
 
-- [ ] `go vet` (default/integration/cluster tags), `go test -race ./...`,
+- [x] `go vet` (default/integration/cluster tags), `go test -race ./...`,
       `golangci-lint run ./...` (v2.12.2), `make check-agentguide`,
       `parity-check.sh` all green on base.
 
@@ -16,27 +16,27 @@ of `64c55be`.
 
 ## WS-A — Tekton bump, installer, CI
 
-- [ ] A1 `DefaultTektonVersion` → `v1.15.5` (`internal/cluster/tekton/install.go:25`); update tests.
-- [ ] A2 Installer reads `tekton-pipelines/pipelines-info` `data.version`; re-applies `release.yaml` on mismatch with the requested version, and when the CRD exists but controller/webhook deployments are missing (`install.go:54-65`). `cluster up` prints the *actual* installed version (`cmd/tkn-act/cluster.go:88`).
-- [ ] A3 `run --cluster` passes the resolved Tekton version (flag/env/default) into `clusterbe.Options.TektonVersion` (`cmd/tkn-act/run.go:~211`).
-- [ ] A4 Stale comments: `enable-step-actions` is a no-op since v1.9 (`install.go:91-103`); alpha gating "through v1.15"; `internal/backend/cluster/run.go:72,252-258`; `docs/agent-guide/display-name.md:26`.
-- [ ] A5 CI matrix `v1.9.9` + `v1.15.5` (`.github/workflows/cluster-integration.yml:53-54`); pin k3s image explicitly (`--image rancher/k3s:<v1.3x>` in `internal/cluster/k3d`), bump k3d/kubectl pins in Makefile + workflow together; install k3d by tagged release binary instead of `main/install.sh` (`cluster-integration.yml:75`, `scripts/check-cluster-deps.sh:59`).
-- [ ] A6 `tests-required.sh` + `coverage-check.sh` diff against `git merge-base base head`.
-- [ ] A7 `parity-check.sh` fails when a `both` row's fixture is `DockerOnly`/`ClusterOnly`; fix `matrix` row (`docs/feature-parity.md:136`) accordingly.
-- [ ] A8 Examples `v1.3.0` → `v1.9.9` in README.md:91, `docs/agent-guide/README.md:271`, `cmd/tkn-act/cluster.go:75`, `docs/short-term-goals.md`, `docs/qa/*`, `docs/test-coverage.md:21`, `internal/e2e/fixtures/fixtures.go:334`; note pre-v1.13 `timeouts.tasks`+finally divergence in `docs/agent-guide/timeouts.md`.
+- [x] A1 `DefaultTektonVersion` → `v1.15.5` (`internal/cluster/tekton/install.go:25`); update tests.
+- [x] A2 Installer reads `tekton-pipelines/pipelines-info` `data.version`; re-applies `release.yaml` on mismatch with the requested version, and when the CRD exists but controller/webhook deployments are missing (`install.go:54-65`). `cluster up` prints the *actual* installed version (`cmd/tkn-act/cluster.go:88`).
+- [x] A3 `run --cluster` passes the resolved Tekton version (flag/env/default) into `clusterbe.Options.TektonVersion` (`cmd/tkn-act/run.go:~211`).
+- [x] A4 Stale comments: `enable-step-actions` is a no-op since v1.9 (`install.go:91-103`); alpha gating "through v1.15"; `internal/backend/cluster/run.go:72,252-258`; `docs/agent-guide/display-name.md:26`.
+- [x] A5 CI matrix `v1.9.9` + `v1.15.5` (`.github/workflows/cluster-integration.yml:53-54`); pin k3s image explicitly (`--image rancher/k3s:<v1.3x>` in `internal/cluster/k3d`), bump k3d/kubectl pins in Makefile + workflow together; install k3d by tagged release binary instead of `main/install.sh` (`cluster-integration.yml:75`, `scripts/check-cluster-deps.sh:59`).
+- [x] A6 `tests-required.sh` + `coverage-check.sh` diff against `git merge-base base head`.
+- [x] A7 `parity-check.sh` fails when a `both` row's fixture is `DockerOnly`/`ClusterOnly`; fix `matrix` row (`docs/feature-parity.md:136`) accordingly.
+- [x] A8 Examples `v1.3.0` → `v1.9.9` in README.md:91, `docs/agent-guide/README.md:271`, `cmd/tkn-act/cluster.go:75`, `docs/short-term-goals.md`, `docs/qa/*`, `docs/test-coverage.md:21`, `internal/e2e/fixtures/fixtures.go:334`; note pre-v1.13 `timeouts.tasks`+finally divergence in `docs/agent-guide/timeouts.md`.
 
 ## WS-B — Security + dependencies (refresolver, go.mod)
 
-- [ ] B1 git resolver: refuse paths whose resolved target escapes the clone (symlinks) — `internal/refresolver/git.go` Resolve.
-- [ ] B2 Bump go-git ≥ v5.19.3, go-billy ≥ v5.9.0, x/net, x/crypto, x/text; set `go`/`toolchain` so CI builds with go ≥ 1.25.13; `govulncheck ./...` reports no reachable fixable vulns.
-- [ ] B3 http + hub clients: `CheckRedirect` rejects scheme downgrade (unless insecure allowed) and strips `Authorization` on host change.
-- [ ] B4 Redact credentials/query strings in http/hub `Source` + errors; redact params in cache meta; cache files `0600`.
-- [ ] B5 Allow-list check before cache lookup (`refresolver.go` Resolve).
-- [ ] B6 `isLoopbackHost`/`isLoopbackRegistryHost` use `net.ParseIP(..).IsLoopback()` or `localhost`.
-- [ ] B7 `io.LimitReader` on http/hub bodies and bundle layer decompression; bundles require the `kind` annotation.
-- [ ] B8 Cache: `List`/`Prune`/`Clear` cover `git/<key>/` clones; clone into temp + atomic rename; git `@branch` refs re-fetch unless offline (document).
-- [ ] B9 hub resolver: honour `type` param — `tekton` works; `artifact` fails with a clear error; doc gap row.
-- [ ] B10 `TKN_ACT_HTTP_RESOLVER_TOKEN` accepted as alias of `TKNACT_HTTP_RESOLVER_TOKEN` (old name kept).
+- [x] B1 git resolver: refuse paths whose resolved target escapes the clone (symlinks) — `internal/refresolver/git.go` Resolve.
+- [x] B2 Bump go-git ≥ v5.19.3, go-billy ≥ v5.9.0, x/net, x/crypto, x/text; set `go`/`toolchain` so CI builds with a patched toolchain (landed as `go 1.26.10` — the fixed x/net, x/crypto and go-git releases require go ≥ 1.26); `govulncheck ./...` reports no reachable fixable vulns.
+- [x] B3 http + hub clients: `CheckRedirect` rejects scheme downgrade (unless insecure allowed) and strips `Authorization` on host change.
+- [x] B4 Redact credentials/query strings in http/hub `Source` + errors; redact params in cache meta; cache files `0600`.
+- [x] B5 Allow-list check before cache lookup (`refresolver.go` Resolve).
+- [x] B6 `isLoopbackHost`/`isLoopbackRegistryHost` use `net.ParseIP(..).IsLoopback()` or `localhost`.
+- [x] B7 `io.LimitReader` on http/hub bodies and bundle layer decompression; bundles require the `kind` annotation.
+- [x] B8 Cache: `List`/`Prune`/`Clear` cover `git/<key>/` clones; clone into temp + atomic rename; git `@branch` refs re-fetch unless offline (document).
+- [x] B9 hub resolver: honour `type` param — `tekton` works; `artifact` fails with a clear error; doc gap row.
+- [x] B10 `TKN_ACT_HTTP_RESOLVER_TOKEN` accepted as alias of `TKNACT_HTTP_RESOLVER_TOKEN` (old name kept).
 
 ## WS-C1 — Substitution (resolver + engine substitution paths)
 
@@ -48,11 +48,11 @@ of `64c55be`.
 
 ## WS-C2 — Scheduling (engine, volumes, workspace)
 
-- [ ] C2.1 when-skipped (and all-rows-skipped matrix) tasks don't block `runAfter` dependents (`engine.go:669-720`).
-- [ ] C2.2 Implicit DAG edges from `when` inputs/values; `taskResultRefPat` accepts `[*]`/`[N]`; matrix parents map to all expansions (`implicit_edges.go`).
-- [ ] C2.3 Timeout/cancel: remaining levels get `task-skip` + appear in `RunResult.Tasks`; in-flight tasks killed by `timeouts.tasks/pipeline` reported `timeout` (`engine.go:316-320`).
-- [ ] C2.4 Finally tasks run concurrently (bounded by `--parallel`); finally task with missing upstream results is skipped, not failed.
-- [ ] C2.5 Retries get fresh results dir + emptyDir; `Optional` ConfigMap/Secret mount empty; `taskTimeoutFor` honours resolved Task timeout; non-matrix when-skip doesn't emit `task-end`.
+- [x] C2.1 when-skipped (and all-rows-skipped matrix) tasks don't block `runAfter` dependents (`engine.go:669-720`).
+- [x] C2.2 Implicit DAG edges from `when` inputs/values; `taskResultRefPat` accepts `[*]`/`[N]`; matrix parents map to all expansions (`implicit_edges.go`).
+- [x] C2.3 Timeout/cancel: remaining levels get `task-skip` + appear in `RunResult.Tasks`; in-flight tasks killed by `timeouts.tasks/pipeline` reported `timeout` (`engine.go:316-320`).
+- [x] C2.4 Finally tasks run concurrently (bounded by `--parallel`); finally task with missing upstream results is skipped, not failed.
+- [x] C2.5 Retries get fresh results dir + emptyDir; `Optional` ConfigMap/Secret mount empty; `taskTimeoutFor` honours resolved Task timeout; non-matrix when-skip doesn't emit `task-end`.
 
 ## WS-D — Backends
 
@@ -85,10 +85,10 @@ of `64c55be`.
 
 ## Doc convergence
 
-- [ ] `docs/feature-parity.md` — matrix row backends, hub `type: artifact` gap, `$(context.*)`, `$(tasks.status)`, finally parallelism, step fields.
-- [ ] `docs/agent-guide/*.md` touched by each WS, then `go generate ./cmd/tkn-act/`.
-- [ ] `README.md` — Tekton version examples, positional args, resolver flags.
-- [ ] `docs/test-coverage.md` — matrix versions, any new fixtures.
-- [ ] `docs/short-term-goals.md` — Tekton version references.
-- [ ] `AGENTS.md` — env-var list gains `TKN_ACT_HTTP_RESOLVER_TOKEN` / `TKNACT_HTTP_RESOLVER_TOKEN`.
-- [ ] Follow-up issues filed for spec non-goals.
+- [x] `docs/feature-parity.md` — matrix row backends, hub `type: artifact` gap, `$(context.*)`, `$(tasks.status)`, finally parallelism, step fields.
+- [x] `docs/agent-guide/*.md` touched by each WS, then `go generate ./cmd/tkn-act/`.
+- [x] `README.md` — Tekton version examples, positional args, resolver flags.
+- [x] `docs/test-coverage.md` — matrix versions, any new fixtures.
+- [x] `docs/short-term-goals.md` — Tekton version references.
+- [x] `AGENTS.md` — env-var list gains `TKN_ACT_HTTP_RESOLVER_TOKEN` / `TKNACT_HTTP_RESOLVER_TOKEN`.
+- [x] Follow-ups for spec non-goals listed in the PR description (to be filed as issues on request).
