@@ -204,6 +204,9 @@ esac
   opaquely. CM/Secret YAML files must be passed explicitly with `-f`;
   there is no auto-discovery for them (only `pipeline.yaml` /
   `.tekton/` are auto-discovered, and only for Tasks/Pipelines).
+  On the docker backend, a configMap or secret volume marked
+  `optional: true` mounts as an empty directory when the source is
+  missing. Its `items` keys that are missing are skipped.
 
 `tkn-act` never reads or modifies your shell's `~/.kube/config`.
 

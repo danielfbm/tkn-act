@@ -20,6 +20,7 @@ var Order = []string{
 	"matrix",
 	"pipeline-results",
 	"display-name",
+	"scheduling",
 	"timeouts",
 	"resolvers",
 	"debug",
