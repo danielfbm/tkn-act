@@ -427,7 +427,7 @@ func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (back
 		// Ensure this step's per-step results dir exists on the host before
 		// the container starts; later steps see it read-only.
 		stepResultsHost := filepath.Join(inv.ResultsHost, "steps", step.Name)
-		if err := os.MkdirAll(stepResultsHost, 0o755); err != nil {
+		if err := mkdirWorldWritable(stepResultsHost); err != nil {
 			res.Status = backend.TaskInfraFailed
 			res.Err = fmt.Errorf("step %q: mkdir step results: %w", step.Name, err)
 			res.Ended = time.Now()

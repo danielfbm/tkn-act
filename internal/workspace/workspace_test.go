@@ -27,6 +27,31 @@ func TestProvisionAllocatesTmpdir(t *testing.T) {
 	}
 }
 
+// TestProvisionedDirsWorldWritable: Tekton mounts workspaces and
+// results as 0777 emptyDirs, so images running as a non-root USER can
+// write $(results.x.path). The docker backend must match regardless of
+// the process umask.
+func TestProvisionedDirsWorldWritable(t *testing.T) {
+	mgr := workspace.NewManager(t.TempDir(), "run-1")
+	ws, err := mgr.Provision("source", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := mgr.ProvisionResultsDir("build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{ws, res} {
+		st, err := os.Stat(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := st.Mode().Perm(); got != 0o777 {
+			t.Errorf("%s mode = %o, want 777", d, got)
+		}
+	}
+}
+
 func TestProvisionUsesUserPath(t *testing.T) {
 	tmp := t.TempDir()
 	user := filepath.Join(tmp, "my-source")

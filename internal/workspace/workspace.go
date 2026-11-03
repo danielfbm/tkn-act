@@ -36,7 +36,7 @@ func (m *Manager) Provision(name, userPath string) (string, error) {
 		return userPath, nil
 	}
 	dir := filepath.Join(m.root, m.runID, "workspaces", name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := mkdirWorldWritable(dir); err != nil {
 		return "", fmt.Errorf("mkdir workspace %q: %w", name, err)
 	}
 	m.allocated = append(m.allocated, dir)
@@ -46,7 +46,7 @@ func (m *Manager) Provision(name, userPath string) (string, error) {
 // ProvisionResultsDir creates a fresh per-task results directory.
 func (m *Manager) ProvisionResultsDir(taskName string) (string, error) {
 	dir := filepath.Join(m.root, m.runID, "results", taskName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := mkdirWorldWritable(dir); err != nil {
 		return "", fmt.Errorf("mkdir results %q: %w", taskName, err)
 	}
 	m.resultsDirs = append(m.resultsDirs, dir)
@@ -86,4 +86,15 @@ func (m *Manager) AllocatedPaths() []string {
 	out = append(out, m.allocated...)
 	out = append(out, m.resultsDirs...)
 	return out
+}
+
+// mkdirWorldWritable creates dir (and parents) and makes the leaf
+// 0o777, matching the emptyDir Tekton mounts for workspaces and
+// results so images running as a non-root USER can write to them on
+// the docker backend too. The explicit Chmod bypasses the umask.
+func mkdirWorldWritable(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.Chmod(dir, 0o777)
 }

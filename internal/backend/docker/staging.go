@@ -416,24 +416,44 @@ func (b *Backend) ensureStagerDir(ctx context.Context, dirPath string) error {
 	if rel == "" {
 		return nil // /staged itself always exists (it's the volume mount point).
 	}
-	segments := strings.Split(rel, "/")
+	buf, err := dirChainTar(rel)
+	if err != nil {
+		return err
+	}
+	return b.cli.CopyToContainer(ctx, b.stagerID, stagerMountPoint, buf, container.CopyToContainerOptions{})
+}
 
+// dirChainTar builds a tar with one TypeDir entry per segment of rel.
+// Directories are 0o777: the stager extracts as root, and Tekton
+// mounts workspaces / results as world-writable emptyDirs, so step
+// images running as a non-root USER must be able to write into them.
+func dirChainTar(rel string) (*bytes.Buffer, error) {
+	segments := strings.Split(rel, "/")
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	for i := range segments {
 		entry := strings.Join(segments[:i+1], "/") + "/"
 		if err := tw.WriteHeader(&tar.Header{
 			Name:     entry,
-			Mode:     0o755,
+			Mode:     0o777,
 			Typeflag: tar.TypeDir,
 		}); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	return &buf, nil
+}
+
+// mkdirWorldWritable creates dir (and parents) and makes the leaf
+// 0o777 regardless of umask, mirroring Tekton's emptyDir mode.
+func mkdirWorldWritable(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return b.cli.CopyToContainer(ctx, b.stagerID, stagerMountPoint, &buf, container.CopyToContainerOptions{})
+	return os.Chmod(dir, 0o777)
 }
 
 // mkdirInVolume materialises the volume-relative subpath inside the
@@ -460,7 +480,7 @@ func tarHostDir(hostDir string) (io.Reader, error) {
 		if os.IsNotExist(err) {
 			// Materialise an empty directory entry so the subpath
 			// exists for subsequent mounts.
-			if werr := tw.WriteHeader(&tar.Header{Name: "./", Mode: 0o755, Typeflag: tar.TypeDir}); werr != nil {
+			if werr := tw.WriteHeader(&tar.Header{Name: "./", Mode: 0o777, Typeflag: tar.TypeDir}); werr != nil {
 				return nil, werr
 			}
 			if cerr := tw.Close(); cerr != nil {
