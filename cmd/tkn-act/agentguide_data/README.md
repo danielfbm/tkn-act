@@ -44,6 +44,10 @@ production, or modify your `~/.kube/config`.
 ## Machine-readable interfaces
 
 Every command supports `--output json` (alias `-o json`) with a stable shape.
+Command groups invoked without a subcommand (`tkn-act runs`, `tkn-act cache`)
+print a help-json style object (`path`, `short`, `flags`, `subcommands`) instead
+of help text; `tkn-act agent-guide -o json` wraps the markdown as
+`{"section": "...", "markdown": "..."}` (`section` omitted for the full guide).
 Three commands are designed specifically for agent use:
 
 | Command                 | Purpose                                              |
@@ -113,6 +117,12 @@ attempts of a retried task; the terminal `task-end` carries `attempt: N`.
 `debug` events only appear with `--debug` set; they carry `component`
 (`backend`/`resolver`/`engine`) and a `fields` map — see
 [`debug.md`](debug.md) for the full enumeration.
+`step-start` / `step-end` are reserved, stable kind names but are **not
+currently emitted** (step boundaries are visible through `step-log` and the
+task's `task-end`); agents must not wait for them.
+If `run` rejects the pipeline before starting (validation, exit 4), each
+validation error is emitted as an `error` event (`message` prefixed with
+`validation: `) and no `run-start` follows.
 Run/task statuses: `succeeded`, `failed`, `infrafailed`, `skipped`,
 `not-run`, `timeout`, `cancelled`. The exit code follows the table below.
 
@@ -121,7 +131,10 @@ Run/task statuses: `succeeded`, `failed`, `infrafailed`, `skipped`,
 - `tkn-act list -o json` →
   `{"pipelines": ["..."], "tasks": ["..."]}`
 - `tkn-act validate -o json` →
-  `{"ok": true, "pipeline": "...", "errors": []}`
+  `{"ok": true, "pipeline": "...", "errors": []}` (`errors` are in
+  pipeline-task order, deterministic across invocations)
+- `tkn-act runs prune -o json` →
+  `{"pruned": 3, "state_dir": "..."}`
 - `tkn-act version -o json` →
   `{"name": "tkn-act", "version": "dev"}`
 - `tkn-act cluster status -o json` →
@@ -241,6 +254,30 @@ tkn-act validate -f pipeline.yaml -o json
 
 Exit 0 → safe to run. Exit 4 → parse the `errors` array.
 
+`validate` applies the same resolver-aware checks as `run`
+(`--resolver-allow`, `--cluster-resolver-context` /
+`--cluster-resolver-kubeconfig`, `--remote-resolver-context`, `--offline`),
+so pass it the same global flags you will pass to `run`. Required pipeline
+params (no `default`) are checked when you pass at least one `--param`
+(`run` always checks them and exits 4 on a missing one).
+
+Positional arguments are accepted as files on both `run` and `validate`:
+`tkn-act validate pipeline.yaml` ≡ `tkn-act validate -f pipeline.yaml`
+(positional and `-f` files are merged). A positional path that doesn't
+exist exits 4 like a missing `-f` file; a directory exits 2 (use `-C`).
+
+Besides refs, DAG, workspaces and task params, the validator rejects
+(mirroring Tekton admission): main tasks consuming a `finally` task's
+results; `$(tasks.X.results.Y)` naming an unknown task in params, `when`
+or `matrix`; empty `when.values`; duplicate step names in a Task;
+`$(params.X)` naming an undeclared param (pipeline-task fields against
+`Pipeline.spec.params`; steps / sidecars / `stepTemplate` against the
+Task's params — embedded `taskSpec`s also see pipeline params); negative
+Task `timeout`; and, per Tekton v1.14+, any `$(...)` in PipelineTask
+`params` / `when` / `matrix` values whose prefix isn't `params`, `tasks`,
+`finally`, `context`, `workspaces`, `results` or `tt.params` (use `${VAR}`
+for shell variables; step scripts are not checked, `$(date)` is fine there).
+
 ### 2. Run, with structured events on stdout
 
 ```sh
@@ -251,7 +288,7 @@ tkn-act run -f pipeline.yaml \
 ```
 
 Pipe stdout through `jq -c .` and parse line-by-line. Exit 5 means a Task
-failed; the corresponding `task_finished` event has `status: "failed"`.
+failed; the corresponding `task-end` event has `status: "failed"`.
 
 ### 3. Run inside a real Tekton controller
 
@@ -289,10 +326,11 @@ tkn-act list -o json
 | Symptom                                              | Likely exit | Remedy                                    |
 | ---------------------------------------------------- | ----------- | ----------------------------------------- |
 | `docker: Cannot connect to the Docker daemon`        | 3           | start Docker; rerun `tkn-act doctor`      |
-| `--param expects key=value`                          | 2           | quote the value: `-p 'revision=main'`     |
+| `--param expects key=value`                          | 2           | quote it: `--param 'revision=main'`       |
 | `multiple pipelines loaded`                          | 2           | pass `-p <pipeline-name>`                 |
 | `validation error(s)`                                | 4           | read stderr or use `validate -o json`     |
-| pipeline finishes with `status: "failed"`            | 5           | inspect last `task_finished` event        |
+| `missing required param "x"`                         | 4           | pass `--param x=<value>`                  |
+| pipeline finishes with `status: "failed"`            | 5           | inspect last `task-end` event             |
 | `not found on PATH: k3d`                             | 3           | install k3d or stop using `--cluster`     |
 
 ---

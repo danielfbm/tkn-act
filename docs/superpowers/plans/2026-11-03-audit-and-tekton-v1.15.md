@@ -69,17 +69,17 @@ of `64c55be`.
 
 ## WS-E — CLI, validator, runstore
 
-- [ ] E1 Positional args on `run`/`validate` treated as `-f` (error on mixing ambiguous inputs).
-- [ ] E2 `--cluster-resolver-context`/`--cluster-resolver-kubeconfig` add `cluster` to allow-list (validator + registry).
-- [ ] E3 Required pipeline params checked before execution (exit 4), `providedParams` wired.
-- [ ] E4 `validate` uses the same `validator.Options` as `run`.
-- [ ] E5 runstore: every index entry's ULID validated before path joins (prune/show/logs).
-- [ ] E6 Abandoned runs (no end, old) prunable and reported `status: unknown`; zero times omitted.
-- [ ] E7 `TKN_ACT_KEEP_RUNS` off-by-one; cancelled/timeout runs recorded with their real status.
-- [ ] E8 `-o json` honoured by `runs prune` (and others listed in the audit) or docs narrowed.
-- [ ] E9 Validator: finally-result consumption by main tasks, when-input refs to unknown tasks, empty `when.values`, duplicate step names, undeclared `$(params.x)`, negative task timeout, `PipelineTask.timeout`, v1.14 `$(...)` prefix rule; deterministic error order.
-- [ ] E10 `--resolver-config` wired for `hub.token` (or claim removed); `list -C` missing dir errors; case-insensitive ULID prefix; ambiguous-prefix candidate list; read-only `logs`/`runs show`.
-- [ ] E11 Docs: `runs list -o json` keys, `task_finished`, `-p` misuse in README, feature-parity stable-kinds list, `step-start/step-end` gap note.
+- [x] E1 Positional args on `run`/`validate` treated as `-f` (error on mixing ambiguous inputs).
+- [x] E2 `--cluster-resolver-context`/`--cluster-resolver-kubeconfig` add `cluster` to allow-list (validator + registry).
+- [x] E3 Required pipeline params checked before execution (exit 4), `providedParams` wired.
+- [x] E4 `validate` uses the same `validator.Options` as `run`.
+- [x] E5 runstore: every index entry's ULID validated before path joins (prune/show/logs).
+- [x] E6 Abandoned runs (no end, old) prunable and reported `status: unknown`; zero times omitted.
+- [x] E7 `TKN_ACT_KEEP_RUNS` off-by-one; cancelled/timeout runs recorded with their real status.
+- [x] E8 `-o json` honoured by `runs prune` (and others listed in the audit) or docs narrowed.
+- [x] E9 Validator: finally-result consumption by main tasks, when-input refs to unknown tasks, empty `when.values`, duplicate step names, undeclared `$(params.x)`, negative task timeout, `PipelineTask.timeout`, v1.14 `$(...)` prefix rule; deterministic error order. (`PipelineTask.timeout` deferred: the field is not in `tektontypes.PipelineTask` yet — WS-D / follow-up.)
+- [x] E10 `--resolver-config` wired for `hub.token` (or claim removed); `list -C` missing dir errors; case-insensitive ULID prefix; ambiguous-prefix candidate list; read-only `logs`/`runs show`.
+- [x] E11 Docs: `runs list -o json` keys, `task_finished`, `-p` misuse in README, feature-parity stable-kinds list, `step-start/step-end` gap note.
 
 ---
 
