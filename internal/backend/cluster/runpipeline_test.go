@@ -859,6 +859,50 @@ func TestBuildPipelineRunInlinesStepTemplate(t *testing.T) {
 	}
 }
 
+// TestBuildPipelineRunUsesComputeResources: the inlined v1 taskSpec
+// must carry Step.computeResources (not the v1beta1 `resources` key,
+// which Tekton v1 ignores) plus securityContext / timeout verbatim.
+func TestBuildPipelineRunUsesComputeResources(t *testing.T) {
+	be, _, _, _, _ := fakeBackend(t)
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{Name: "a", TaskRef: &tektontypes.TaskRef{Name: "t"}}},
+	}}
+	pl.Metadata.Name = "p"
+	uid := int64(65532)
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{
+		Steps: []tektontypes.Step{{
+			Name: "s", Image: "alpine:3", Script: "true", Timeout: "10s",
+			Resources:       &tektontypes.StepResources{Limits: tektontypes.ResourceList{Memory: "64Mi"}},
+			SecurityContext: &corev1.SecurityContext{RunAsUser: &uid},
+		}},
+	}}
+	tk.Metadata.Name = "t"
+	prObj, err := be.BuildPipelineRunObject(backend.PipelineRunInvocation{
+		RunID: "12345678", PipelineRunName: "p-12345678",
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"t": tk},
+	}, "tkn-act-12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	un := prObj.(*unstructured.Unstructured)
+	tasks, _, _ := unstructured.NestedSlice(un.Object, "spec", "pipelineSpec", "tasks")
+	steps, _, _ := unstructured.NestedSlice(tasks[0].(map[string]any), "taskSpec", "steps")
+	step := steps[0].(map[string]any)
+	if _, ok := step["resources"]; ok {
+		t.Errorf("step still carries v1beta1 `resources`: %v", step)
+	}
+	mem, _, _ := unstructured.NestedString(step, "computeResources", "limits", "memory")
+	if mem != "64Mi" {
+		t.Errorf("computeResources.limits.memory = %q (step %v)", mem, step)
+	}
+	if step["timeout"] != "10s" {
+		t.Errorf("timeout = %v", step["timeout"])
+	}
+	if _, ok, _ := unstructured.NestedFieldNoCopy(step, "securityContext", "runAsUser"); !ok {
+		t.Errorf("securityContext dropped: %v", step)
+	}
+}
+
 // TestRunPipelineSurfacesResults: when the Tekton controller writes
 // `status.results` on the PipelineRun, the cluster backend must
 // forward those into PipelineRunResult.Results so the engine can

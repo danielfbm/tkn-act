@@ -286,6 +286,14 @@ func (b *Backend) startOneSidecar(ctx context.Context, inv backend.TaskInvocatio
 		Env:        env,
 		WorkingDir: sc.WorkingDir,
 	}
+	if err := applySecurityContext(sc.SecurityContext, cfg, hostConf); err != nil {
+		return "", nil, err
+	}
+	if needsImageUserCheck(sc.SecurityContext) {
+		if err := b.checkImageNonRoot(ctx, sc.Image); err != nil {
+			return "", nil, err
+		}
+	}
 	name := sidecarContainerName(inv.RunID, inv.TaskRunName, sc.Name)
 	created, err := b.cli.ContainerCreate(ctx, cfg, hostConf, nil, nil, name)
 	if err != nil {

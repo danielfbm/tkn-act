@@ -12,7 +12,8 @@ import "github.com/danielfbm/tkn-act/internal/tektontypes"
 //   - Slices (command, args): Step value wins as a whole if non-empty;
 //     no element-wise merge
 //   - Env: union by Name; Step entry wins; order is template-then-step-only
-//   - Resources: Step value wins (replace); no deep merge of limits/requests
+//   - Resources, SecurityContext, EnvFrom: Step value wins (replace); no
+//     deep merge
 //
 // Fields that are intrinsically per-Step (Name, Script, VolumeMounts,
 // Results, OnError) are not touched.
@@ -43,6 +44,12 @@ func applyStepTemplate(spec tektontypes.TaskSpec) tektontypes.TaskSpec {
 		if ns.Resources == nil && t.Resources != nil {
 			r := *t.Resources
 			ns.Resources = &r
+		}
+		if ns.SecurityContext == nil && t.SecurityContext != nil {
+			ns.SecurityContext = t.SecurityContext.DeepCopy()
+		}
+		if len(ns.EnvFrom) == 0 && len(t.EnvFrom) > 0 {
+			ns.EnvFrom = append(ns.EnvFrom, t.EnvFrom...)
 		}
 		ns.Env = mergeEnv(t.Env, st.Env)
 		out.Steps[i] = ns

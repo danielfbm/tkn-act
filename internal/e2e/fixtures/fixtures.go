@@ -185,6 +185,10 @@ func All() []Fixture {
 		{Dir: "params-and-results", Pipeline: "chain", WantStatus: "succeeded"},
 		{Dir: "workspaces", Pipeline: "ws-chain", WantStatus: "succeeded"},
 		{
+			Dir: "workspace-subpath", Pipeline: "workspace-subpath", WantStatus: "succeeded",
+			Description: "workspace binding subPath + Task mountPath + readOnly honoured",
+		},
+		{
 			Dir: "when-and-finally", Pipeline: "whens",
 			Params: map[string]string{"env": "dev"}, WantStatus: "succeeded",
 			Name: "when-and-finally_dev",
@@ -202,6 +206,15 @@ func All() []Fixture {
 		{Dir: "tasks-timeout", Pipeline: "tasks-timeout", WantStatus: "timeout"},
 		{Dir: "finally-timeout", Pipeline: "finally-timeout", WantStatus: "timeout"},
 		{Dir: "step-template", Pipeline: "step-template", WantStatus: "succeeded"},
+		{
+			Dir: "step-security-context", Pipeline: "step-security-context", WantStatus: "succeeded",
+			Description: "non-root step (securityContext.runAsUser) writes a Task result; computeResources accepted",
+			WantResults: map[string]any{"uid": "65532"},
+		},
+		{
+			Dir: "step-timeout", Pipeline: "step-timeout", WantStatus: "failed",
+			Description: "Step.timeout stops the step and fails the Task",
+		},
 		{
 			Dir: "pipeline-results", Pipeline: "pipeline-results", WantStatus: "succeeded",
 			// Both backends must surface the same resolved values. The

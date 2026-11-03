@@ -10,6 +10,8 @@ package tektontypes
 import (
 	"encoding/json"
 	"fmt"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 // Object is the common envelope shared by Task/Pipeline/TaskRun/PipelineRun.
@@ -56,18 +58,43 @@ type TaskSpec struct {
 // marshalled shape — any other field the controller knows about works
 // under --cluster regardless of what tkn-act reads.
 type Sidecar struct {
-	Name            string           `json:"name"`
-	Image           string           `json:"image"`
-	Command         []string         `json:"command,omitempty"`
-	Args            []string         `json:"args,omitempty"`
-	Script          string           `json:"script,omitempty"`
-	Env             []EnvVar         `json:"env,omitempty"`
-	WorkingDir      string           `json:"workingDir,omitempty"`
-	Resources       *StepResources   `json:"resources,omitempty"`
+	Name       string   `json:"name"`
+	Image      string   `json:"image"`
+	Command    []string `json:"command,omitempty"`
+	Args       []string `json:"args,omitempty"`
+	Script     string   `json:"script,omitempty"`
+	Env        []EnvVar `json:"env,omitempty"`
+	WorkingDir string   `json:"workingDir,omitempty"`
+	// Resources is Tekton v1's `computeResources`; the v1beta1 name
+	// `resources` is accepted as an alias on input (see UnmarshalJSON).
+	Resources       *StepResources   `json:"computeResources,omitempty"`
 	VolumeMounts    []VolumeMount    `json:"volumeMounts,omitempty"`
 	Workspaces      []WorkspaceUsage `json:"workspaces,omitempty"`
 	Ports           []ContainerPort  `json:"ports,omitempty"`
 	ImagePullPolicy string           `json:"imagePullPolicy,omitempty"`
+	// SecurityContext and EnvFrom are carried verbatim to the cluster
+	// backend; the docker backend maps the securityContext subset it
+	// can honour and rejects the rest (never silently drops them).
+	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
+	EnvFrom         []corev1.EnvFromSource  `json:"envFrom,omitempty"`
+}
+
+// UnmarshalJSON accepts the v1beta1 `resources` key as an alias for
+// v1 `computeResources` (the latter wins when both are set).
+func (s *Sidecar) UnmarshalJSON(data []byte) error {
+	type plain Sidecar
+	var aux struct {
+		plain
+		LegacyResources *StepResources `json:"resources,omitempty"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*s = Sidecar(aux.plain)
+	if s.Resources == nil {
+		s.Resources = aux.LegacyResources
+	}
+	return nil
 }
 
 // WorkspaceUsage is the per-container workspace declaration used by
@@ -94,13 +121,34 @@ type ContainerPort struct {
 // fields tkn-act reads. `name`, `script`, `volumeMounts`, `results`,
 // and `onError` are NOT inheritable — they're intrinsically per-Step.
 type StepTemplate struct {
-	Image           string         `json:"image,omitempty"`
-	Command         []string       `json:"command,omitempty"`
-	Args            []string       `json:"args,omitempty"`
-	Env             []EnvVar       `json:"env,omitempty"`
-	WorkingDir      string         `json:"workingDir,omitempty"`
-	Resources       *StepResources `json:"resources,omitempty"`
-	ImagePullPolicy string         `json:"imagePullPolicy,omitempty"`
+	Image      string   `json:"image,omitempty"`
+	Command    []string `json:"command,omitempty"`
+	Args       []string `json:"args,omitempty"`
+	Env        []EnvVar `json:"env,omitempty"`
+	WorkingDir string   `json:"workingDir,omitempty"`
+	// Resources is Tekton v1's `computeResources`; `resources` is
+	// accepted as an input alias (see UnmarshalJSON).
+	Resources       *StepResources          `json:"computeResources,omitempty"`
+	ImagePullPolicy string                  `json:"imagePullPolicy,omitempty"`
+	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
+	EnvFrom         []corev1.EnvFromSource  `json:"envFrom,omitempty"`
+}
+
+// UnmarshalJSON accepts `resources` as an alias for `computeResources`.
+func (t *StepTemplate) UnmarshalJSON(data []byte) error {
+	type plain StepTemplate
+	var aux struct {
+		plain
+		LegacyResources *StepResources `json:"resources,omitempty"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*t = StepTemplate(aux.plain)
+	if t.Resources == nil {
+		t.Resources = aux.LegacyResources
+	}
+	return nil
 }
 
 // StepAction is a referenceable Step shape (apiVersion tekton.dev/v1beta1).
@@ -149,15 +197,30 @@ type Step struct {
 	Ref *StepActionRef `json:"ref,omitempty"`
 	// Params is the list of values bound into the referenced StepAction's
 	// declared params. Ignored when Ref is nil.
-	Params          []Param        `json:"params,omitempty"`
-	Image           string         `json:"image,omitempty"`
-	Command         []string       `json:"command,omitempty"`
-	Args            []string       `json:"args,omitempty"`
-	Script          string         `json:"script,omitempty"`
-	Env             []EnvVar       `json:"env,omitempty"`
-	WorkingDir      string         `json:"workingDir,omitempty"`
-	Resources       *StepResources `json:"resources,omitempty"`
+	Params     []Param  `json:"params,omitempty"`
+	Image      string   `json:"image,omitempty"`
+	Command    []string `json:"command,omitempty"`
+	Args       []string `json:"args,omitempty"`
+	Script     string   `json:"script,omitempty"`
+	Env        []EnvVar `json:"env,omitempty"`
+	WorkingDir string   `json:"workingDir,omitempty"`
+	// Resources is Tekton v1's `computeResources`; the v1beta1 name
+	// `resources` is accepted as an input alias (see UnmarshalJSON).
+	// The cluster backend re-marshals it as `computeResources`.
+	Resources       *StepResources `json:"computeResources,omitempty"`
 	ImagePullPolicy string         `json:"imagePullPolicy,omitempty"` // Always | IfNotPresent | Never
+	// SecurityContext is honoured on docker for runAsUser / runAsGroup /
+	// runAsNonRoot / privileged / readOnlyRootFilesystem /
+	// allowPrivilegeEscalation / capabilities / seccompProfile
+	// (RuntimeDefault, Unconfined); other sub-fields fail the Task on
+	// docker. Passed verbatim on cluster.
+	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
+	// EnvFrom (and EnvVar.ValueFrom) read ConfigMaps / Secrets from the
+	// cluster; supported on cluster, rejected at run time on docker.
+	EnvFrom []corev1.EnvFromSource `json:"envFrom,omitempty"`
+	// Timeout is a per-Step wall-clock budget (Go duration string, e.g.
+	// "30s"). Exceeding it fails the Step like a non-zero exit.
+	Timeout string `json:"timeout,omitempty"`
 	// OnError controls Task-level failure semantics. "" or "stopAndFail" is
 	// the default — first non-zero step exit fails the Task. "continue" lets
 	// a non-zero exit be recorded but does not fail the Task.
@@ -166,6 +229,24 @@ type Step struct {
 	// in this step (RW) and in every later step in the same Task (RO).
 	Results      []ResultSpec  `json:"results,omitempty"`
 	VolumeMounts []VolumeMount `json:"volumeMounts,omitempty"`
+}
+
+// UnmarshalJSON accepts the v1beta1 `resources` key as an alias for
+// v1 `computeResources` (the latter wins when both are set).
+func (s *Step) UnmarshalJSON(data []byte) error {
+	type plain Step
+	var aux struct {
+		plain
+		LegacyResources *StepResources `json:"resources,omitempty"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*s = Step(aux.plain)
+	if s.Resources == nil {
+		s.Resources = aux.LegacyResources
+	}
+	return nil
 }
 
 // Volume is a Task-level volume. Exactly one of EmptyDir/HostPath/ConfigMap/
@@ -214,7 +295,11 @@ type VolumeMount struct {
 
 type EnvVar struct {
 	Name  string `json:"name"`
-	Value string `json:"value"`
+	Value string `json:"value,omitempty"`
+	// ValueFrom (configMapKeyRef / secretKeyRef / fieldRef /
+	// resourceFieldRef) is supported on cluster and rejected at run
+	// time on docker.
+	ValueFrom *corev1.EnvVarSource `json:"valueFrom,omitempty"`
 }
 
 type StepResources struct {
@@ -225,6 +310,57 @@ type StepResources struct {
 type ResourceList struct {
 	CPU    string `json:"cpu,omitempty"`
 	Memory string `json:"memory,omitempty"`
+	// Other holds every other resource name (ephemeral-storage,
+	// nvidia.com/gpu, ...) so the cluster backend forwards it
+	// faithfully. The docker backend only maps cpu / memory limits.
+	Other map[string]string `json:"-"`
+}
+
+// UnmarshalJSON accepts quantities written as YAML numbers
+// (`cpu: 1`) as well as strings, and keeps unknown resource names.
+func (r *ResourceList) UnmarshalJSON(data []byte) error {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+	*r = ResourceList{}
+	for k, raw := range m {
+		var v string
+		if err := json.Unmarshal(raw, &v); err != nil {
+			var n json.Number
+			if nerr := json.Unmarshal(raw, &n); nerr != nil {
+				return fmt.Errorf("resource %q: quantity must be a string or number", k)
+			}
+			v = n.String()
+		}
+		switch k {
+		case "cpu":
+			r.CPU = v
+		case "memory":
+			r.Memory = v
+		default:
+			if r.Other == nil {
+				r.Other = map[string]string{}
+			}
+			r.Other[k] = v
+		}
+	}
+	return nil
+}
+
+// MarshalJSON emits cpu, memory and every Other entry.
+func (r ResourceList) MarshalJSON() ([]byte, error) {
+	m := make(map[string]string, len(r.Other)+2)
+	for k, v := range r.Other {
+		m[k] = v
+	}
+	if r.CPU != "" {
+		m["cpu"] = r.CPU
+	}
+	if r.Memory != "" {
+		m["memory"] = r.Memory
+	}
+	return json.Marshal(m)
 }
 
 type ParamSpec struct {

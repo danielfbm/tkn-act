@@ -330,6 +330,16 @@ func (b *Backend) Cleanup(_ context.Context) error {
 func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (backend.TaskResult, error) {
 	res := backend.TaskResult{Started: time.Now(), Status: backend.TaskSucceeded, Results: map[string]string{}}
 
+	// Refuse fields the docker backend can't honour (envFrom, valueFrom,
+	// unsupported securityContext sub-fields) before starting anything,
+	// rather than silently running a differently-configured container.
+	if err := checkDockerSupport(inv.Task); err != nil {
+		res.Status = backend.TaskInfraFailed
+		res.Err = err
+		res.Ended = time.Now()
+		return res, nil
+	}
+
 	// Per-Task sidecar lifecycle. When a Task declares one or more
 	// sidecars, tkn-act starts a tiny pause container that owns the
 	// netns, then starts every sidecar joining that netns, then
@@ -768,6 +778,26 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 		Env:        env,
 		WorkingDir: step.WorkingDir,
 	}
+	if err := applySecurityContext(step.SecurityContext, cfg, hostConf); err != nil {
+		return 0, fmt.Errorf("step %q: %w", step.Name, err)
+	}
+	if needsImageUserCheck(step.SecurityContext) {
+		if err := b.checkImageNonRoot(ctx, step.Image); err != nil {
+			return 0, fmt.Errorf("step %q: %w", step.Name, err)
+		}
+	}
+	var stepTimeout <-chan time.Time
+	if step.Timeout != "" {
+		d, err := parseStepTimeout(step.Timeout)
+		if err != nil {
+			return 0, fmt.Errorf("step %q: %w", step.Name, err)
+		}
+		if d > 0 {
+			t := time.NewTimer(d)
+			defer t.Stop()
+			stepTimeout = t.C
+		}
+	}
 	containerName := fmt.Sprintf("tkn-act-%s-%s-%s", inv.RunID, inv.TaskRunName, step.Name)
 
 	created, err := b.cli.ContainerCreate(ctx, cfg, hostConf, nil, nil, containerName)
@@ -823,6 +853,16 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 		}
 	case st := <-statusCh:
 		return int(st.StatusCode), nil
+	case <-stepTimeout:
+		// Step.timeout exceeded: stop the container and fail the Step
+		// like a non-zero exit (so onError: continue still applies).
+		grace := 1
+		_ = b.cli.ContainerStop(context.Background(), created.ID, container.StopOptions{Timeout: &grace})
+		if inv.LogSink != nil {
+			inv.LogSink.StepLog(inv.TaskName, step.Name, step.DisplayName, "stderr",
+				fmt.Sprintf("tkn-act: step %q exceeded its timeout of %s", step.Name, step.Timeout))
+		}
+		return stepTimeoutExitCode, nil
 	case <-ctx.Done():
 		_ = b.cli.ContainerStop(context.Background(), created.ID, container.StopOptions{})
 		return 0, ctx.Err()
