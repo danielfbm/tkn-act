@@ -40,11 +40,11 @@ of `64c55be`.
 
 ## WS-C1 — Substitution (resolver + engine substitution paths)
 
-- [ ] C1.1 Unknown-prefix `$(...)` (e.g. `$(date)`, `$(pwd)`) left literal; `substituteSpec` (`engine.go:756-799`) stops discarding errors; `$(workspaces.X.bound)` supported.
-- [ ] C1.2 Whole-array pass-through `$(params.arr[*])` as string value or sole array item (`engine.go:560-590`, `resolver.go:266`).
-- [ ] C1.3 `$(tasks.status)` and `$(tasks.<t>.status)` in finally tasks (params + when).
-- [ ] C1.4 `[N]` indexing and object `.key` for params and task results; `[*]` inside `when` values.
-- [ ] C1.5 Missing `$(context.*)`: `task.name`, `task.retry-count`, `pipelineTask.retries`, `*.namespace`, `*.uid`.
+- [x] C1.1 Unknown-prefix `$(...)` (e.g. `$(date)`, `$(pwd)`) left literal; `substituteSpec` (`engine.go:756-799`) stops discarding errors; `$(workspaces.X.bound)` supported.
+- [x] C1.2 Whole-array pass-through `$(params.arr[*])` as string value or sole array item (`engine.go:560-590`, `resolver.go:266`).
+- [x] C1.3 `$(tasks.status)` and `$(tasks.<t>.status)` in finally tasks (params + when).
+- [x] C1.4 `[N]` indexing and object `.key` for params and task results; `[*]` inside `when` values.
+- [x] C1.5 Missing `$(context.*)`: `task.name`, `task.retry-count`, `pipelineTask.retries`, `*.namespace`, `*.uid`.
 
 ## WS-C2 — Scheduling (engine, volumes, workspace)
 
