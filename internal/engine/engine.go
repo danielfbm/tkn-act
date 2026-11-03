@@ -1088,8 +1088,15 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 	})
 	dur := time.Since(start)
 	if err != nil {
-		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Duration: dur, Message: err.Error(), DisplayName: pl.Spec.DisplayName})
-		return RunResult{Status: "failed"}, err
+		// A user interrupt surfaces from the cluster backend as a
+		// wrapped context.Canceled; report it as "cancelled" like the
+		// docker engine does, so run-end agrees with exit code 130.
+		status := "failed"
+		if errors.Is(ctx.Err(), context.Canceled) {
+			status = "cancelled"
+		}
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: status, Duration: dur, Message: err.Error(), DisplayName: pl.Spec.DisplayName})
+		return RunResult{Status: status}, err
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
 		res.Status = "cancelled"
