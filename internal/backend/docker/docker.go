@@ -583,7 +583,8 @@ func substituteStepRefs(st tektontypes.Step, stepResults map[string]map[string]s
 			if eErr != nil {
 				return st, eErr
 			}
-			out.Env[i] = tektontypes.EnvVar{Name: e.Name, Value: v}
+			e.Value = v
+			out.Env[i] = e
 		}
 	}
 	return out, nil
@@ -609,7 +610,11 @@ func (b *Backend) ensureImage(ctx context.Context, img, policy string) error {
 	b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
 		return "image pull start", map[string]any{"image": img, "policy": policy}
 	})
-	rc, err := b.cli.ImagePull(ctx, img, image.PullOptions{})
+	auth, err := registryAuthFor(img)
+	if err != nil {
+		return err
+	}
+	rc, err := b.cli.ImagePull(ctx, img, image.PullOptions{RegistryAuth: auth})
 	if err != nil {
 		b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
 			return "image pull failed", map[string]any{"image": img, "error": err.Error()}
