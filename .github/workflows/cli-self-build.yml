@@ -2,7 +2,7 @@ name: cli-self-build
 
 # Runs the meta pipeline `pipelines/ci-workspace.yaml` — tkn-act builds and
 # tests *itself* on the docker backend, all four checks (vet / test / build /
-# golangci-lint) running in parallel inside golang:1.25-alpine containers.
+# golangci-lint) running in parallel inside golang:1.26-alpine containers.
 #
 # Heavier than `cli-e2e` (~3-5 minutes wall clock with cold module cache).
 # Triggered on:
@@ -57,7 +57,7 @@ jobs:
       - name: warm image cache
         run: |
           docker pull alpine:3
-          docker pull golang:1.25-alpine
+          docker pull golang:1.26-alpine
 
       - name: validate self-build pipelines
         run: |
