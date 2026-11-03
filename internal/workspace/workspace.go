@@ -43,14 +43,30 @@ func (m *Manager) Provision(name, userPath string) (string, error) {
 	return dir, nil
 }
 
-// ProvisionResultsDir creates a fresh per-task results directory.
+// ProvisionResultsDir creates a fresh per-task results directory. It is
+// called once per attempt, so a retry re-provisions the same path: any
+// result files left by the previous attempt are removed first.
 func (m *Manager) ProvisionResultsDir(taskName string) (string, error) {
 	dir := filepath.Join(m.root, m.runID, "results", taskName)
+	if err := os.RemoveAll(dir); err != nil {
+		return "", fmt.Errorf("reset results %q: %w", taskName, err)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir results %q: %w", taskName, err)
 	}
-	m.resultsDirs = append(m.resultsDirs, dir)
+	m.trackResultsDir(dir)
 	return dir, nil
+}
+
+// trackResultsDir records dir for Cleanup once, however many attempts
+// re-provision it.
+func (m *Manager) trackResultsDir(dir string) {
+	for _, d := range m.resultsDirs {
+		if d == dir {
+			return
+		}
+	}
+	m.resultsDirs = append(m.resultsDirs, dir)
 }
 
 // ProvisionVolumesDir creates a fresh per-task scratch dir for materialised
@@ -60,7 +76,7 @@ func (m *Manager) ProvisionVolumesDir(taskName string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir volumes %q: %w", taskName, err)
 	}
-	m.resultsDirs = append(m.resultsDirs, dir)
+	m.trackResultsDir(dir)
 	return dir, nil
 }
 
