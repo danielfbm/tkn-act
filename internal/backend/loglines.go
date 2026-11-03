@@ -41,15 +41,10 @@ func ScanLogLines(r io.Reader, emit func(string)) {
 		if eol {
 			chunk = chunk[:len(chunk)-1]
 		}
-		if room := MaxLogLineBytes - len(line); room >= len(chunk) {
-			line = append(line, chunk...)
-		} else {
-			if room > 0 {
-				line = append(line, chunk[:room]...)
-				chunk = chunk[room:]
-			}
-			dropped += len(chunk)
-		}
+		// Keep what fits under the cap, count the rest as dropped.
+		keep := min(max(MaxLogLineBytes-len(line), 0), len(chunk))
+		line = append(line, chunk[:keep]...)
+		dropped += len(chunk) - keep
 		switch {
 		case eol:
 			flush()

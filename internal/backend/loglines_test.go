@@ -61,3 +61,30 @@ func TestScanLogLines_ReadErrorFlushesPartial(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// TestScanLogLinesTruncatesMidChunk covers truncation when a read chunk
+// straddles MaxLogLineBytes. MaxLogLineBytes is a multiple of the 64KiB
+// read buffer, so a short preceding line is needed to shift chunk
+// boundaries off the cap; the kept prefix must still be exactly
+// MaxLogLineBytes and the dropped count exact.
+func TestScanLogLinesTruncatesMidChunk(t *testing.T) {
+	const extra = 123
+	long := strings.Repeat("a", backend.MaxLogLineBytes) + strings.Repeat("b", extra)
+	input := "x\n" + long + "\nafter\n"
+
+	var got []string
+	backend.ScanLogLines(strings.NewReader(input), func(s string) { got = append(got, s) })
+
+	if len(got) != 3 {
+		t.Fatalf("got %d lines, want 3", len(got))
+	}
+	if got[0] != "x" || got[2] != "after" {
+		t.Errorf("neighbouring lines = %q / %q, want x / after", got[0], got[2])
+	}
+	wantPrefix := strings.Repeat("a", backend.MaxLogLineBytes)
+	wantMarker := fmt.Sprintf(" [tkn-act: line truncated, %d bytes dropped]", extra)
+	if got[1] != wantPrefix+wantMarker {
+		t.Errorf("truncated line: len=%d, suffix=%q; want len=%d ending in %q",
+			len(got[1]), got[1][len(got[1])-60:], len(wantPrefix)+len(wantMarker), wantMarker)
+	}
+}
