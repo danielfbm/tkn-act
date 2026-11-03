@@ -13,7 +13,6 @@ import (
 	"github.com/danielfbm/tkn-act/internal/backend"
 	clusterbe "github.com/danielfbm/tkn-act/internal/backend/cluster"
 	"github.com/danielfbm/tkn-act/internal/backend/docker"
-	"github.com/danielfbm/tkn-act/internal/cluster/k3d"
 	"github.com/danielfbm/tkn-act/internal/discovery"
 	"github.com/danielfbm/tkn-act/internal/engine"
 	"github.com/danielfbm/tkn-act/internal/exitcode"
@@ -208,15 +207,7 @@ func runWith(rf runFlags) (retErr error) {
 	// Build backend.
 	var be backend.Backend
 	if gf.cluster {
-		be = clusterbe.New(clusterbe.Options{
-			CacheDir: cacheRoot,
-			Driver: k3d.New(k3d.Options{
-				ClusterName:    "tkn-act",
-				KubeconfigPath: filepath.Join(cacheRoot, "cluster", "kubeconfig"),
-			}),
-			ConfigMaps: cmStore,
-			Secrets:    secStore,
-		})
+		be = clusterbe.New(clusterBackendOptions(cacheRoot, cmStore, secStore))
 	} else {
 		mode, err := resolveRemoteDocker(gf.remoteDocker)
 		if err != nil {

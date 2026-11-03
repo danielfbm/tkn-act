@@ -14,7 +14,10 @@ import (
 	"github.com/danielfbm/tkn-act/internal/cluster/k3d"
 	"github.com/danielfbm/tkn-act/internal/cluster/tekton"
 	"github.com/danielfbm/tkn-act/internal/exitcode"
+	"github.com/danielfbm/tkn-act/internal/volumes"
 	"github.com/spf13/cobra"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 // envTektonVersion is the environment variable that overrides the
@@ -34,6 +37,50 @@ func resolveTektonVersion(flagValue string) string {
 		return v
 	}
 	return tekton.DefaultTektonVersion
+}
+
+// clusterBackendOptions builds the cluster backend options used by
+// `run --cluster`: the k3d driver rooted under cacheRoot, the
+// ConfigMap/Secret stores, and the Tekton version resolved from
+// $TKN_ACT_TEKTON_VERSION (or the in-binary default), so a fresh
+// machine's first `run --cluster` installs the same release
+// `cluster up` would.
+func clusterBackendOptions(cacheRoot string, cm, sec *volumes.Store) clusterbe.Options {
+	return clusterbe.Options{
+		CacheDir: cacheRoot,
+		Driver: k3d.New(k3d.Options{
+			ClusterName:    "tkn-act",
+			KubeconfigPath: filepath.Join(cacheRoot, "cluster", "kubeconfig"),
+		}),
+		TektonVersion: resolveTektonVersion(""),
+		ConfigMaps:    cm,
+		Secrets:       sec,
+	}
+}
+
+// installedTektonVersion returns the version the cluster's
+// tekton-pipelines/pipelines-info ConfigMap reports, falling back to
+// the requested version (marked as such) when it can't be read.
+func installedTektonVersion(ctx context.Context, kube kubernetes.Interface, requested string) string {
+	if kube != nil {
+		if v, err := tekton.ReadInstalledVersion(ctx, kube); err == nil {
+			return v
+		}
+	}
+	return requested + " (requested; installed version could not be read)"
+}
+
+// kubeClientFor builds a typed client from a kubeconfig path; nil on error.
+func kubeClientFor(kubeconfig string) kubernetes.Interface {
+	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		return nil
+	}
+	c, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil
+	}
+	return c
 }
 
 type clusterStatus struct {
@@ -72,7 +119,7 @@ func newClusterUpCmd() *cobra.Command {
   tkn-act cluster up
 
   # pin to a specific Tekton release (also reads $TKN_ACT_TEKTON_VERSION)
-  tkn-act cluster up --tekton-version v1.3.0`,
+  tkn-act cluster up --tekton-version v1.9.9`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			ctx := context.Background()
 			drv := newDriver()
@@ -87,7 +134,7 @@ func newClusterUpCmd() *cobra.Command {
 			}
 			fmt.Println("cluster ready:   ", drv.Name())
 			fmt.Println("kubeconfig:      ", drv.Kubeconfig())
-			fmt.Println("tekton version:  ", version)
+			fmt.Println("tekton version:  ", installedTektonVersion(ctx, kubeClientFor(drv.Kubeconfig()), version))
 			return nil
 		},
 	}
