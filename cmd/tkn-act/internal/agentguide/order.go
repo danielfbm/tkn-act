@@ -14,6 +14,7 @@ package agentguide
 var Order = []string{
 	"overview",
 	"docker-backend",
+	"cluster-backend",
 	"step-template",
 	"sidecars",
 	"step-actions",
