@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"time"
 )
@@ -15,24 +14,34 @@ import (
 // KeepDays=0 disables age-based pruning (keeps everything by age).
 // Now defaults to time.Now() when zero.
 // All=true overrides both gates and deletes every recorded run
-// EXCEPT in-flight ones (EndedAt zero) — wiping an in-flight peer's
-// directory mid-write would corrupt its events.jsonl. Callers who
-// really want to nuke everything should wait for in-flight runs to
-// finalize first.
+// EXCEPT in-flight ones — wiping an in-flight peer's directory
+// mid-write would corrupt its events.jsonl. Abandoned runs (never
+// finalized, writer gone; see IndexEntry.Abandoned) are not in flight
+// and are deleted.
 //
 // When both KeepRuns and KeepDays are positive, BOTH gates apply
 // (intersection): a run is kept only if it's in the most-recent
 // KeepRuns AND within the last KeepDays. This matches the spec's
 // "Last N AND > D days, whichever hits first" policy.
 //
-// In-flight runs (EndedAt zero) are immune to BOTH gates — we can't
-// know whether they're old or just started, and we can't delete
-// their run-dirs without racing the writing process.
+// In-flight runs are immune to BOTH gates. Abandoned runs take part
+// in both: they count toward KeepRuns and age by StartedAt.
+//
+// Reserve is the number of KeepRuns slots held back for runs about to
+// be created: `tkn-act run` prunes with Reserve=1 right before it
+// records itself so the store ends up with exactly KeepRuns runs, not
+// KeepRuns+1.
+//
+// Warn, when non-nil, receives one message per index entry that was
+// skipped because its ULID is malformed (a hand-edited or corrupt
+// index.json); such entries are never turned into filesystem paths.
 type PruneOptions struct {
 	KeepRuns int
 	KeepDays int
 	All      bool
 	Now      time.Time
+	Reserve  int
+	Warn     func(string)
 }
 
 // Prune deletes runs from disk according to opts and rewrites the
@@ -56,42 +65,54 @@ func (s *Store) Prune(opts PruneOptions) (int, error) {
 		keep[e.Seq] = true
 	}
 
-	if !opts.All {
-		if opts.KeepRuns > 0 {
-			// Apply count-based prune to the FINALIZED subset only.
-			// In-flight runs (EndedAt zero) are immune: their run-dirs
-			// are being written by concurrent `tkn-act run` processes
-			// and deleting them would corrupt events.jsonl mid-stream.
-			finalized := make([]IndexEntry, 0, len(entries))
-			for _, e := range entries {
-				if !e.EndedAt.IsZero() {
-					finalized = append(finalized, e)
-				}
+	// Entries whose ULID doesn't parse are skipped entirely: they are
+	// kept in the index (we don't own them) and never joined into a
+	// path (a crafted "../../victim" would escape the state dir).
+	valid := make([]IndexEntry, 0, len(entries))
+	for _, e := range entries {
+		if _, perr := ParseRunID(e.ULID); perr != nil {
+			if opts.Warn != nil {
+				opts.Warn(fmt.Sprintf("skipping index entry seq %d: %v", e.Seq, perr))
 			}
-			if len(finalized) > opts.KeepRuns {
-				for _, e := range finalized[:len(finalized)-opts.KeepRuns] {
+			continue
+		}
+		valid = append(valid, e)
+	}
+
+	// Candidates for deletion: everything not in flight.
+	prunable := make([]IndexEntry, 0, len(valid))
+	for _, e := range valid {
+		if !e.InFlight(opts.Now) {
+			prunable = append(prunable, e)
+		}
+	}
+
+	if opts.All {
+		for _, e := range prunable {
+			keep[e.Seq] = false
+		}
+	} else {
+		if opts.KeepRuns > 0 {
+			n := opts.KeepRuns - opts.Reserve
+			if n < 0 {
+				n = 0
+			}
+			if len(prunable) > n {
+				for _, e := range prunable[:len(prunable)-n] {
 					keep[e.Seq] = false
 				}
 			}
 		}
 		if opts.KeepDays > 0 {
 			threshold := opts.Now.Add(-time.Duration(opts.KeepDays) * 24 * time.Hour)
-			for _, e := range entries {
-				// In-flight runs have EndedAt zero — age is undefined,
-				// so we never age-prune them.
-				if !e.EndedAt.IsZero() && e.EndedAt.Before(threshold) {
+			for _, e := range prunable {
+				ref := e.EndedAt
+				if ref.IsZero() {
+					ref = e.StartedAt // abandoned: age by start
+				}
+				if ref.Before(threshold) {
 					keep[e.Seq] = false
 				}
-			}
-		}
-	} else {
-		// --all wipes every FINALIZED run. In-flight ones survive
-		// because deleting them races the writing process; the
-		// caller can re-run prune --all once the in-flight runs
-		// complete.
-		for _, e := range entries {
-			if !e.EndedAt.IsZero() {
-				keep[e.Seq] = false
 			}
 		}
 	}
@@ -108,7 +129,11 @@ func (s *Store) Prune(opts PruneOptions) (int, error) {
 			survivors = append(survivors, e)
 			continue
 		}
-		path := filepath.Join(s.dir, "runs", e.ULID)
+		path, perr := s.RunDir(e)
+		if perr != nil { // unreachable: invalid entries are always kept
+			survivors = append(survivors, e)
+			continue
+		}
 		if err := os.RemoveAll(path); err != nil {
 			rmErrs = append(rmErrs, fmt.Errorf("remove %s: %w", e.ULID, err))
 			survivors = append(survivors, e) // keep the index entry; dir lingered

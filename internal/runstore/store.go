@@ -13,6 +13,9 @@ import (
 type Store struct {
 	dir           string // state-dir root (contains runs/, index.json)
 	writerVersion string
+	// readOnly stores (OpenReadOnly) resolve identifiers from a
+	// lock-free read of index.json and never create files.
+	readOnly bool
 }
 
 // Open returns a Store rooted at dir, creating the directory tree if
@@ -34,7 +37,7 @@ func OpenReadOnly(dir string) (*Store, error) {
 	if _, err := os.Stat(filepath.Join(dir, "runs")); err != nil {
 		return nil, err
 	}
-	return &Store{dir: dir}, nil
+	return &Store{dir: dir, readOnly: true}, nil
 }
 
 // Run is an in-progress (or finalized) run record.
@@ -65,6 +68,8 @@ func (s *Store) NewRun(now time.Time, pipelineRef string, args []string) (*Run, 
 		ULID:        string(id),
 		PipelineRef: pipelineRef,
 		StartedAt:   now.UTC(),
+		PID:         os.Getpid(),
+		Host:        hostname(),
 	}
 	seq, err := idx.Append(entry)
 	if err != nil {
@@ -122,11 +127,34 @@ func (r *Run) Finalize(end time.Time, exitCode int, status string) error {
 // such prefixes with seq lookups, only un-leading-zero numerics
 // reach BySeq.
 func (s *Store) Resolve(id string) (IndexEntry, error) {
-	idx, err := OpenIndex(s.dir)
+	e, err := s.resolve(id)
 	if err != nil {
 		return IndexEntry{}, err
 	}
-	defer idx.Close()
+	// Never hand out an entry whose ULID could escape runs/ when
+	// joined into a path (index.json is user-writable).
+	if _, perr := ParseRunID(e.ULID); perr != nil {
+		return IndexEntry{}, fmt.Errorf("index entry seq %d: %w", e.Seq, perr)
+	}
+	return e, nil
+}
+
+func (s *Store) resolve(id string) (IndexEntry, error) {
+	var idx *Index
+	if s.readOnly {
+		entries, err := ReadIndexEntries(s.dir)
+		if err != nil {
+			return IndexEntry{}, err
+		}
+		idx = &Index{dir: s.dir, data: indexFile{Entries: entries}}
+	} else {
+		var err error
+		idx, err = OpenIndex(s.dir)
+		if err != nil {
+			return IndexEntry{}, err
+		}
+		defer idx.Close()
+	}
 	if id == "" || id == "latest" {
 		return idx.Latest()
 	}
@@ -166,6 +194,12 @@ func looksLikeSeq(s string) bool {
 }
 
 // RunDir returns the on-disk directory for the given index entry.
-func (s *Store) RunDir(e IndexEntry) string {
-	return filepath.Join(s.dir, "runs", e.ULID)
+// The entry's ULID is validated first: index.json is a plain file and
+// a crafted `"ulid": "../../x"` must never resolve outside runs/.
+func (s *Store) RunDir(e IndexEntry) (string, error) {
+	id, err := ParseRunID(e.ULID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(s.dir, "runs", string(id)), nil
 }

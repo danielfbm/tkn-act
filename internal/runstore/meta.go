@@ -17,8 +17,8 @@ type Meta struct {
 	Seq           int       `json:"seq"`
 	WriterVersion string    `json:"writer_version"`
 	PipelineRef   string    `json:"pipeline_ref,omitempty"`
-	StartedAt     time.Time `json:"started_at"`
-	EndedAt       time.Time `json:"ended_at,omitempty"`
+	StartedAt     time.Time `json:"started_at,omitzero"`
+	EndedAt       time.Time `json:"ended_at,omitzero"`
 	ExitCode      int       `json:"exit_code"`
 	Status        string    `json:"status,omitempty"`
 	Args          []string  `json:"args,omitempty"`

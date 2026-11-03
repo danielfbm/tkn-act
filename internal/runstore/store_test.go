@@ -188,7 +188,7 @@ func TestStore_RunDir(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := runstore.Open(dir, "v")
 	r, _ := s.NewRun(time.Now(), "p", nil)
-	got := s.RunDir(runstore.IndexEntry{ULID: string(r.ID)})
+	got, _ := s.RunDir(runstore.IndexEntry{ULID: string(r.ID)})
 	want := filepath.Join(dir, "runs", string(r.ID))
 	if got != want {
 		t.Errorf("RunDir = %q, want %q", got, want)

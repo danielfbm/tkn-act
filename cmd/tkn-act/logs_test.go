@@ -197,7 +197,8 @@ func TestLogs_CorruptEventsFile(t *testing.T) {
 	bad := "{not json\n"
 	store, _ := runstore.Open(dir, "test")
 	entry, _ := store.Resolve(id)
-	path := filepath.Join(store.RunDir(entry), "events.jsonl")
+	runDir, _ := store.RunDir(entry)
+	path := filepath.Join(runDir, "events.jsonl")
 	if err := appendFile(t, path, []byte(bad)); err != nil {
 		t.Fatalf("appendFile: %v", err)
 	}
