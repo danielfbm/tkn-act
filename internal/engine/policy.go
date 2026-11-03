@@ -40,7 +40,7 @@ func (e *Engine) runOneWithPolicy(
 	var oc TaskOutcome
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		runCtx, cancel := withMaybeTimeout(ctx, taskTimeout)
-		oc = e.runOne(runCtx, in, pl, pt, params, results, runID, pipelineRunName)
+		oc = e.runOne(withRetryCount(runCtx, attempt-1), in, pl, pt, params, results, runID, pipelineRunName)
 		// If the parent context died (cancellation), don't retry; bubble out.
 		parentDead := ctx.Err() != nil
 		// Detect task timeout: runCtx exceeded *its own* deadline (not the

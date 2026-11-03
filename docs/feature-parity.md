@@ -111,7 +111,8 @@ The columns:
 | Per-Task `results` | `Task.spec.results` | shipped | both | params-and-results | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
 | Per-Step `results` | `Step.results` | shipped | both | step-results | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
 | Pipeline-level `results` (surfaced on run-end) | `Pipeline.spec.results` | shipped | both | pipeline-results | none | docs/superpowers/plans/2026-05-03-pipeline-results.md (Track 1 #6) |
-| Param substitution: `$(params.X)`, `$(tasks.X.results.Y)`, `$(context.*)`, `$(workspaces.X.path)`, `$(step.results.X.path)` | n/a | shipped | both | params-and-results | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
+| Param substitution: `$(params.X)`, `$(params.arr[N])`, `$(params.obj.key)`, `$(tasks.X.results.Y)` (incl. `[N]` / object `.key`), `$(context.*)` (`pipelineRun.{name,namespace,uid}`, `pipeline.name`, `taskRun.{name,namespace,uid}`, `task.name`, `task.retry-count`, `pipelineTask.retries`), `$(workspaces.X.path)`, `$(workspaces.X.bound)`, `$(step.results.X.path)` | n/a | shipped | both | params-and-results | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md; docs/superpowers/plans/2026-11-03-audit-and-tekton-v1.15.md (WS-C1); reference in docs/agent-guide/variables.md |
+| Substitution edge cases: non-Tekton `$(cmd)` (shell) left literal, whole-array pass-through `$(params.arr[*])` (whole value or spliced item), `[*]` in `when.values`, `$(tasks.status)` / `$(tasks.<t>.status)` in finally | n/a | shipped | both | substitution | none | docs/superpowers/plans/2026-11-03-audit-and-tekton-v1.15.md (WS-C1) |
 
 ### Workspaces & volumes
 

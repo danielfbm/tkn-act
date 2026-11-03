@@ -15,12 +15,14 @@ func evaluateWhen(exprs []tektontypes.WhenExpression, ctx resolver.Context) (boo
 		if err != nil {
 			return false, "", err
 		}
+		// SubstituteArgs so a `$(params.arr[*])` / `$(tasks.t.results.r[*])`
+		// item splices the whole array into the values list (Tekton).
+		values, err := resolver.SubstituteArgs(w.Values, ctx)
+		if err != nil {
+			return false, "", err
+		}
 		match := false
-		for _, v := range w.Values {
-			vv, err := resolver.Substitute(v, ctx)
-			if err != nil {
-				return false, "", err
-			}
+		for _, vv := range values {
 			if input == vv {
 				match = true
 				break

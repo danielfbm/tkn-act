@@ -325,6 +325,9 @@ levelLoop:
 	// not tasksCtx — exhausting tasks must not shorten finally).
 	finallyCtx, finallyCancel := withMaybeBudget(pipeCtx, timeouts.finallyBudget())
 	defer finallyCancel()
+	// $(tasks.status) / $(tasks.<t>.status) for every finally task,
+	// computed once now that every main task is terminal.
+	finallyCtx = withFinallyStatus(finallyCtx, pl.Spec.Tasks, outcomes)
 	for _, pt := range pl.Spec.Finally {
 		if finallyCtx.Err() != nil {
 			outcomes[pt.Name] = TaskOutcome{Status: "not-run"}
@@ -441,12 +444,10 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		ArrayParams:  arrayParams(params),
 		ObjectParams: objectParams(params),
 		Results:      results,
-		ContextVars: map[string]string{
-			"pipelineRun.name": pipelineRunName,
-			"pipeline.name":    pl.Metadata.Name,
-			"taskRun.name":     pipelineRunName + "-" + pt.Name,
-		},
+		ContextVars:  taskContextVars(ctx, pl, pt, runID, pipelineRunName),
 	}
+	// $(tasks.status) / $(tasks.<t>.status): set only for finally tasks.
+	applyFinallyStatus(ctx, &rctx)
 
 	// Emit a "params resolved" debug event with the count of resolved
 	// keys and a truncated peek at each value. Useful diagnostic when
@@ -557,35 +558,14 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		}
 	}
 	for _, p := range pt.Params {
-		// substitute the value (which may reference $(params.x) or $(tasks.X.results.Y))
-		switch p.Value.Type {
-		case tektontypes.ParamTypeString, "":
-			s, err := resolver.Substitute(p.Value.StringVal, rctx)
-			if err != nil {
-				return TaskOutcome{Status: "failed", Message: err.Error()}
-			}
-			taskParams[p.Name] = tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: s}
-		case tektontypes.ParamTypeArray:
-			out := []string{}
-			for _, item := range p.Value.ArrayVal {
-				s, err := resolver.Substitute(item, rctx)
-				if err != nil {
-					return TaskOutcome{Status: "failed", Message: err.Error()}
-				}
-				out = append(out, s)
-			}
-			taskParams[p.Name] = tektontypes.ParamValue{Type: tektontypes.ParamTypeArray, ArrayVal: out}
-		case tektontypes.ParamTypeObject:
-			out := map[string]string{}
-			for k, v := range p.Value.ObjectVal {
-				s, err := resolver.Substitute(v, rctx)
-				if err != nil {
-					return TaskOutcome{Status: "failed", Message: err.Error()}
-				}
-				out[k] = s
-			}
-			taskParams[p.Name] = tektontypes.ParamValue{Type: tektontypes.ParamTypeObject, ObjectVal: out}
+		// substitute the value (which may reference $(params.x) or
+		// $(tasks.X.results.Y)); whole-array `[*]` refs pass through as
+		// array values.
+		v, err := bindTaskParamValue(p.Value, rctx)
+		if err != nil {
+			return TaskOutcome{Status: "failed", Message: fmt.Sprintf("param %q: %v", p.Name, err)}
 		}
+		taskParams[p.Name] = v
 	}
 
 	// Build a task-scoped resolver context (uses the task's own param view).
@@ -595,10 +575,16 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		ObjectParams: objectParams(taskParams),
 		Results:      results,
 		ContextVars:  rctx.ContextVars,
+		// $(workspaces.<name>.bound)
+		BoundWorkspaces: boundWorkspaces(spec, pt),
 	}
 
-	// Substitute throughout the resolved Task spec.
-	resolved := substituteSpec(spec, taskCtx)
+	// Substitute throughout the resolved Task spec. A substitution
+	// error fails the task: never run a step whose fields were blanked.
+	resolved, serr := substituteSpec(spec, taskCtx)
+	if serr != nil {
+		return TaskOutcome{Status: "failed", Message: serr.Error()}
+	}
 
 	// Workspace mounts.
 	wsMap := map[string]backend.WorkspaceMount{}
@@ -753,52 +739,96 @@ func lookupTaskSpec(b *loader.Bundle, pt tektontypes.PipelineTask) (tektontypes.
 	return tektontypes.TaskSpec{}, fmt.Errorf("pipeline task %q has neither taskRef nor taskSpec", pt.Name)
 }
 
-func substituteSpec(spec tektontypes.TaskSpec, ctx resolver.Context) tektontypes.TaskSpec {
+// substituteSpec resolves every $(...) reference in the Task's Steps and
+// Sidecars against the task-scoped context. Step-scoped refs
+// ($(steps.X.results.Y), $(step.results.X.path)) are left for the docker
+// backend's per-step pass; refs outside Tekton's namespaces (shell
+// `$(date)`) are left literal; any other unresolvable ref is an error.
+func substituteSpec(spec tektontypes.TaskSpec, ctx resolver.Context) (tektontypes.TaskSpec, error) {
 	out := spec
 	out.Steps = make([]tektontypes.Step, len(spec.Steps))
 	for i, st := range spec.Steps {
-		ns := st
-		ns.Image, _ = resolver.SubstituteAllowStepRefs(st.Image, ctx)
-		if len(st.Command) > 0 {
-			ns.Command, _ = resolver.SubstituteArgsAllowStepRefs(st.Command, ctx)
+		ns, err := substituteContainer(st.Name, "step", containerFields{
+			image: st.Image, script: st.Script, workingDir: st.WorkingDir,
+			command: st.Command, args: st.Args, env: st.Env,
+		}, ctx, resolver.SubstituteDeferStepRefs, resolver.SubstituteArgsDeferStepRefs)
+		if err != nil {
+			return spec, err
 		}
-		if len(st.Args) > 0 {
-			ns.Args, _ = resolver.SubstituteArgsAllowStepRefs(st.Args, ctx)
-		}
-		ns.Script, _ = resolver.SubstituteAllowStepRefs(st.Script, ctx)
-		ns.WorkingDir, _ = resolver.SubstituteAllowStepRefs(st.WorkingDir, ctx)
-		ns.Env = make([]tektontypes.EnvVar, len(st.Env))
-		for j, e := range st.Env {
-			v, _ := resolver.SubstituteAllowStepRefs(e.Value, ctx)
-			ns.Env[j] = tektontypes.EnvVar{Name: e.Name, Value: v}
-		}
-		out.Steps[i] = ns
+		cp := st
+		cp.Image, cp.Script, cp.WorkingDir = ns.image, ns.script, ns.workingDir
+		cp.Command, cp.Args, cp.Env = ns.command, ns.args, ns.env
+		out.Steps[i] = cp
 	}
 	// Sidecars start before any step in the Task and are torn down
 	// after the last step, so step-result references don't apply
-	// (use the plain Substitute, not SubstituteAllowStepRefs).
+	// (use the strict Substitute, not the step-deferring variant).
 	if len(spec.Sidecars) > 0 {
 		out.Sidecars = make([]tektontypes.Sidecar, len(spec.Sidecars))
 		for i, sc := range spec.Sidecars {
-			ns := sc
-			ns.Image, _ = resolver.Substitute(sc.Image, ctx)
-			if len(sc.Command) > 0 {
-				ns.Command, _ = resolver.SubstituteArgs(sc.Command, ctx)
+			ns, err := substituteContainer(sc.Name, "sidecar", containerFields{
+				image: sc.Image, script: sc.Script, workingDir: sc.WorkingDir,
+				command: sc.Command, args: sc.Args, env: sc.Env,
+			}, ctx, resolver.Substitute, resolver.SubstituteArgs)
+			if err != nil {
+				return spec, err
 			}
-			if len(sc.Args) > 0 {
-				ns.Args, _ = resolver.SubstituteArgs(sc.Args, ctx)
-			}
-			ns.Script, _ = resolver.Substitute(sc.Script, ctx)
-			ns.WorkingDir, _ = resolver.Substitute(sc.WorkingDir, ctx)
-			ns.Env = make([]tektontypes.EnvVar, len(sc.Env))
-			for j, e := range sc.Env {
-				v, _ := resolver.Substitute(e.Value, ctx)
-				ns.Env[j] = tektontypes.EnvVar{Name: e.Name, Value: v}
-			}
-			out.Sidecars[i] = ns
+			cp := sc
+			cp.Image, cp.Script, cp.WorkingDir = ns.image, ns.script, ns.workingDir
+			cp.Command, cp.Args, cp.Env = ns.command, ns.args, ns.env
+			out.Sidecars[i] = cp
 		}
 	}
-	return out
+	return out, nil
+}
+
+// containerFields is the substitutable subset shared by Step and Sidecar.
+type containerFields struct {
+	image, script, workingDir string
+	command, args             []string
+	env                       []tektontypes.EnvVar
+}
+
+func substituteContainer(
+	name, kind string,
+	in containerFields,
+	ctx resolver.Context,
+	sub func(string, resolver.Context) (string, error),
+	subArgs func([]string, resolver.Context) ([]string, error),
+) (containerFields, error) {
+	wrap := func(field string, err error) error {
+		return fmt.Errorf("%s %q: %s: %w", kind, name, field, err)
+	}
+	var out containerFields
+	var err error
+	if out.image, err = sub(in.image, ctx); err != nil {
+		return out, wrap("image", err)
+	}
+	if out.script, err = sub(in.script, ctx); err != nil {
+		return out, wrap("script", err)
+	}
+	if out.workingDir, err = sub(in.workingDir, ctx); err != nil {
+		return out, wrap("workingDir", err)
+	}
+	if len(in.command) > 0 {
+		if out.command, err = subArgs(in.command, ctx); err != nil {
+			return out, wrap("command", err)
+		}
+	}
+	if len(in.args) > 0 {
+		if out.args, err = subArgs(in.args, ctx); err != nil {
+			return out, wrap("args", err)
+		}
+	}
+	out.env = make([]tektontypes.EnvVar, len(in.env))
+	for j, e := range in.env {
+		v, err := sub(e.Value, ctx)
+		if err != nil {
+			return out, wrap("env "+e.Name, err)
+		}
+		out.env[j] = tektontypes.EnvVar{Name: e.Name, Value: v}
+	}
+	return out, nil
 }
 
 func uniqueImages(b *loader.Bundle, pl tektontypes.Pipeline) []string {

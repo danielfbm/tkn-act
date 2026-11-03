@@ -56,13 +56,18 @@ func TestSubstituteAllowStepRefsLeavesPlaceholder(t *testing.T) {
 	}
 }
 
-// AllowStepRefs hard-fails on syntactically-malformed refs (no known
-// scope prefix). Known-scope-but-unbound names are deferred (see
-// TestSubstituteAllowStepRefsLeavesEveryOuterScope).
+// AllowStepRefs hard-fails on malformed refs in a known scope. Refs with
+// no known scope prefix are not Tekton variables and are left literal
+// (Tekton semantics; e.g. shell `$(date)`). Known-scope-but-unbound names
+// are deferred (see TestSubstituteAllowStepRefsLeavesEveryOuterScope).
 func TestSubstituteAllowStepRefsFailsOnUnknown(t *testing.T) {
-	_, err := resolver.SubstituteAllowStepRefs("$(notascope.foo)", resolver.Context{})
+	_, err := resolver.SubstituteAllowStepRefs("$(tasks.foo)", resolver.Context{})
 	if err == nil {
 		t.Fatal("expected error for malformed reference")
+	}
+	got, err := resolver.SubstituteAllowStepRefs("$(notascope.foo)", resolver.Context{})
+	if err != nil || got != "$(notascope.foo)" {
+		t.Fatalf("unknown scope: got %q, %v; want literal", got, err)
 	}
 }
 
