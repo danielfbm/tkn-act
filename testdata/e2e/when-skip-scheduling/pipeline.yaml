@@ -1,0 +1,39 @@
+# A `when`-skipped task does not block its runAfter dependents (Tekton:
+# "ordering-dependent Tasks will be executed"), while a task that consumes
+# its results is skipped ("Results were missing"). The run succeeds and
+# the pipeline result proves `after` ran.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: emit}
+spec:
+  params:
+    - {name: v, type: string, default: "yes"}
+  results:
+    - name: out
+  steps:
+    - name: emit
+      image: alpine:3
+      script: printf '%s' "$(params.v)" > $(results.out.path)
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: when-skip-scheduling}
+spec:
+  results:
+    - name: ran
+      value: $(tasks.after.results.out)
+  tasks:
+    - name: gated
+      taskRef: {name: emit}
+      when:
+        - input: "off"
+          operator: in
+          values: ["on"]
+    - name: after
+      taskRef: {name: emit}
+      runAfter: [gated]
+    - name: consumer
+      taskRef: {name: emit}
+      params:
+        - name: v
+          value: $(tasks.gated.results.out)

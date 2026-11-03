@@ -170,6 +170,7 @@ fixtures under `testdata/e2e/`:
 | `when-and-finally/` (×2) | when-expressions + finally tasks (dev skip, prod run) |
 | `substitution/` | shell `$(pwd)` / `$(date)` reach the container verbatim; `$(params.arr[*])` passed through as a whole value and spliced into an array value; `$(tasks.status)` / `$(tasks.<t>.status)` in finally params + `when` |
 | `failure-propagation/` | downstream skip on upstream failure |
+| `when-skip-scheduling/` | `when`-skipped task does not block its `runAfter` dependent; its result consumer is skipped |
 | `onerror/` | step `onError: continue` |
 | `retries/` | task succeeds on the third attempt (`retries: 3`) |
 | `timeout/` | task ends `timeout` after 1s sleep-30 |

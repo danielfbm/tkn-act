@@ -201,6 +201,12 @@ func All() []Fixture {
 			Dir: "substitution", Pipeline: "substitution", WantStatus: "succeeded",
 		},
 		{Dir: "failure-propagation", Pipeline: "failprop", WantStatus: "failed"},
+		{
+			Dir: "when-skip-scheduling", Pipeline: "when-skip-scheduling", WantStatus: "succeeded",
+			// `after` (runAfter a when-skipped task) must run; the
+			// result consumer of the skipped task is skipped.
+			WantResults: map[string]any{"ran": "yes"},
+		},
 		{Dir: "onerror", Pipeline: "best-effort", WantStatus: "succeeded"},
 		{Dir: "retries", Pipeline: "retries", WantStatus: "succeeded"},
 		{Dir: "timeout", Pipeline: "hangs", WantStatus: "timeout"},

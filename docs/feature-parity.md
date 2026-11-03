@@ -106,8 +106,8 @@ The columns:
 |---|---|---|---|---|---|---|
 | `params` (string / array / object) | `Pipeline.spec.params`, `Task.spec.params` | shipped | both | params-and-results | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
 | `runAfter` DAG with topological ordering | `PipelineTask.runAfter` | shipped | both | params-and-results | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
-| `when` expressions | `PipelineTask.when` | shipped | both | when-and-finally | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
-| `finally` tasks | `Pipeline.spec.finally` | shipped | both | when-and-finally | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
+| `when` expressions | `PipelineTask.when` | shipped | both | when-and-finally | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md; skip semantics (when-skip doesn't block `runAfter` dependents, result consumers skipped "Results were missing", implicit edges from `when` refs) per docs/superpowers/specs/2026-11-03-audit-and-tekton-v1.15-design.md, also covered by `when-skip-scheduling` |
+| `finally` tasks | `Pipeline.spec.finally` | shipped | both | when-and-finally | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md; finally tasks run in parallel (bounded by `--parallel`) and are skipped when a consumed result is missing, per docs/superpowers/specs/2026-11-03-audit-and-tekton-v1.15-design.md |
 | Per-Task `results` | `Task.spec.results` | shipped | both | params-and-results | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
 | Per-Step `results` | `Step.results` | shipped | both | step-results | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
 | Pipeline-level `results` (surfaced on run-end) | `Pipeline.spec.results` | shipped | both | pipeline-results | none | docs/superpowers/plans/2026-05-03-pipeline-results.md (Track 1 #6) |

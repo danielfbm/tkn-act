@@ -10,10 +10,22 @@ and exit code 6:
 | `Pipeline.spec.timeouts.tasks` | Wall clock for the tasks DAG only. | v1.3 |
 | `Pipeline.spec.timeouts.finally` | Wall clock for finally tasks only. | v1.3 |
 
-When a `pipeline` budget fires, in-flight tasks end `timeout` and unstarted
-tasks end `not-run`. The terminal `task-end` event for a budget-killed task
-reports `status: "timeout"` and a `message` such as `"pipeline timeout 2s
-exceeded"`. The run-end status is `timeout`.
+When a `pipeline`, `tasks` or `finally` budget fires, tasks that were
+running end with `timeout`. Tasks that never started end with `not-run`.
+A task killed by a budget gets a `task-end` event with
+`status: "timeout"` and a `message` that names the budget, such as
+`"pipeline timeout 2s exceeded"` or `"tasks timeout 200ms exceeded"`.
+Every task that never started, in every level after the one that was
+running, gets one `task-skip` event with that message and a `not-run`
+entry in the run result. The run-end status is `timeout`.
+
+When you cancel the run (Ctrl-C), every task that never started, and
+every finally task, gets a `task-skip` event with the message
+`"pipeline run cancelled"` and a `not-run` entry. Finally tasks do not
+run. The run-end status is `cancelled`.
+
+`Task.spec.timeout` also applies to tasks fetched by a resolver
+(`taskRef.resolver`). The timeout is read from the fetched Task.
 
 `tasks` and `finally` are independent budgets — exhausting `tasks` does not
 shorten `finally`, and vice versa.

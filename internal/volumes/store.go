@@ -164,7 +164,12 @@ func MaterializeForTask(
 	for _, v := range vs {
 		switch {
 		case v.EmptyDir != nil:
+			// MaterializeForTask runs once per attempt; a retry must
+			// start from an empty dir (Tekton: new Pod, new emptyDir).
 			d := filepath.Join(baseDir, "emptyDir-"+v.Name)
+			if err := os.RemoveAll(d); err != nil {
+				return nil, fmt.Errorf("volume %q: %w", v.Name, err)
+			}
 			if err := os.MkdirAll(d, 0o755); err != nil {
 				return nil, fmt.Errorf("volume %q: %w", v.Name, err)
 			}
@@ -172,13 +177,13 @@ func MaterializeForTask(
 		case v.HostPath != nil:
 			out[v.Name] = v.HostPath.Path
 		case v.ConfigMap != nil:
-			d, err := materializeKeyValueDir(filepath.Join(baseDir, "cm-"+v.Name), cm, v.ConfigMap.Name, v.ConfigMap.Items)
+			d, err := materializeKeyValueDir(filepath.Join(baseDir, "cm-"+v.Name), cm, v.ConfigMap.Name, v.ConfigMap.Items, isTrue(v.ConfigMap.Optional))
 			if err != nil {
 				return nil, fmt.Errorf("volume %q (configMap %q): %w", v.Name, v.ConfigMap.Name, err)
 			}
 			out[v.Name] = d
 		case v.Secret != nil:
-			d, err := materializeKeyValueDir(filepath.Join(baseDir, "sec-"+v.Name), sec, v.Secret.SecretName, v.Secret.Items)
+			d, err := materializeKeyValueDir(filepath.Join(baseDir, "sec-"+v.Name), sec, v.Secret.SecretName, v.Secret.Items, isTrue(v.Secret.Optional))
 			if err != nil {
 				return nil, fmt.Errorf("volume %q (secret %q): %w", v.Name, v.Secret.SecretName, err)
 			}
@@ -190,12 +195,26 @@ func MaterializeForTask(
 	return out, nil
 }
 
-func materializeKeyValueDir(dst string, store *Store, name string, items []tektontypes.KeyToPath) (string, error) {
-	if store == nil {
+func isTrue(b *bool) bool { return b != nil && *b }
+
+// materializeKeyValueDir projects a configMap / secret source into dst
+// (recreated from scratch on every call, so a retry never sees stale
+// keys). With optional set — Kubernetes' `optional: true` — a missing
+// source mounts as an empty dir and missing `items` keys are skipped,
+// instead of failing the task.
+func materializeKeyValueDir(dst string, store *Store, name string, items []tektontypes.KeyToPath, optional bool) (string, error) {
+	var bytesByKey map[string][]byte
+	switch {
+	case store != nil:
+		var err error
+		bytesByKey, err = store.Resolve(name)
+		if err != nil && !optional {
+			return "", err
+		}
+	case !optional:
 		return "", fmt.Errorf("source %q: no store configured", name)
 	}
-	bytesByKey, err := store.Resolve(name)
-	if err != nil {
+	if err := os.RemoveAll(dst); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(dst, 0o755); err != nil {
@@ -216,6 +235,9 @@ func materializeKeyValueDir(dst string, store *Store, name string, items []tekto
 	// Items projection: only the listed keys, optionally renamed.
 	for _, it := range items {
 		v, ok := bytesByKey[it.Key]
+		if !ok && optional {
+			continue
+		}
 		if !ok {
 			return "", fmt.Errorf("source %q has no key %q (declared in items)", name, it.Key)
 		}
