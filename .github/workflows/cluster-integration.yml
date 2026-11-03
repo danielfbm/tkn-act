@@ -44,17 +44,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Oldest still-supported LTS + newest LTS (Tekton's support window
-        # is 12 months from release). Keep this list aligned with
+        # Oldest still-supported LTS + newest declared LTS, each at its
+        # latest patch (Tekton's support window is 12 months from
+        # release; v1.9 EOL 2027-01-30, v1.15 EOL 2027-07-31). Keep this
+        # list aligned with
         # https://github.com/tektoncd/pipeline/blob/main/releases.md and
         # bump per the policy in
-        # docs/superpowers/specs/2026-05-13-tekton-bump-and-matrix-design.md.
+        # docs/superpowers/specs/2026-11-03-audit-and-tekton-v1.15-design.md
+        # (on each new declared LTS: default -> its latest patch, matrix
+        # -> {oldest supported LTS, newest LTS}). The newest entry must
+        # equal tekton.DefaultTektonVersion.
         tekton-version:
-          - v1.3.0
-          - v1.12.0
+          - v1.9.9
+          - v1.15.5
     env:
-      K3D_VERSION: v5.7.4
-      KUBECTL_VERSION: v1.31.0
+      # Bump together with the Makefile pins. KUBECTL_VERSION tracks the
+      # minor of the k3s node image pinned in internal/cluster/k3d
+      # (DefaultK3sImage).
+      K3D_VERSION: v5.9.0
+      KUBECTL_VERSION: v1.34.12
       TKN_ACT_TEKTON_VERSION: ${{ matrix.tekton-version }}
     steps:
       - uses: actions/checkout@v5
@@ -66,14 +74,22 @@ jobs:
       - name: install kubectl ${{ env.KUBECTL_VERSION }}
         run: |
           curl -fsSL -o kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "$(curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256")  kubectl" | sha256sum -c -
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/kubectl
           kubectl version --client=true
 
       - name: install k3d ${{ env.K3D_VERSION }}
+        # Tagged release binary, checksum-verified against the release's
+        # own checksums.txt — not the unpinned main-branch install.sh.
         run: |
-          curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh \
-            | TAG=${K3D_VERSION} bash
+          base="https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}"
+          curl -fsSL -o k3d "${base}/k3d-linux-amd64"
+          want=$(curl -fsSL "${base}/checksums.txt" | awk '$2 ~ /(^|\/)k3d-linux-amd64$/ {print $1}')
+          test -n "$want"
+          echo "${want}  k3d" | sha256sum -c -
+          chmod +x k3d
+          sudo mv k3d /usr/local/bin/k3d
           k3d version
 
       - name: doctor (sanity)

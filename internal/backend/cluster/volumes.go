@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/danielfbm/tkn-act/internal/backend"
 	"github.com/danielfbm/tkn-act/internal/tektontypes"
@@ -20,24 +21,32 @@ import (
 //
 // Behavior mirrors the docker side: if a volume references a source the
 // store can't resolve, that bubbles up here as a hard error before submit
-// (the docker side fails the same way at MaterializeForTask time).
+// (the docker side fails the same way at MaterializeForTask time) —
+// unless every reference to that source is `optional: true`, in which
+// case nothing is applied and Kubernetes mounts the volume empty.
 //
 // Idempotent: namespaces are created once per RunID; applying the same
 // resource twice in the same namespace is a "create or update" pattern.
 func (b *Backend) applyVolumeSources(ctx context.Context, in backend.PipelineRunInvocation, ns string) error {
 	cmNames, secNames := volumeSourceNames(in)
-	for name := range cmNames {
+	for name, optional := range cmNames {
 		bytesByKey, err := b.resolveConfigMap(name)
 		if err != nil {
+			if optional {
+				continue
+			}
 			return err
 		}
 		if err := b.upsertConfigMap(ctx, ns, name, bytesByKey); err != nil {
 			return err
 		}
 	}
-	for name := range secNames {
+	for name, optional := range secNames {
 		bytesByKey, err := b.resolveSecret(name)
 		if err != nil {
+			if optional {
+				continue
+			}
 			return err
 		}
 		if err := b.upsertSecret(ctx, ns, name, bytesByKey); err != nil {
@@ -50,10 +59,20 @@ func (b *Backend) applyVolumeSources(ctx context.Context, in backend.PipelineRun
 // volumeSourceNames collects the set of unique configMap and secret source
 // names referenced by every Task in the PipelineRun (including finally).
 // The resolved Task spec lives on in.Tasks; PipelineTask.taskSpec inline
-// case is also handled.
-func volumeSourceNames(in backend.PipelineRunInvocation) (cm, sec map[string]struct{}) {
-	cm = map[string]struct{}{}
-	sec = map[string]struct{}{}
+// case is also handled. The map value reports whether EVERY reference
+// to that source is `optional: true` (one required reference makes a
+// missing source a hard error).
+func volumeSourceNames(in backend.PipelineRunInvocation) (cm, sec map[string]bool) {
+	cm = map[string]bool{}
+	sec = map[string]bool{}
+	note := func(m map[string]bool, name string, opt *bool) {
+		o := opt != nil && *opt
+		if prev, seen := m[name]; seen {
+			m[name] = prev && o
+		} else {
+			m[name] = o
+		}
+	}
 	all := append([]tektontypes.PipelineTask{}, in.Pipeline.Spec.Tasks...)
 	all = append(all, in.Pipeline.Spec.Finally...)
 	for _, pt := range all {
@@ -61,9 +80,9 @@ func volumeSourceNames(in backend.PipelineRunInvocation) (cm, sec map[string]str
 		for _, v := range spec.Volumes {
 			switch {
 			case v.ConfigMap != nil && v.ConfigMap.Name != "":
-				cm[v.ConfigMap.Name] = struct{}{}
+				note(cm, v.ConfigMap.Name, v.ConfigMap.Optional)
 			case v.Secret != nil && v.Secret.SecretName != "":
-				sec[v.Secret.SecretName] = struct{}{}
+				note(sec, v.Secret.SecretName, v.Secret.Optional)
 			}
 		}
 	}
@@ -97,9 +116,24 @@ func (b *Backend) resolveSecret(name string) (map[string][]byte, error) {
 }
 
 func (b *Backend) upsertConfigMap(ctx context.Context, ns, name string, data map[string][]byte) error {
-	stringData := make(map[string]string, len(data))
+	// ConfigMap.Data must be UTF-8; storing other bytes there corrupts
+	// them (the API server / JSON encoding replaces invalid sequences).
+	// Non-UTF-8 values go to BinaryData, as `kubectl create configmap
+	// --from-file` does.
+	var stringData map[string]string
+	var binaryData map[string][]byte
 	for k, v := range data {
-		stringData[k] = string(v)
+		if utf8.Valid(v) {
+			if stringData == nil {
+				stringData = map[string]string{}
+			}
+			stringData[k] = string(v)
+			continue
+		}
+		if binaryData == nil {
+			binaryData = map[string][]byte{}
+		}
+		binaryData[k] = v
 	}
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -107,7 +141,8 @@ func (b *Backend) upsertConfigMap(ctx context.Context, ns, name string, data map
 			Namespace: ns,
 			Labels:    map[string]string{"app.kubernetes.io/managed-by": "tkn-act"},
 		},
-		Data: stringData,
+		Data:       stringData,
+		BinaryData: binaryData,
 	}
 	_, err := b.client.Kube.CoreV1().ConfigMaps(ns).Create(ctx, cm, metav1.CreateOptions{})
 	if err == nil {

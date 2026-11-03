@@ -246,9 +246,10 @@ func TestEnvInt(t *testing.T) {
 func TestOpenRunRecord_PrunesBeforeCreatingNewRun(t *testing.T) {
 	// Pre-populate the store with 5 finalized runs, then call
 	// openRunRecord with TKN_ACT_KEEP_RUNS=2. The pre-call pruning
-	// should drop 3 of the existing runs; openRunRecord then adds
-	// a 6th seq, but on disk only 3 dirs remain (2 survivors + the
-	// new one).
+	// reserves a slot for the new run, so it drops 4 of the existing
+	// runs; openRunRecord then adds a 6th seq and exactly 2 dirs
+	// remain (1 survivor + the new one) — KEEP_RUNS=N keeps N, not
+	// N+1 (audit E7).
 	dir := t.TempDir()
 	pre, err := runstore.Open(dir, "test")
 	if err != nil {
@@ -270,8 +271,8 @@ func TestOpenRunRecord_PrunesBeforeCreatingNewRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readdir: %v", err)
 	}
-	if len(entries) != 3 {
-		t.Errorf("dirs = %d, want 3 (2 survivors + new)", len(entries))
+	if len(entries) != 2 {
+		t.Errorf("dirs = %d, want 2 (1 survivor + new = KEEP_RUNS)", len(entries))
 	}
 }
 
@@ -286,8 +287,8 @@ func TestSetupRunPersistence_PropagatesFailure(t *testing.T) {
 	entries, _ := os.ReadDir(filepath.Join(dir, "runs"))
 	runDir := filepath.Join(dir, "runs", entries[0].Name())
 	m, _ := runstore.ReadMeta(filepath.Join(runDir, "meta.json"))
-	if m.Status != "failed" {
-		t.Errorf("Status = %q, want failed", m.Status)
+	if m.Status != "timeout" {
+		t.Errorf("Status = %q, want timeout (matches run-end)", m.Status)
 	}
 	if m.ExitCode != exitcode.Timeout {
 		t.Errorf("ExitCode = %d, want %d", m.ExitCode, exitcode.Timeout)
@@ -320,4 +321,45 @@ func TestBuildDebugEmitter(t *testing.T) {
 		t.Errorf("closure invoked on disabled emitter")
 		return "x", nil
 	})
+}
+
+func TestFinalizeRun_RecordsRealStatus(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{nil, "succeeded"},
+		{exitcode.Wrap(exitcode.Cancelled, errors.New("x")), "cancelled"},
+		{exitcode.Wrap(exitcode.Timeout, errors.New("x")), "timeout"},
+		{exitcode.Wrap(exitcode.Pipeline, errors.New("x")), "failed"},
+	}
+	for _, tc := range cases {
+		dir := t.TempDir()
+		store, _ := runstore.Open(dir, "test")
+		r, _ := store.NewRun(time.Now(), "p", nil)
+		var warn bytes.Buffer
+		finalizeRun(&warn, r, tc.err)
+		m, _ := runstore.ReadMeta(filepath.Join(r.Dir, "meta.json"))
+		if m.Status != tc.want {
+			t.Errorf("err=%v: status = %q, want %q", tc.err, m.Status, tc.want)
+		}
+	}
+}
+
+func TestOpenRunRecord_KeepRunsOneKeepsOne(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TKN_ACT_KEEP_RUNS", "1")
+	t.Setenv("TKN_ACT_KEEP_DAYS", "0")
+	for i := 0; i < 3; i++ {
+		var warn bytes.Buffer
+		r := openRunRecord(&warn, dir, "p", nil)
+		if r == nil {
+			t.Fatalf("nil run: %s", warn.String())
+		}
+		finalizeRun(&warn, r, nil)
+	}
+	entries, _ := os.ReadDir(filepath.Join(dir, "runs"))
+	if len(entries) != 1 {
+		t.Errorf("dirs = %d, want 1", len(entries))
+	}
 }

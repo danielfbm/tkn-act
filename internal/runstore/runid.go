@@ -24,7 +24,7 @@ func NewRunID(now time.Time) RunID {
 // ParseRunID validates that s is a well-formed ULID and returns it
 // as a RunID.
 func ParseRunID(s string) (RunID, error) {
-	if _, err := ulid.Parse(s); err != nil {
+	if _, err := ulid.ParseStrict(s); err != nil {
 		return "", fmt.Errorf("invalid run id %q: %w", s, err)
 	}
 	return RunID(s), nil

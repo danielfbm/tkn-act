@@ -17,10 +17,14 @@ type IndexEntry struct {
 	Seq         int       `json:"seq"`
 	ULID        string    `json:"ulid"`
 	PipelineRef string    `json:"pipeline_ref,omitempty"`
-	StartedAt   time.Time `json:"started_at,omitempty"`
-	EndedAt     time.Time `json:"ended_at,omitempty"`
+	StartedAt   time.Time `json:"started_at,omitzero"`
+	EndedAt     time.Time `json:"ended_at,omitzero"`
 	ExitCode    int       `json:"exit_code"`
 	Status      string    `json:"status,omitempty"`
+	// PID / Host identify the writing process so a crashed (never
+	// finalized) run can be told apart from one still in flight.
+	PID  int    `json:"pid,omitempty"`
+	Host string `json:"host,omitempty"`
 }
 
 // indexFile is the on-disk shape of index.json.
@@ -154,9 +158,12 @@ func (i *Index) ByULIDPrefix(prefix string) (IndexEntry, error) {
 	if prefix == "" {
 		return IndexEntry{}, errors.New("ulid prefix must not be empty")
 	}
+	// ULIDs are Crockford base32 and case-insensitive; stored ones are
+	// upper-case, so normalize the user's prefix.
+	norm := strings.ToUpper(prefix)
 	var found []IndexEntry
 	for _, e := range i.data.Entries {
-		if strings.HasPrefix(e.ULID, prefix) {
+		if strings.HasPrefix(e.ULID, norm) {
 			found = append(found, e)
 		}
 	}
@@ -166,7 +173,12 @@ func (i *Index) ByULIDPrefix(prefix string) (IndexEntry, error) {
 	case 1:
 		return found[0], nil
 	default:
-		return IndexEntry{}, fmt.Errorf("ulid prefix %q matches %d runs: %w", prefix, len(found), ErrAmbiguous)
+		cands := make([]string, 0, len(found))
+		for _, e := range found {
+			cands = append(cands, fmt.Sprintf("  #%d %s %s", e.Seq, e.ULID, e.PipelineRef))
+		}
+		return IndexEntry{}, fmt.Errorf("ulid prefix %q matches %d runs: %w; candidates:\n%s",
+			prefix, len(found), ErrAmbiguous, strings.Join(cands, "\n"))
 	}
 }
 

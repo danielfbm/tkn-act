@@ -50,6 +50,7 @@ run `tkn act ...`.
     cd my-repo-with-pipeline.yaml
     tkn-act                                # auto-discovers pipeline.yaml / .tekton/
     tkn-act run -f pipeline.yaml --param revision=main -w shared=./build
+    tkn-act run pipeline.yaml              # positional files are treated as -f
     tkn-act validate
     tkn-act list
 
@@ -88,7 +89,7 @@ for the full reference.
 
 ```sh
 tkn-act cluster up                         # one-time, ~30-60s
-tkn-act cluster up --tekton-version v1.3.0 # or pin a specific LTS (env: TKN_ACT_TEKTON_VERSION)
+tkn-act cluster up --tekton-version v1.9.9 # or pin a specific LTS (env: TKN_ACT_TEKTON_VERSION)
 tkn-act run --cluster -f pipeline.yaml
 tkn-act cluster status
 tkn-act cluster down -y
@@ -159,8 +160,13 @@ are exercised by both backends in CI — divergences are explicit
   / file:// / ssh:// honored, plain http:// refused unless
   `--resolver-allow-insecure-http` is set. **`hub` and `http` direct
   resolvers ship in Phase 3** (HTTPS-only by default; loopback http
-  exempt; bearer-token via `HubOptions.Token` / `HTTPOptions.Token` /
-  env `TKNACT_HTTP_RESOLVER_TOKEN`; 5xx single-retry budget). **`bundles`
+  exempt; bearer-token via `--resolver-config` (`hub.token` /
+  `http.token`), `HubOptions.Token` / `HTTPOptions.Token`, or env
+  `TKN_ACT_HTTP_RESOLVER_TOKEN` — legacy `TKNACT_HTTP_RESOLVER_TOKEN`
+  still honored; 5xx single-retry budget; https→http redirects refused,
+  `Authorization` dropped on cross-host redirects, 10 MiB body cap;
+  `hub` implements the Tekton Hub API only — `type: artifact` (upstream's
+  v1.15 default) is a documented gap). **`bundles`
   and `cluster` direct resolvers ship in Phase 4** — `bundles` pulls
   Tekton OCI bundles via `go-containerregistry`, walks layer
   `dev.tekton.image.{name,kind,apiVersion}` annotations, and returns
@@ -169,7 +175,8 @@ are exercised by both backends in CI — divergences are explicit
   registries; auth honors `~/.docker/config.json`); `cluster` reads
   Tekton resources via the kube dynamic client and is **OFF BY
   DEFAULT** for safety (KUBECONFIG may point at production) — opt in
-  via `--cluster-resolver-context=<ctx>` or by adding `cluster` to
+  via `--cluster-resolver-context=<ctx>` /
+  `--cluster-resolver-kubeconfig=<path>` or by adding `cluster` to
   `--resolver-allow`. **Mode B — remote resolver via
   `ResolutionRequest` CRD ships in Phase 5**: setting
   `--remote-resolver-context=<kubeconfig-context>` flips the registry
@@ -234,6 +241,10 @@ prioritized track of what's next.
 `tkn-act` has first-class support for AI agents and scripts:
 
 - Stable JSON shapes on every command (`--output json`).
+- `tkn-act validate` applies the same checks as `run` (resolver
+  allow-list, `--offline` cache), so exit `0` means `run` won't reject
+  the YAML at validation time; a missing required `--param` makes `run`
+  exit `4` before anything starts.
 - Stable exit codes: `0` ok, `2` usage, `3` env, `4` validate,
   `5` pipeline failure, `6` timeout, `130` cancelled.
 - `tkn-act doctor -o json` — preflight: Docker, k3d, kubectl, cache dir.

@@ -2,12 +2,10 @@ package refresolver
 
 import (
 	"archive/tar"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -148,36 +146,11 @@ func (b *BundlesResolver) allowInsecureFor(ref string) bool {
 	return isLoopbackRegistryHost(host)
 }
 
-// isLoopbackRegistryHost matches host:port forms that are 127.0.0.1, ::1,
-// or localhost (case-insensitive). go-containerregistry's name package
-// has its own loopback check but it isn't exported; this duplicates the
-// minimal slice we need.
+// isLoopbackRegistryHost reports whether a registry host[:port] is a
+// loopback IP literal or "localhost" (see isLoopbackHost — a DNS name
+// such as "127.evil.example" is not loopback).
 func isLoopbackRegistryHost(host string) bool {
-	if host == "" {
-		return false
-	}
-	// Strip port if present. IPv6 hosts come wrapped in [...].
-	h := host
-	if strings.HasPrefix(h, "[") {
-		if end := strings.Index(h, "]"); end != -1 {
-			h = h[1:end]
-		}
-	} else if i := strings.LastIndex(h, ":"); i != -1 {
-		// host:port form. Avoid stripping a colon inside an unwrapped
-		// IPv6 literal (impossible in valid registry refs but be safe).
-		h = h[:i]
-	}
-	switch strings.ToLower(h) {
-	case "localhost", "127.0.0.1", "::1":
-		return true
-	}
-	if strings.HasPrefix(h, "127.") {
-		return true
-	}
-	if ip := net.ParseIP(h); ip != nil && ip.IsLoopback() {
-		return true
-	}
-	return false
+	return isLoopbackHost(host)
 }
 
 // extractTektonResource walks img's layers in declaration order and
@@ -208,7 +181,10 @@ func extractTektonResource(img v1.Image, wantKind, wantName string) ([]byte, err
 		if gotName != wantName {
 			continue
 		}
-		if wantKind != "" && gotKind != "" && gotKind != wantKind {
+		// The Tekton bundle contract requires every resource layer to
+		// carry the kind annotation; a layer without one is not a
+		// Tekton resource layer and never matches.
+		if gotKind == "" || gotKind != wantKind {
 			continue
 		}
 
@@ -248,10 +224,6 @@ func readFirstTarFile(r io.Reader) ([]byte, error) {
 		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tarTypeRegLegacy {
 			continue
 		}
-		var buf bytes.Buffer
-		if _, err := io.Copy(&buf, tr); err != nil {
-			return nil, err
-		}
-		return buf.Bytes(), nil
+		return readLimited(tr, fmt.Sprintf("layer file %q", hdr.Name))
 	}
 }

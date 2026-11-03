@@ -3,7 +3,6 @@ package refresolver
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -35,11 +34,19 @@ type HubOptions struct {
 //	version   optional, default "latest"
 //	kind      optional, default "task"
 //	catalog   optional, default "tekton"
+//	type      optional, "tekton" (Tekton Hub API). Upstream Tekton's
+//	          default is "artifact" (Artifact Hub); tkn-act does not
+//	          implement Artifact Hub yet, so an unset type keeps the
+//	          Tekton Hub behavior and type: artifact fails with a clear
+//	          error.
 //
 // HTTPS is required regardless of the run-level
 // --resolver-allow-insecure-http flag (that flag scopes to the http
 // resolver only). 5xx responses are retried once with a 250ms backoff;
-// 404s are surfaced with a "not found" diagnostic.
+// 404s are surfaced with a "not found" diagnostic. Redirects that
+// downgrade https to http are refused, the Authorization header is
+// dropped when a redirect changes host, and bodies over
+// MaxResolvedBytes are rejected.
 type HubResolver struct {
 	opts HubOptions
 }
@@ -52,6 +59,7 @@ func NewHubResolver(opts HubOptions) *HubResolver {
 	if opts.Client == nil {
 		opts.Client = &http.Client{Timeout: 30 * time.Second}
 	}
+	opts.Client = withSafeRedirects(opts.Client, false, "hub")
 	return &HubResolver{opts: opts}
 }
 
@@ -63,6 +71,14 @@ func (h *HubResolver) Resolve(ctx context.Context, req Request) (Resolved, error
 	name := strings.TrimSpace(req.Params["name"])
 	if name == "" {
 		return Resolved{}, fmt.Errorf("hub: param %q is required", "name")
+	}
+	switch hubType := strings.ToLower(strings.TrimSpace(req.Params["type"])); hubType {
+	case "", "tekton":
+		// Tekton Hub API (the only hub type tkn-act implements).
+	case "artifact":
+		return Resolved{}, fmt.Errorf("hub: artifact hub not supported yet, set type: tekton (the Tekton Hub API)")
+	default:
+		return Resolved{}, fmt.Errorf("hub: invalid type %q (want %q or %q)", req.Params["type"], "tekton", "artifact")
 	}
 	version := strings.TrimSpace(req.Params["version"])
 	if version == "" {
@@ -82,10 +98,10 @@ func (h *HubResolver) Resolve(ctx context.Context, req Request) (Resolved, error
 	// tests all do); refuse anything else.
 	parsedBase, err := url.Parse(h.opts.BaseURL)
 	if err != nil {
-		return Resolved{}, fmt.Errorf("hub: invalid baseURL %q: %w", h.opts.BaseURL, err)
+		return Resolved{}, fmt.Errorf("hub: invalid baseURL %q: %w", redactURL(h.opts.BaseURL), transportErr(err))
 	}
 	if parsedBase.Scheme == "http" && !isLoopbackHost(parsedBase.Host) {
-		return Resolved{}, fmt.Errorf("hub: refusing plain-http base URL %q; HTTPS is required", h.opts.BaseURL)
+		return Resolved{}, fmt.Errorf("hub: refusing plain-http base URL %q; HTTPS is required", redactURL(h.opts.BaseURL))
 	}
 
 	endpoint := strings.TrimRight(h.opts.BaseURL, "/") +
@@ -137,52 +153,34 @@ func (h *HubResolver) fetchWithRetry(ctx context.Context, endpoint, name, versio
 func (h *HubResolver) fetchOnce(ctx context.Context, endpoint, name, version, kind, catalog string) ([]byte, bool, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, false, fmt.Errorf("hub: building request: %w", err)
+		return nil, false, fmt.Errorf("hub: building request: %w", transportErr(err))
 	}
 	if h.opts.Token != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+h.opts.Token)
 	}
 	httpReq.Header.Set("Accept", "text/yaml, application/yaml, application/octet-stream, */*")
 
+	shown := redactURL(endpoint)
 	resp, err := h.opts.Client.Do(httpReq)
 	if err != nil {
 		// Transport / DNS / connect / TLS — retryable.
-		return nil, true, fmt.Errorf("hub: GET %s: %w", endpoint, err)
+		return nil, true, fmt.Errorf("hub: GET %s: %w", shown, transportErr(err))
 	}
 	defer resp.Body.Close()
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		body, rerr := io.ReadAll(resp.Body)
+		body, rerr := readLimited(resp.Body, "response body")
 		if rerr != nil {
-			return nil, true, fmt.Errorf("hub: reading body: %w", rerr)
+			return nil, false, fmt.Errorf("hub: GET %s: %w", shown, rerr)
 		}
 		return body, false, nil
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, false, fmt.Errorf("hub: %s/%s/%s@%s not found at %s (status 404)",
-			catalog, kind, name, version, endpoint)
+			catalog, kind, name, version, shown)
 	case resp.StatusCode >= 500:
-		return nil, true, fmt.Errorf("hub: GET %s: server error %d", endpoint, resp.StatusCode)
+		return nil, true, fmt.Errorf("hub: GET %s: server error %d", shown, resp.StatusCode)
 	default:
-		return nil, false, fmt.Errorf("hub: GET %s: unexpected status %d", endpoint, resp.StatusCode)
+		return nil, false, fmt.Errorf("hub: GET %s: unexpected status %d", shown, resp.StatusCode)
 	}
-}
-
-// isLoopbackHost matches host:port forms that are 127.0.0.1, ::1, or
-// localhost (case-insensitive). Used to allow httptest servers in unit
-// tests without opening up plain HTTP for arbitrary hub mirrors.
-func isLoopbackHost(host string) bool {
-	// Strip the port if present.
-	if i := strings.LastIndex(host, ":"); i != -1 {
-		// Be defensive against IPv6 host:port (`[::1]:1234`).
-		if !strings.Contains(host[:i], "]") || strings.HasPrefix(host, "[") {
-			host = host[:i]
-		}
-	}
-	host = strings.Trim(host, "[]")
-	switch strings.ToLower(host) {
-	case "127.0.0.1", "::1", "localhost":
-		return true
-	}
-	return strings.HasPrefix(host, "127.")
 }

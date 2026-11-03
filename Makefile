@@ -21,8 +21,8 @@ LDFLAGS    := -s -w -X main.version=$(shell git describe --tags --always --dirty
 # K3D / kubectl versions pinned to match
 # .github/workflows/cluster-integration.yml so contributors run the same
 # versions CI does. Bump both places together.
-K3D_VERSION     ?= v5.7.4
-KUBECTL_VERSION ?= v1.31.0
+K3D_VERSION     ?= v5.9.0
+KUBECTL_VERSION ?= v1.34.12
 
 HELLO_FIXTURE := testdata/e2e/hello/pipeline.yaml
 

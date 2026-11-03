@@ -1,0 +1,38 @@
+# Step securityContext.runAsUser + computeResources (Tekton v1 field
+# name), with a non-root step writing a Task result. Exercises:
+#   - securityContext honoured on docker (container User) and cluster;
+#   - $(results.x.path) writable by a non-root UID on both backends
+#     (docker results dirs are 0777, like Tekton's emptyDir);
+#   - stepTemplate.computeResources inheritance + step override.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: nonroot
+spec:
+  results:
+    - name: uid
+  stepTemplate:
+    computeResources:
+      limits: { memory: 128Mi, cpu: 500m }
+  steps:
+    - name: write
+      image: alpine:3
+      securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
+      computeResources:
+        limits: { memory: 64Mi }
+      script: |
+        printf %s `id -u` > $(results.uid.path)
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: step-security-context
+spec:
+  results:
+    - name: uid
+      value: $(tasks.nonroot.results.uid)
+  tasks:
+    - name: nonroot
+      taskRef: { name: nonroot }

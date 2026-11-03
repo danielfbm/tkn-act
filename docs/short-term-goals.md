@@ -40,7 +40,8 @@ near the top are the ones whose absence forces the most users onto
 
 > **Status (2026-05-13):** Complete. All five items below shipped
 > between v1.2 and v1.6. As of PR #35 the `cluster-integration`
-> workflow also runs a Tekton-LTS matrix (`v1.3.0`, `v1.12.0`), so a
+> workflow also runs a Tekton-LTS matrix (`v1.9.9`, `v1.15.5` since
+> 2026-11-03; originally `v1.3.0`, `v1.12.0`), so a
 > future Tekton bump cannot silently regress the prior LTS. New work
 > proceeds on the natural follow-ups listed under the table.
 
@@ -53,7 +54,7 @@ prioritized before adding new backends.
 
 | # | Item | Why it matters |
 |---|---|---|
-| 1 | **Cross-execute every v1.2 fixture under `--cluster`.** Same fixture descriptor, same expected outcome, run twice (once per backend). | Done in v1.2 (PR #6 `feat(cluster): cross-backend fidelity for v1.2 features`). The `cluster-integration` workflow now drives the full `internal/e2e/fixtures.All()` table. As of 2026-05-13 the workflow also runs a Tekton-LTS matrix (`v1.3.0`, `v1.12.0`) per [`docs/superpowers/specs/2026-05-13-tekton-bump-and-matrix-design.md`](superpowers/specs/2026-05-13-tekton-bump-and-matrix-design.md). |
+| 1 | **Cross-execute every v1.2 fixture under `--cluster`.** Same fixture descriptor, same expected outcome, run twice (once per backend). | Done in v1.2 (PR #6 `feat(cluster): cross-backend fidelity for v1.2 features`). The `cluster-integration` workflow now drives the full `internal/e2e/fixtures.All()` table. The workflow also runs a Tekton-LTS matrix — `v1.9.9` + `v1.15.5` since 2026-11-03 per [`docs/superpowers/specs/2026-11-03-audit-and-tekton-v1.15-design.md`](superpowers/specs/2026-11-03-audit-and-tekton-v1.15-design.md) (originally `v1.3.0` + `v1.12.0` per [`docs/superpowers/specs/2026-05-13-tekton-bump-and-matrix-design.md`](superpowers/specs/2026-05-13-tekton-bump-and-matrix-design.md)). |
 | 2 | **Map Tekton terminal conditions to our task statuses.** `internal/backend/cluster/run.go:watchPipelineRun` only checks `Succeeded={True,False}`. Tekton sets `Reason: PipelineRunTimeout` / `TaskRunTimeout` distinctly; we should map those to status `timeout` so the parity tests pass. | Done in v1.2 (PRs #9 `feat: honor Pipeline.spec.timeouts.{pipeline,tasks,finally}` introduced `mapPipelineRunStatus` / `mapTaskRunStatus`; PR #13 `fix(cluster): pipeline-timeout misclassified as failed via skippedTasks path` added the `anySkippedDueToTimeout` fallback for the case where Tekton folds the timeout into `reason: Failed`). |
 | 3 | **Apply ConfigMap / Secret resources into the run namespace before submission.** When a Task uses `volumes: [configMap]`, the cluster backend currently does nothing — Tekton then fails because the named ConfigMap doesn't exist. Source the bytes from the same `volumes.Store` the docker backend uses, then `kubectl apply` an ephemeral ConfigMap into the per-run namespace. | Done in v1.2 (`internal/backend/cluster/volumes.go`, `applyVolumeSources` called from `RunPipeline`). The `volumes/` fixture now passes on both backends. |
 | 4 | **Cluster-side `task-retry` events.** The cluster backend delegates to Tekton's retry impl; we currently emit nothing equivalent to the docker policy loop's `task-retry`. Watch TaskRun status and emit one `task-retry` per Tekton retry attempt. | Done in v1.2 (PR #6, `RetryAttempts` on `TaskOutcomeOnCluster` plus engine emission of `task-retry` events per attempt). |

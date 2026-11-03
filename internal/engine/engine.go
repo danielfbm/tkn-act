@@ -169,25 +169,31 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 		g.AddNode(pt.Name)
 		main[pt.Name] = pt
 	}
+	// Matrix parent → expansion names, across main + finally. Used to
+	// map result references to a matrix parent onto every expansion.
+	expansions := matrixExpansions(pl.Spec.Tasks, pl.Spec.Finally)
 	for _, pt := range pl.Spec.Tasks {
 		for _, dep := range pt.RunAfter {
 			g.AddEdge(dep, pt.Name)
 		}
 		// Implicit edges from $(tasks.X.results.Y) references in
-		// pt.Params and pt.TaskRef.ResolverParams. Mirrors upstream
-		// Tekton; lazy-resolved taskRefs depend on this so a
+		// pt.Params, pt.When and pt.TaskRef.ResolverParams. Mirrors
+		// upstream Tekton; lazy-resolved taskRefs depend on this so a
 		// resolver.params reference to an upstream result schedules
-		// after the upstream task. Refs to tasks not in the main
+		// after the upstream task. A reference to a matrix parent
+		// waits on every expansion. Refs to tasks not in the main
 		// DAG are silently dropped here (the validator catches
 		// dangling refs separately).
-		for _, dep := range implicitParamEdges(pt) {
-			if _, ok := main[dep]; !ok {
-				continue
+		for _, ref := range implicitParamEdges(pt) {
+			for _, dep := range expandRefNames(ref, expansions) {
+				if _, ok := main[dep]; !ok {
+					continue
+				}
+				if dep == pt.Name || sameMatrixParent(main[dep], pt) {
+					continue
+				}
+				g.AddEdge(dep, pt.Name)
 			}
-			if dep == pt.Name {
-				continue
-			}
-			g.AddEdge(dep, pt.Name)
 		}
 	}
 	levels, err := g.Levels()
@@ -210,158 +216,55 @@ func (e *Engine) RunPipeline(ctx context.Context, in PipelineInput) (RunResult, 
 	// Execute levels under the tasks budget.
 	tasksCtx, tasksCancel := withMaybeBudget(pipeCtx, timeouts.tasksBudget())
 	var mu sync.Mutex
-levelLoop:
-	for _, level := range levels {
-		// If the tasks budget already fired, mark anything not yet
-		// started as not-run and stop scheduling.
-		if tasksCtx.Err() != nil {
-			for _, taskName := range level {
-				if _, alreadyDone := outcomes[taskName]; alreadyDone {
-					continue
-				}
-				outcomes[taskName] = TaskOutcome{Status: "not-run"}
-				e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: taskName, Message: "tasks timeout fired", DisplayName: main[taskName].DisplayName, Matrix: matrixEventFor(main[taskName])})
-			}
-			continue
-		}
-		eg, gctx := errgroup.WithContext(tasksCtx)
-		eg.SetLimit(e.opts.MaxParallel)
-		for _, taskName := range level {
-			tname := taskName
-			pt := main[tname]
 
-			mu.Lock()
-			anyAncestorBad := upstreamBlocksDispatch(g, tname, main, outcomes)
-			mu.Unlock()
-			if anyAncestorBad {
-				mu.Lock()
-				outcomes[tname] = TaskOutcome{Status: "not-run"}
-				mu.Unlock()
-				e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: tname, Message: "upstream failure", DisplayName: pt.DisplayName, Matrix: matrixEventFor(pt)})
-				continue
-			}
-
-			// Resolve the Task spec (best-effort) so we can carry its
-			// description on task-start. Any lookup error is handled by
-			// runOne; it's safe to ignore here.
-			taskSpec, _ := lookupTaskSpec(in.Bundle, pt)
-
-			// Snapshot the results map under the mutex so the
-			// per-task substitution sees a stable view. Concurrent
-			// tasks at the same level write to `results` after their
-			// runs end; without a snapshot a goroutine reading
-			// resolver.Context.Results races with those writes.
-			mu.Lock()
-			resultsSnap := make(map[string]map[string]string, len(results))
-			for k, v := range results {
-				resultsSnap[k] = v
-			}
-			mu.Unlock()
-
-			eg.Go(func() error {
-				e.dbg.Emit(debug.Engine, func() (string, map[string]any) {
-					return "task ready", map[string]any{"task": tname}
-				})
-				e.rep.Emit(reporter.Event{
-					Kind: reporter.EvtTaskStart, Time: time.Now(), Task: tname,
-					DisplayName: pt.DisplayName,
-					Description: taskSpec.Description,
-					Matrix:      matrixEventFor(pt),
-				})
-				oc := e.runOneWithPolicy(gctx, in, pl, pt, params, resultsSnap, runID, pipelineRunName)
-				if pt.MatrixInfo != nil {
-					oc.Matrix = pt.MatrixInfo
-				}
-				// Per-row when: a skipped expansion emits its own
-				// task-skip under the expansion name with Matrix
-				// populated, then we mark it not-run (so siblings can
-				// still proceed) and skip the task-end emission.
-				if oc.Status == "skipped" && pt.MatrixInfo != nil {
-					e.rep.Emit(reporter.Event{
-						Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: tname,
-						Message: oc.Message, DisplayName: pt.DisplayName,
-						Matrix: matrixEventFor(pt),
-					})
-					mu.Lock()
-					outcomes[tname] = TaskOutcome{Status: "not-run", Message: oc.Message, Matrix: pt.MatrixInfo}
-					maybeAggregateMatrix(pt, pl, outcomes, results)
-					mu.Unlock()
-					return nil
-				}
-				e.rep.Emit(reporter.Event{
-					Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: tname,
-					Status: oc.Status, Duration: oc.Duration, Message: oc.Message, Attempt: oc.Attempt,
-					DisplayName: pt.DisplayName,
-					Matrix:      matrixEventFor(pt),
-				})
-				mu.Lock()
-				outcomes[tname] = oc
-				if oc.Results != nil {
-					results[tname] = oc.Results
-				}
-				maybeAggregateMatrix(pt, pl, outcomes, results)
-				switch oc.Status {
-				case "failed", "infrafailed":
-					if overall != "timeout" {
-						overall = "failed"
-					}
-				case "timeout":
-					overall = "timeout"
-				}
-				mu.Unlock()
-				return nil
-			})
-		}
-		_ = eg.Wait()
-		if tasksCtx.Err() != nil {
-			overall = "timeout"
-			tasksCancel()
-			break levelLoop
+	// stopReason names what stopped scheduling once a budget context
+	// (tasksCtx / finallyCtx) is done: root cancellation, the pipeline
+	// budget, or the phase's own budget.
+	stopReason := func(phase string, budget time.Duration) string {
+		switch {
+		case errors.Is(ctx.Err(), context.Canceled):
+			return "pipeline run cancelled"
+		case timeouts.Pipeline > 0 && pipeCtx.Err() != nil:
+			return fmt.Sprintf("pipeline timeout %s exceeded", timeouts.Pipeline)
+		default:
+			return fmt.Sprintf("%s timeout %s exceeded", phase, budget)
 		}
 	}
-	tasksCancel()
+	tasksStopReason := func() string { return stopReason("tasks", timeouts.tasksBudget()) }
+	finallyStopReason := func() string { return stopReason("finally", timeouts.finallyBudget()) }
 
-	// Finally tasks always run, under the finally budget (rooted at pipeCtx,
-	// not tasksCtx — exhausting tasks must not shorten finally).
-	finallyCtx, finallyCancel := withMaybeBudget(pipeCtx, timeouts.finallyBudget())
-	defer finallyCancel()
-	for _, pt := range pl.Spec.Finally {
-		if finallyCtx.Err() != nil {
-			outcomes[pt.Name] = TaskOutcome{Status: "not-run"}
-			e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: pt.Name, Message: "finally timeout fired", DisplayName: pt.DisplayName, Matrix: matrixEventFor(pt)})
-			continue
-		}
-		finallyTaskSpec, _ := lookupTaskSpec(in.Bundle, pt)
-		e.rep.Emit(reporter.Event{
-			Kind: reporter.EvtTaskStart, Time: time.Now(), Task: pt.Name,
-			DisplayName: pt.DisplayName,
-			Description: finallyTaskSpec.Description,
-			Matrix:      matrixEventFor(pt),
-		})
-		oc := e.runOneWithPolicy(finallyCtx, in, pl, pt, params, results, runID, pipelineRunName)
+	// markNotRun records a task that will not run and emits its
+	// task-skip. Safe to call from dispatch goroutines.
+	markNotRun := func(pt tektontypes.PipelineTask, msg string, kind skipKind) {
+		mu.Lock()
+		outcomes[pt.Name] = TaskOutcome{Status: "not-run", Message: msg, Matrix: pt.MatrixInfo, skip: kind}
+		maybeAggregateMatrix(pt, pl, outcomes, results)
+		mu.Unlock()
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: pt.Name, Message: msg, DisplayName: pt.DisplayName, Matrix: matrixEventFor(pt)})
+	}
+
+	// finishTask records a dispatched task's terminal outcome and emits
+	// its terminal event. A when-skip ("skipped") emits task-skip and no
+	// task-end — the same shape for matrix rows and plain tasks (runOne
+	// already emitted the plain task's task-skip).
+	finishTask := func(pt tektontypes.PipelineTask, oc TaskOutcome) {
 		if pt.MatrixInfo != nil {
 			oc.Matrix = pt.MatrixInfo
 		}
-		// If the finally (or pipeline) budget fired during this task, the
-		// backend returned a cancellation-class outcome ("infrafailed" /
-		// "failed"). Re-classify it as "timeout" so the per-task event and
-		// the overall run agree on what killed the task.
-		if finallyCtx.Err() != nil && (oc.Status == "infrafailed" || oc.Status == "failed") {
-			oc.Status = "timeout"
-			if oc.Message == "" {
-				oc.Message = "finally timeout exceeded"
+		if oc.Status == "skipped" {
+			if pt.MatrixInfo != nil {
+				e.rep.Emit(reporter.Event{
+					Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: pt.Name,
+					Message: oc.Message, DisplayName: pt.DisplayName,
+					Matrix: matrixEventFor(pt),
+				})
 			}
-		}
-		// Per-row when: skipped finally expansion emits its own task-skip.
-		if oc.Status == "skipped" && pt.MatrixInfo != nil {
-			e.rep.Emit(reporter.Event{
-				Kind: reporter.EvtTaskSkip, Time: time.Now(), Task: pt.Name,
-				Message: oc.Message, DisplayName: pt.DisplayName,
-				Matrix: matrixEventFor(pt),
-			})
-			outcomes[pt.Name] = TaskOutcome{Status: "not-run", Message: oc.Message, Matrix: pt.MatrixInfo}
+			oc.skip = skipWhen
+			mu.Lock()
+			outcomes[pt.Name] = oc
 			maybeAggregateMatrix(pt, pl, outcomes, results)
-			continue
+			mu.Unlock()
+			return
 		}
 		e.rep.Emit(reporter.Event{
 			Kind: reporter.EvtTaskEnd, Time: time.Now(), Task: pt.Name,
@@ -369,13 +272,11 @@ levelLoop:
 			DisplayName: pt.DisplayName,
 			Matrix:      matrixEventFor(pt),
 		})
+		mu.Lock()
 		outcomes[pt.Name] = oc
-		// Finally-task results must enter the same `results` map the
-		// main loop populates: Pipeline.spec.results may reference
-		// $(tasks.<finally>.results.<name>) and the resolver only
-		// reads from this map. Before, finally results were absent
-		// from the map and any spec.results entry that referenced
-		// them was silently dropped.
+		// Finally-task results enter the same `results` map as main
+		// tasks: Pipeline.spec.results may reference
+		// $(tasks.<finally>.results.<name>).
 		if oc.Results != nil {
 			results[pt.Name] = oc.Results
 		}
@@ -388,7 +289,154 @@ levelLoop:
 		case "timeout":
 			overall = "timeout"
 		}
+		mu.Unlock()
 	}
+
+	// reclassifyBudgetKill rewrites a cancellation-class outcome
+	// ("infrafailed" / "failed") of a task that was in flight when its
+	// phase budget (or the pipeline budget) fired to "timeout", so the
+	// task-end event and the run status agree on what killed it.
+	// Root-context cancellation is left alone (the run ends cancelled).
+	reclassifyBudgetKill := func(oc TaskOutcome, budgetCtx context.Context, reason func() string) TaskOutcome {
+		if budgetCtx.Err() == nil || errors.Is(ctx.Err(), context.Canceled) {
+			return oc
+		}
+		if oc.Status == "infrafailed" || oc.Status == "failed" {
+			oc.Status = "timeout"
+			oc.Message = reason()
+		}
+		return oc
+	}
+
+	resultsSnapshot := func() map[string]map[string]string {
+		mu.Lock()
+		defer mu.Unlock()
+		snap := make(map[string]map[string]string, len(results))
+		for k, v := range results {
+			snap[k] = v
+		}
+		return snap
+	}
+
+	for _, level := range levels {
+		// Once the tasks budget fired (or the run was cancelled), mark
+		// everything not yet started as not-run and keep walking the
+		// remaining levels so every task gets a task-skip event and a
+		// RunResult.Tasks entry.
+		if tasksCtx.Err() != nil {
+			reason := tasksStopReason()
+			for _, taskName := range level {
+				mu.Lock()
+				_, alreadyDone := outcomes[taskName]
+				mu.Unlock()
+				if alreadyDone {
+					continue
+				}
+				markNotRun(main[taskName], reason, skipStopped)
+			}
+			continue
+		}
+		eg := &errgroup.Group{}
+		eg.SetLimit(e.opts.MaxParallel)
+		for _, taskName := range level {
+			tname := taskName
+			pt := main[tname]
+
+			mu.Lock()
+			reason, blocked := upstreamBlocksDispatch(g, tname, main, outcomes)
+			if !blocked {
+				reason, blocked = missingResultRefs(pt, outcomes, expansions)
+			}
+			mu.Unlock()
+			if blocked {
+				markNotRun(pt, reason, skipBlocked)
+				continue
+			}
+
+			// Resolve the Task spec (best-effort) so we can carry its
+			// description on task-start. Any lookup error is handled by
+			// runOne; it's safe to ignore here.
+			taskSpec, _ := lookupTaskSpec(in.Bundle, pt)
+
+			// Snapshot the results map so the per-task substitution
+			// sees a stable view. Concurrent tasks at the same level
+			// write to `results` after their runs end; without a
+			// snapshot a goroutine reading resolver.Context.Results
+			// races with those writes.
+			resultsSnap := resultsSnapshot()
+
+			eg.Go(func() error {
+				// eg.Go blocks while MaxParallel tasks are in flight;
+				// the budget may have fired in the meantime.
+				if tasksCtx.Err() != nil {
+					markNotRun(pt, tasksStopReason(), skipStopped)
+					return nil
+				}
+				e.dbg.Emit(debug.Engine, func() (string, map[string]any) {
+					return "task ready", map[string]any{"task": tname}
+				})
+				e.rep.Emit(reporter.Event{
+					Kind: reporter.EvtTaskStart, Time: time.Now(), Task: tname,
+					DisplayName: pt.DisplayName,
+					Description: taskSpec.Description,
+					Matrix:      matrixEventFor(pt),
+				})
+				oc := e.runOneWithPolicy(tasksCtx, in, pl, pt, params, resultsSnap, runID, pipelineRunName)
+				finishTask(pt, reclassifyBudgetKill(oc, tasksCtx, tasksStopReason))
+				return nil
+			})
+		}
+		_ = eg.Wait()
+	}
+	if tasksCtx.Err() != nil {
+		overall = "timeout"
+	}
+	tasksCancel()
+
+	// Finally tasks always run, under the finally budget (rooted at
+	// pipeCtx, not tasksCtx — exhausting tasks must not shorten
+	// finally). Tekton runs every finally task in parallel (finally
+	// tasks cannot runAfter or consume each other's results), so they
+	// dispatch concurrently, bounded by MaxParallel like the main DAG.
+	finallyCtx, finallyCancel := withMaybeBudget(pipeCtx, timeouts.finallyBudget())
+	defer finallyCancel()
+	// $(tasks.status) / $(tasks.<t>.status) for every finally task,
+	// computed once now that every main task is terminal.
+	finallyCtx = withFinallyStatus(finallyCtx, pl.Spec.Tasks, outcomes)
+	// Every main task is terminal here: compute the finally-scoped view
+	// once, before any finally task dispatches.
+	finallyResults := resultsSnapshot()
+	feg := &errgroup.Group{}
+	feg.SetLimit(e.opts.MaxParallel)
+	for _, pt := range pl.Spec.Finally {
+		pt := pt
+		// A finally task consuming a result of a task that failed or
+		// was skipped is skipped (Tekton: "Results were missing").
+		mu.Lock()
+		reason, missing := missingResultRefs(pt, outcomes, expansions)
+		mu.Unlock()
+		if missing {
+			markNotRun(pt, reason, skipBlocked)
+			continue
+		}
+		finallyTaskSpec, _ := lookupTaskSpec(in.Bundle, pt)
+		feg.Go(func() error {
+			if finallyCtx.Err() != nil {
+				markNotRun(pt, finallyStopReason(), skipStopped)
+				return nil
+			}
+			e.rep.Emit(reporter.Event{
+				Kind: reporter.EvtTaskStart, Time: time.Now(), Task: pt.Name,
+				DisplayName: pt.DisplayName,
+				Description: finallyTaskSpec.Description,
+				Matrix:      matrixEventFor(pt),
+			})
+			oc := e.runOneWithPolicy(finallyCtx, in, pl, pt, params, finallyResults, runID, pipelineRunName)
+			finishTask(pt, reclassifyBudgetKill(oc, finallyCtx, finallyStopReason))
+			return nil
+		})
+	}
+	_ = feg.Wait()
 
 	// Either budget firing means the run timed out, regardless of how
 	// individual task outcomes shook out (a budget kill is a "timeout"
@@ -441,12 +489,10 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		ArrayParams:  arrayParams(params),
 		ObjectParams: objectParams(params),
 		Results:      results,
-		ContextVars: map[string]string{
-			"pipelineRun.name": pipelineRunName,
-			"pipeline.name":    pl.Metadata.Name,
-			"taskRun.name":     pipelineRunName + "-" + pt.Name,
-		},
+		ContextVars:  taskContextVars(ctx, pl, pt, runID, pipelineRunName),
 	}
+	// $(tasks.status) / $(tasks.<t>.status): set only for finally tasks.
+	applyFinallyStatus(ctx, &rctx)
 
 	// Emit a "params resolved" debug event with the count of resolved
 	// keys and a truncated peek at each value. Useful diagnostic when
@@ -557,35 +603,14 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		}
 	}
 	for _, p := range pt.Params {
-		// substitute the value (which may reference $(params.x) or $(tasks.X.results.Y))
-		switch p.Value.Type {
-		case tektontypes.ParamTypeString, "":
-			s, err := resolver.Substitute(p.Value.StringVal, rctx)
-			if err != nil {
-				return TaskOutcome{Status: "failed", Message: err.Error()}
-			}
-			taskParams[p.Name] = tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: s}
-		case tektontypes.ParamTypeArray:
-			out := []string{}
-			for _, item := range p.Value.ArrayVal {
-				s, err := resolver.Substitute(item, rctx)
-				if err != nil {
-					return TaskOutcome{Status: "failed", Message: err.Error()}
-				}
-				out = append(out, s)
-			}
-			taskParams[p.Name] = tektontypes.ParamValue{Type: tektontypes.ParamTypeArray, ArrayVal: out}
-		case tektontypes.ParamTypeObject:
-			out := map[string]string{}
-			for k, v := range p.Value.ObjectVal {
-				s, err := resolver.Substitute(v, rctx)
-				if err != nil {
-					return TaskOutcome{Status: "failed", Message: err.Error()}
-				}
-				out[k] = s
-			}
-			taskParams[p.Name] = tektontypes.ParamValue{Type: tektontypes.ParamTypeObject, ObjectVal: out}
+		// substitute the value (which may reference $(params.x) or
+		// $(tasks.X.results.Y)); whole-array `[*]` refs pass through as
+		// array values.
+		v, err := bindTaskParamValue(p.Value, rctx)
+		if err != nil {
+			return TaskOutcome{Status: "failed", Message: fmt.Sprintf("param %q: %v", p.Name, err)}
 		}
+		taskParams[p.Name] = v
 	}
 
 	// Build a task-scoped resolver context (uses the task's own param view).
@@ -595,10 +620,17 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		ObjectParams: objectParams(taskParams),
 		Results:      results,
 		ContextVars:  rctx.ContextVars,
+		// $(workspaces.<name>.bound)
+		BoundWorkspaces: boundWorkspaces(spec, pt),
 	}
 
-	// Substitute throughout the resolved Task spec.
-	resolved := substituteSpec(spec, taskCtx)
+	taskCtx.WorkspacePaths = workspaceMountPaths(spec.Workspaces)
+	// Substitute throughout the resolved Task spec. A substitution
+	// error fails the task: never run a step whose fields were blanked.
+	resolved, serr := substituteSpec(spec, taskCtx)
+	if serr != nil {
+		return TaskOutcome{Status: "failed", Message: serr.Error()}
+	}
 
 	// Workspace mounts.
 	wsMap := map[string]backend.WorkspaceMount{}
@@ -629,9 +661,27 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		}
 	}
 
+	// Resolver-backed taskRefs: the Task spec (and so its timeout) is
+	// only known here, after lazy resolution, so runOneWithPolicy could
+	// not apply it. Apply it around the backend call instead.
+	runCtx := ctx
+	var lazyTimeout time.Duration
+	if pt.TaskRef != nil && pt.TaskRef.Resolver != "" && pt.Timeout == "" && resolved.Timeout != "" {
+		d, perr := time.ParseDuration(resolved.Timeout)
+		if perr != nil {
+			return TaskOutcome{Status: "failed", Message: fmt.Sprintf("task timeout %q: %v", resolved.Timeout, perr)}
+		}
+		if d > 0 {
+			var cancel context.CancelFunc
+			runCtx, cancel = context.WithTimeout(ctx, d)
+			defer cancel()
+			lazyTimeout = d
+		}
+	}
+
 	taskRunName := pipelineRunName + "-" + pt.Name
 	start := time.Now()
-	res, err := e.be.RunTask(ctx, backend.TaskInvocation{
+	res, err := e.be.RunTask(runCtx, backend.TaskInvocation{
 		RunID:       runID,
 		PipelineRun: pipelineRunName,
 		TaskName:    pt.Name,
@@ -645,6 +695,9 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		LogSink:     reporter.NewLogSink(e.rep),
 	})
 	dur := time.Since(start)
+	if lazyTimeout > 0 && ctx.Err() == nil && errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		return TaskOutcome{Status: "timeout", Message: fmt.Sprintf("task timeout %s exceeded", lazyTimeout), Duration: dur}
+	}
 	if err != nil {
 		return TaskOutcome{Status: "failed", Message: err.Error(), Duration: dur}
 	}
@@ -657,30 +710,31 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 }
 
 // upstreamBlocksDispatch decides whether `target` should be skipped
-// due to upstream failure. For ordinary tasks the rule is the same as
-// before: any non-success ancestor blocks. For matrix-fanned ancestors
-// we treat the *parent* as a single logical node — if AT LEAST ONE
-// expansion of the parent succeeded, downstream may proceed (matches
-// upstream Tekton's per-row when semantics; see spec § 6.3).
+// because of its ancestors (runAfter + implicit result edges), and
+// returns the task-skip message when it should.
 //
-// If every expansion of a parent is non-success, that parent is
-// considered "bad" and downstream is skipped. Mixed-success matrix
-// parents do NOT block downstream.
-func upstreamBlocksDispatch(g *dag.Graph, target string, main map[string]tektontypes.PipelineTask, outcomes map[string]TaskOutcome) bool {
-	// Group ancestors by matrix-parent name. Non-matrix ancestors are
-	// keyed by their own name; matrix expansions group under their
-	// parent. A group is "bad" iff every member is non-success.
+// Tekton semantics (pipelines.md "Guarding a Task and its dependent
+// Tasks"): a task skipped by its own `when` expressions does NOT block
+// ordering-only dependents — they still run. Any other non-success
+// ancestor blocks: failed / infrafailed / timeout, and not-run tasks
+// that were themselves blocked or stopped (Tekton's ParentTasksSkip).
+// Result consumers of a when-skipped task are handled separately by
+// missingResultRefs.
+//
+// Matrix-fanned ancestors are treated as one logical node per parent:
+// if AT LEAST ONE expansion succeeded, downstream may proceed (spec
+// § 6.3). Otherwise the parent blocks iff some expansion is blocking
+// (an all-rows-when-skipped matrix does not block).
+func upstreamBlocksDispatch(g *dag.Graph, target string, main map[string]tektontypes.PipelineTask, outcomes map[string]TaskOutcome) (string, bool) {
 	type group struct {
-		members []string
-		anyOK   bool
+		anyOK     bool
+		blocking  bool
+		anyFailed bool
 	}
 	groups := map[string]*group{}
 	keyFor := func(name string) string {
 		pt, ok := main[name]
-		if !ok {
-			return name
-		}
-		if pt.MatrixInfo != nil {
+		if ok && pt.MatrixInfo != nil {
 			return "matrix:" + pt.MatrixInfo.Parent
 		}
 		return name
@@ -692,33 +746,76 @@ func upstreamBlocksDispatch(g *dag.Graph, target string, main map[string]tektont
 			grp = &group{}
 			groups[k] = grp
 		}
-		grp.members = append(grp.members, ancestor)
+		// Not-yet-run ancestors don't block dispatch — the engine
+		// relies on level ordering.
 		oc, present := outcomes[ancestor]
-		if present && oc.Status == "succeeded" {
+		if !present {
+			continue
+		}
+		switch {
+		case oc.Status == "succeeded":
 			grp.anyOK = true
+		case oc.skip == skipWhen:
+			// when-skipped: ordering-only, never blocking.
+		default:
+			grp.blocking = true
+			if oc.Status != "not-run" {
+				grp.anyFailed = true
+			}
 		}
 	}
+	blocked, failed := false, false
 	for _, grp := range groups {
-		// At least one outcome must be present (not-yet-run ancestors
-		// shouldn't block dispatch — engine relies on level ordering).
-		anyTerminal := false
-		allBad := true
-		for _, m := range grp.members {
-			oc, ok := outcomes[m]
-			if !ok {
-				allBad = false
+		if grp.anyOK || !grp.blocking {
+			continue
+		}
+		blocked = true
+		if grp.anyFailed {
+			failed = true
+		}
+	}
+	switch {
+	case !blocked:
+		return "", false
+	case failed:
+		return "upstream failure", true
+	default:
+		return "parent task skipped", true
+	}
+}
+
+// missingResultRefs reports whether pt references (via params, when or
+// resolver params) a result of a task that is terminal but did not
+// succeed — skipped, not-run, failed or timed out. Tekton skips such a
+// task with reason MissingResultsSkip ("Results were missing") instead
+// of running it and failing on the unresolvable reference; this
+// applies to finally tasks too. A matrix parent counts as producing its
+// results when at least one expansion succeeded. Caller holds the
+// outcomes lock.
+func missingResultRefs(pt tektontypes.PipelineTask, outcomes map[string]TaskOutcome, expansions map[string][]string) (string, bool) {
+	for _, ref := range implicitParamEdges(pt) {
+		terminal, ok := false, false
+		for _, n := range expandRefNames(ref, expansions) {
+			oc, present := outcomes[n]
+			if !present {
 				continue
 			}
-			anyTerminal = true
+			terminal = true
 			if oc.Status == "succeeded" {
-				allBad = false
+				ok = true
 			}
 		}
-		if anyTerminal && allBad {
-			return true
+		if terminal && !ok {
+			return fmt.Sprintf("Results were missing: task %q did not succeed", ref), true
 		}
 	}
-	return false
+	return "", false
+}
+
+// sameMatrixParent reports whether a and b are expansions of the same
+// matrix-fanned parent (never true for non-matrix tasks).
+func sameMatrixParent(a, b tektontypes.PipelineTask) bool {
+	return a.MatrixInfo != nil && b.MatrixInfo != nil && a.MatrixInfo.Parent == b.MatrixInfo.Parent
 }
 
 // upstream returns nodes that have a path to target.
@@ -753,52 +850,96 @@ func lookupTaskSpec(b *loader.Bundle, pt tektontypes.PipelineTask) (tektontypes.
 	return tektontypes.TaskSpec{}, fmt.Errorf("pipeline task %q has neither taskRef nor taskSpec", pt.Name)
 }
 
-func substituteSpec(spec tektontypes.TaskSpec, ctx resolver.Context) tektontypes.TaskSpec {
+// substituteSpec resolves every $(...) reference in the Task's Steps and
+// Sidecars against the task-scoped context. Step-scoped refs
+// ($(steps.X.results.Y), $(step.results.X.path)) are left for the docker
+// backend's per-step pass; refs outside Tekton's namespaces (shell
+// `$(date)`) are left literal; any other unresolvable ref is an error.
+func substituteSpec(spec tektontypes.TaskSpec, ctx resolver.Context) (tektontypes.TaskSpec, error) {
 	out := spec
 	out.Steps = make([]tektontypes.Step, len(spec.Steps))
 	for i, st := range spec.Steps {
-		ns := st
-		ns.Image, _ = resolver.SubstituteAllowStepRefs(st.Image, ctx)
-		if len(st.Command) > 0 {
-			ns.Command, _ = resolver.SubstituteArgsAllowStepRefs(st.Command, ctx)
+		ns, err := substituteContainer(st.Name, "step", containerFields{
+			image: st.Image, script: st.Script, workingDir: st.WorkingDir,
+			command: st.Command, args: st.Args, env: st.Env,
+		}, ctx, resolver.SubstituteDeferStepRefs, resolver.SubstituteArgsDeferStepRefs)
+		if err != nil {
+			return spec, err
 		}
-		if len(st.Args) > 0 {
-			ns.Args, _ = resolver.SubstituteArgsAllowStepRefs(st.Args, ctx)
-		}
-		ns.Script, _ = resolver.SubstituteAllowStepRefs(st.Script, ctx)
-		ns.WorkingDir, _ = resolver.SubstituteAllowStepRefs(st.WorkingDir, ctx)
-		ns.Env = make([]tektontypes.EnvVar, len(st.Env))
-		for j, e := range st.Env {
-			v, _ := resolver.SubstituteAllowStepRefs(e.Value, ctx)
-			ns.Env[j] = tektontypes.EnvVar{Name: e.Name, Value: v}
-		}
-		out.Steps[i] = ns
+		cp := st
+		cp.Image, cp.Script, cp.WorkingDir = ns.image, ns.script, ns.workingDir
+		cp.Command, cp.Args, cp.Env = ns.command, ns.args, ns.env
+		out.Steps[i] = cp
 	}
 	// Sidecars start before any step in the Task and are torn down
 	// after the last step, so step-result references don't apply
-	// (use the plain Substitute, not SubstituteAllowStepRefs).
+	// (use the strict Substitute, not the step-deferring variant).
 	if len(spec.Sidecars) > 0 {
 		out.Sidecars = make([]tektontypes.Sidecar, len(spec.Sidecars))
 		for i, sc := range spec.Sidecars {
-			ns := sc
-			ns.Image, _ = resolver.Substitute(sc.Image, ctx)
-			if len(sc.Command) > 0 {
-				ns.Command, _ = resolver.SubstituteArgs(sc.Command, ctx)
+			ns, err := substituteContainer(sc.Name, "sidecar", containerFields{
+				image: sc.Image, script: sc.Script, workingDir: sc.WorkingDir,
+				command: sc.Command, args: sc.Args, env: sc.Env,
+			}, ctx, resolver.Substitute, resolver.SubstituteArgs)
+			if err != nil {
+				return spec, err
 			}
-			if len(sc.Args) > 0 {
-				ns.Args, _ = resolver.SubstituteArgs(sc.Args, ctx)
-			}
-			ns.Script, _ = resolver.Substitute(sc.Script, ctx)
-			ns.WorkingDir, _ = resolver.Substitute(sc.WorkingDir, ctx)
-			ns.Env = make([]tektontypes.EnvVar, len(sc.Env))
-			for j, e := range sc.Env {
-				v, _ := resolver.Substitute(e.Value, ctx)
-				ns.Env[j] = tektontypes.EnvVar{Name: e.Name, Value: v}
-			}
-			out.Sidecars[i] = ns
+			cp := sc
+			cp.Image, cp.Script, cp.WorkingDir = ns.image, ns.script, ns.workingDir
+			cp.Command, cp.Args, cp.Env = ns.command, ns.args, ns.env
+			out.Sidecars[i] = cp
 		}
 	}
-	return out
+	return out, nil
+}
+
+// containerFields is the substitutable subset shared by Step and Sidecar.
+type containerFields struct {
+	image, script, workingDir string
+	command, args             []string
+	env                       []tektontypes.EnvVar
+}
+
+func substituteContainer(
+	name, kind string,
+	in containerFields,
+	ctx resolver.Context,
+	sub func(string, resolver.Context) (string, error),
+	subArgs func([]string, resolver.Context) ([]string, error),
+) (containerFields, error) {
+	wrap := func(field string, err error) error {
+		return fmt.Errorf("%s %q: %s: %w", kind, name, field, err)
+	}
+	var out containerFields
+	var err error
+	if out.image, err = sub(in.image, ctx); err != nil {
+		return out, wrap("image", err)
+	}
+	if out.script, err = sub(in.script, ctx); err != nil {
+		return out, wrap("script", err)
+	}
+	if out.workingDir, err = sub(in.workingDir, ctx); err != nil {
+		return out, wrap("workingDir", err)
+	}
+	if len(in.command) > 0 {
+		if out.command, err = subArgs(in.command, ctx); err != nil {
+			return out, wrap("command", err)
+		}
+	}
+	if len(in.args) > 0 {
+		if out.args, err = subArgs(in.args, ctx); err != nil {
+			return out, wrap("args", err)
+		}
+	}
+	out.env = make([]tektontypes.EnvVar, len(in.env))
+	for j, e := range in.env {
+		v, err := sub(e.Value, ctx)
+		if err != nil {
+			return out, wrap("env "+e.Name, err)
+		}
+		out.env[j] = tektontypes.EnvVar{Name: e.Name, Value: v}
+	}
+	return out, nil
 }
 
 func uniqueImages(b *loader.Bundle, pl tektontypes.Pipeline) []string {
@@ -947,8 +1088,15 @@ func (e *Engine) runViaPipelineBackend(ctx context.Context, pb backend.PipelineB
 	})
 	dur := time.Since(start)
 	if err != nil {
-		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: "failed", Duration: dur, Message: err.Error(), DisplayName: pl.Spec.DisplayName})
-		return RunResult{Status: "failed"}, err
+		// A user interrupt surfaces from the cluster backend as a
+		// wrapped context.Canceled; report it as "cancelled" like the
+		// docker engine does, so run-end agrees with exit code 130.
+		status := "failed"
+		if errors.Is(ctx.Err(), context.Canceled) {
+			status = "cancelled"
+		}
+		e.rep.Emit(reporter.Event{Kind: reporter.EvtRunEnd, Time: time.Now(), Status: status, Duration: dur, Message: err.Error(), DisplayName: pl.Spec.DisplayName})
+		return RunResult{Status: status}, err
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
 		res.Status = "cancelled"

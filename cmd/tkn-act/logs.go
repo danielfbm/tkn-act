@@ -82,6 +82,10 @@ func runLogs(w io.Writer, id string) error {
 		// I/O against the state-dir (e.g. corrupt index.json) — Env.
 		return exitcode.Wrap(exitcode.Env, err)
 	}
+	runDir, err := store.RunDir(entry)
+	if err != nil {
+		return exitcode.Wrap(exitcode.Env, err)
+	}
 	rep, err := buildReporter(w)
 	if err != nil {
 		return exitcode.Wrap(exitcode.Usage, err)
@@ -92,7 +96,7 @@ func runLogs(w io.Writer, id string) error {
 	// underlying stream.
 	rep = reporter.NewFilter(rep, gf.taskFilter, gf.stepFilter)
 	defer rep.Close()
-	eventsPath := filepath.Join(store.RunDir(entry), "events.jsonl")
+	eventsPath := filepath.Join(runDir, "events.jsonl")
 	if err := runstore.Replay(eventsPath, rep); err != nil {
 		return exitcode.Wrap(exitcode.Env, err)
 	}

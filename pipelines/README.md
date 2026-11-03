@@ -23,7 +23,7 @@ make build                       # rebuild bin/tkn-act on the host
 ```
 
 The four tasks (`go-vet`, `go-test`, `go-build`, `golangci-lint`) run in
-parallel on `golang:1.25-alpine`. The pipeline emits four results on the
+parallel on `golang:1.26-alpine`. The pipeline emits four results on the
 final `run-end` event:
 
 | Result | Source | Example |

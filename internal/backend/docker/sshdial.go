@@ -22,6 +22,13 @@ const (
 	sshDialTimeout            = 10 * time.Second
 )
 
+// sshHandshakeTimeout bounds the SSH handshake on an established TCP
+// connection. Without it a host that accepts TCP but never speaks SSH
+// (wrong port, a proxy, a tarpit) hangs the dial forever, because
+// ssh.ClientConfig.Timeout only covers the TCP connect. Variable so
+// tests can shrink it.
+var sshHandshakeTimeout = 10 * time.Second
+
 // remoteSocketPath returns the daemon's unix socket path on the remote
 // host. Default /var/run/docker.sock; override with $TKN_ACT_DOCKER_SOCKET.
 func remoteSocketPath() string {
@@ -81,11 +88,26 @@ func newSSHDialer(dockerHost string) (func(ctx context.Context, network, addr st
 		if err != nil {
 			return nil, fmt.Errorf("ssh tcp dial %s: %w", sshAddr, err)
 		}
-		sshConn, chans, reqs, err := ssh.NewClientConn(rawConn, sshAddr, cfg)
+		deadline := time.Now().Add(sshHandshakeTimeout)
+		if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+			deadline = d
+		}
+		_ = rawConn.SetDeadline(deadline)
+		// Abort the handshake promptly on ctx cancellation, too.
+		stopAbort := context.AfterFunc(ctx, func() { _ = rawConn.SetDeadline(time.Unix(1, 0)) })
+		connCfg := *cfg
+		// Ask the server for a host key type known_hosts actually lists
+		// for this host; otherwise the server may offer a different
+		// type and the known_hosts check fails with a misleading
+		// mismatch (golang/go#29286).
+		connCfg.HostKeyAlgorithms = knownHostKeyAlgorithms(hostKey, sshAddr, rawConn.RemoteAddr())
+		sshConn, chans, reqs, err := ssh.NewClientConn(rawConn, sshAddr, &connCfg)
+		stopAbort()
 		if err != nil {
 			_ = rawConn.Close()
 			return nil, fmt.Errorf("ssh handshake %s: %w", sshAddr, err)
 		}
+		_ = rawConn.SetDeadline(time.Time{})
 		sshClient := ssh.NewClient(sshConn, chans, reqs)
 		unixConn, err := sshClient.Dial("unix", sock)
 		if err != nil {
@@ -209,4 +231,52 @@ func (c *sshUnixConn) Close() error {
 	err := c.Conn.Close()
 	_ = c.ssh.Close()
 	return err
+}
+
+// probeKey is a placeholder host key no known_hosts file can contain.
+// Feeding it to a knownhosts callback yields a *knownhosts.KeyError
+// whose Want lists the keys on file for the host.
+type probeKey struct{}
+
+func (probeKey) Type() string                        { return "tkn-act-probe" }
+func (probeKey) Marshal() []byte                     { return []byte("tkn-act-probe") }
+func (probeKey) Verify([]byte, *ssh.Signature) error { return errors.New("probe key") }
+
+// knownHostKeyAlgorithms returns the host-key algorithms to offer for
+// hostport, derived from the key types known_hosts lists for it, in
+// file order. Returns nil (library default) when the callback has no
+// entry for the host or isn't a knownhosts callback (insecure mode).
+func knownHostKeyAlgorithms(cb ssh.HostKeyCallback, hostport string, remote net.Addr) []string {
+	if remote == nil {
+		remote = &net.TCPAddr{}
+	}
+	var ke *knownhosts.KeyError
+	if err := cb(hostport, remote, probeKey{}); !errors.As(err, &ke) || len(ke.Want) == 0 {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, k := range ke.Want {
+		for _, a := range algorithmsForKeyType(k.Key.Type()) {
+			if !seen[a] {
+				seen[a] = true
+				out = append(out, a)
+			}
+		}
+	}
+	return out
+}
+
+// algorithmsForKeyType maps a public key type to the signature
+// algorithms that can verify it. RSA keys are offered with the SHA-2
+// variants first; every other type is its own algorithm.
+func algorithmsForKeyType(t string) []string {
+	switch t {
+	case ssh.KeyAlgoRSA:
+		return []string{ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSA}
+	case ssh.CertAlgoRSAv01:
+		return []string{ssh.CertAlgoRSASHA512v01, ssh.CertAlgoRSASHA256v01, ssh.CertAlgoRSAv01}
+	default:
+		return []string{t}
+	}
 }

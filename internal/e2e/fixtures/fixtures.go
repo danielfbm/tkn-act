@@ -185,6 +185,10 @@ func All() []Fixture {
 		{Dir: "params-and-results", Pipeline: "chain", WantStatus: "succeeded"},
 		{Dir: "workspaces", Pipeline: "ws-chain", WantStatus: "succeeded"},
 		{
+			Dir: "workspace-subpath", Pipeline: "workspace-subpath", WantStatus: "succeeded",
+			Description: "workspace binding subPath + Task mountPath + readOnly honoured",
+		},
+		{
 			Dir: "when-and-finally", Pipeline: "whens",
 			Params: map[string]string{"env": "dev"}, WantStatus: "succeeded",
 			Name: "when-and-finally_dev",
@@ -194,7 +198,19 @@ func All() []Fixture {
 			Params: map[string]string{"env": "prod"}, WantStatus: "succeeded",
 			Name: "when-and-finally_prod",
 		},
+		{
+			// Shell $(cmd) left literal, array-param pass-through
+			// ($(params.arr[*]) whole + spliced), $(tasks.status) /
+			// $(tasks.<t>.status) in finally params + when.
+			Dir: "substitution", Pipeline: "substitution", WantStatus: "succeeded",
+		},
 		{Dir: "failure-propagation", Pipeline: "failprop", WantStatus: "failed"},
+		{
+			Dir: "when-skip-scheduling", Pipeline: "when-skip-scheduling", WantStatus: "succeeded",
+			// `after` (runAfter a when-skipped task) must run; the
+			// result consumer of the skipped task is skipped.
+			WantResults: map[string]any{"ran": "yes"},
+		},
 		{Dir: "onerror", Pipeline: "best-effort", WantStatus: "succeeded"},
 		{Dir: "retries", Pipeline: "retries", WantStatus: "succeeded"},
 		{Dir: "timeout", Pipeline: "hangs", WantStatus: "timeout"},
@@ -202,6 +218,15 @@ func All() []Fixture {
 		{Dir: "tasks-timeout", Pipeline: "tasks-timeout", WantStatus: "timeout"},
 		{Dir: "finally-timeout", Pipeline: "finally-timeout", WantStatus: "timeout"},
 		{Dir: "step-template", Pipeline: "step-template", WantStatus: "succeeded"},
+		{
+			Dir: "step-security-context", Pipeline: "step-security-context", WantStatus: "succeeded",
+			Description: "non-root step (securityContext.runAsUser) writes a Task result; computeResources accepted",
+			WantResults: map[string]any{"uid": "65532"},
+		},
+		{
+			Dir: "step-timeout", Pipeline: "step-timeout", WantStatus: "failed",
+			Description: "Step.timeout stops the step and fails the Task",
+		},
 		{
 			Dir: "pipeline-results", Pipeline: "pipeline-results", WantStatus: "succeeded",
 			// Both backends must surface the same resolved values. The
@@ -330,8 +355,8 @@ func All() []Fixture {
 			// DockerOnly: same historical limitation as `matrix`, plus
 			// include-row semantics differed — v0.65 didn't emit
 			// TaskRuns for include-only-introduced params (rows without
-			// an overlapping cross-product param). The newer LTS pins
-			// (v1.3 / v1.12) may resolve either or both. Re-validate by
+			// an overlapping cross-product param). The current CI matrix
+			// (v1.9.9 / v1.15.5) may resolve either or both. Re-validate by
 			// temporarily dropping DockerOnly on a probe branch and
 			// reading the cluster-integration matrix output; if both
 			// legs pass, flip this row to cross-backend.

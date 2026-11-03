@@ -14,8 +14,8 @@
 
 set -eu
 
-K3D_VERSION="${K3D_VERSION:-v5.7.4}"
-KUBECTL_VERSION="${KUBECTL_VERSION:-v1.31.0}"
+K3D_VERSION="${K3D_VERSION:-v5.9.0}"
+KUBECTL_VERSION="${KUBECTL_VERSION:-v1.34.12}"
 
 missing=0
 
@@ -56,7 +56,7 @@ check_tool kubectl \
 check_tool k3d \
   "k3d version | head -n 1" \
   "https://k3d.io/#installation" \
-  "curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=${K3D_VERSION} bash"
+  "curl -fsSL -o k3d 'https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64' && chmod +x k3d && sudo mv k3d /usr/local/bin/k3d  (other OS/arch: pick the matching asset from that release)"
 
 echo
 

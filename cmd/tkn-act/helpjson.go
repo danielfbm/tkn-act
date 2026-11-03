@@ -61,6 +61,36 @@ The shape is documented under docs/agent-guide/ and is part of tkn-act's public 
 	}
 }
 
+// groupHelpJSON is what a command group (`runs`, `cache`) prints for
+// `-o json` when invoked without a subcommand: its own help-json entry
+// plus the full paths of its subcommands.
+type groupHelpJSON struct {
+	commandInfo
+	Subcommands []string `json:"subcommands"`
+}
+
+// helpOrGroupJSON is the RunE body for command groups: pretty help
+// text by default, a groupHelpJSON object with -o json.
+func helpOrGroupJSON(c *cobra.Command) error {
+	if gf.output != "json" {
+		return c.Help()
+	}
+	var infos []commandInfo
+	walkForJSON(c, &infos)
+	out := groupHelpJSON{Subcommands: []string{}}
+	for _, ci := range infos {
+		if ci.Path == fullPath(c) {
+			out.commandInfo = ci
+			continue
+		}
+		out.Subcommands = append(out.Subcommands, ci.Path)
+	}
+	sort.Strings(out.Subcommands)
+	enc := json.NewEncoder(c.OutOrStdout())
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
+}
+
 func buildHelpJSON(root *cobra.Command) helpJSON {
 	out := helpJSON{
 		Name:        root.Name(),

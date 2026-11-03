@@ -136,7 +136,9 @@ outside `vendor/`, it must also modify or add at least one `*_test.go` file.
 
 This rule is enforced in CI by `.github/scripts/tests-required.sh` (run as
 the `tests-required` job in `.github/workflows/ci.yml`). The script fails
-the PR if the diff has Go code changes without an accompanying test change.
+the PR if its own diff (`git merge-base base head`..head, so changes that
+landed on the target branch after the fork don't count) has Go code
+changes without an accompanying test change.
 
 For genuinely test-immune changes (dependency bumps, doc typos in Go
 comments, regenerated boilerplate, generated stubs), include the literal
@@ -153,7 +155,8 @@ this as a hard precondition for opening a PR.
 The `coverage` job in `.github/workflows/ci.yml` runs
 `.github/scripts/coverage-check.sh` on every PR. It runs
 `go test -cover -count=1 ./...` (default test set, no build tags) on both
-the PR's base SHA and head SHA, then compares per-package: if any package
+the PR's merge-base with the target branch (the commit it forked from)
+and head SHA, then compares per-package: if any package
 on HEAD has lower coverage than on BASE by more than 0.5 percentage points,
 the gate fails and prints a per-package table showing the drop. The 0.5pp
 tolerance absorbs `go test -cover` measurement noise (goroutine scheduling
@@ -249,8 +252,8 @@ bump.**
 | Event field names | Existing camelCase fields stay camelCase. New multi-word fields use `snake_case` (see [`docs/agent-guide/display-name.md`](docs/agent-guide/display-name.md) for the rule). Fields are never renamed or retyped. |
 | `tkn-act help-json` shape | Top-level keys, command-tree shape, flag-info shape. |
 | `tkn-act doctor -o json` shape | `ok`, `checks[]` with `name`/`ok`/`detail`/`required_for`. |
-| CLI flag names (long form) | `--output`, `--cluster`, `--param`, `-w` / `--workspace`, `--tekton-version` (on `cluster up`), `--remote-docker`, `--docker-host`, `--pause-image`, `--sidecar-start-grace`, `--sidecar-stop-grace`, `--debug`, `--timestamps`, `--task`, `--step`, `--state-dir`, etc. Short forms (`-o`, `-p`, `-q`, `-v`, `-f`) are stable. |
-| Environment variables | `TKN_ACT_TEKTON_VERSION` (overrides the built-in Tekton install version for `cluster up`), `TKN_ACT_REMOTE_DOCKER` (`auto` / `on` / `off` for the docker backend's remote-daemon detection), `TKN_ACT_SSH_INSECURE` (`1` bypasses `~/.ssh/known_hosts` for the `ssh://` docker transport), `TKN_ACT_DOCKER_SOCKET` (remote daemon socket path; default `/var/run/docker.sock`), `TKN_ACT_PAUSE_IMAGE` (per-Task pause / remote-mode stager image; default `registry.k8s.io/pause:3.9`), `TKN_ACT_STATE_DIR` (run-store directory; default `$XDG_DATA_HOME/tkn-act`), `TKN_ACT_KEEP_RUNS` (count-based retention; default `50`, `0` disables), `TKN_ACT_KEEP_DAYS` (age-based retention; default `30`, `0` disables). Existing env vars keep their names. |
+| CLI flag names (long form) | `--output`, `--cluster`, `--param`, `-w` / `--workspace`, `--tekton-version` (on `cluster up`), `--remote-docker`, `--docker-host`, `--pause-image`, `--sidecar-start-grace`, `--sidecar-stop-grace`, `--debug`, `--timestamps`, `--task`, `--step`, `--state-dir`, `--param` on `validate` (added 2026-11-03), positional `<file>` args on `run`/`validate` (aliases of `-f`, added 2026-11-03), etc. Short forms (`-o`, `-p`, `-q`, `-v`, `-f`) are stable. |
+| Environment variables | `TKN_ACT_TEKTON_VERSION` (overrides the built-in Tekton install version for `cluster up` and for the lazy install on `run --cluster`), `TKN_ACT_REMOTE_DOCKER` (`auto` / `on` / `off` for the docker backend's remote-daemon detection), `TKN_ACT_SSH_INSECURE` (`1` bypasses `~/.ssh/known_hosts` for the `ssh://` docker transport), `TKN_ACT_DOCKER_SOCKET` (remote daemon socket path; default `/var/run/docker.sock`), `TKN_ACT_PAUSE_IMAGE` (per-Task pause / remote-mode stager image; default `registry.k8s.io/pause:3.9`), `TKN_ACT_STATE_DIR` (run-store directory; default `$XDG_DATA_HOME/tkn-act`), `TKN_ACT_KEEP_RUNS` (count-based retention; default `50`, `0` disables), `TKN_ACT_KEEP_DAYS` (age-based retention; default `30`, `0` disables), `TKN_ACT_HTTP_RESOLVER_TOKEN` (bearer token for the direct `http` resolver; the legacy un-prefixed `TKNACT_HTTP_RESOLVER_TOKEN` stays supported as a fallback). Existing env vars keep their names. |
 | Subcommand names | `run`, `validate`, `list`, `doctor`, `help-json`, `agent-guide`, `cluster`, `cache`, `logs`, `runs`, `version`. |
 
 If a change must break one of these, call it out in the PR description

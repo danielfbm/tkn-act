@@ -4,6 +4,11 @@
 # in any commit message in the PR.
 #
 # Usage: tests-required.sh <base-sha> <head-sha>
+#
+# The diff is taken from merge-base(base, head) to head — i.e. only the
+# PR's own changes. Diffing against the base tip directly would count
+# changes that landed on the target branch after the PR forked (in
+# reverse), so a PR could "borrow" test changes it never made.
 
 set -euo pipefail
 
@@ -16,8 +21,12 @@ if git log --format=%B "$base..$head" | grep -qF '[skip-test-check]'; then
   exit 0
 fi
 
-# 2. Collect changed paths.
-changed=$(git diff --name-only "$base" "$head")
+# 2. Collect paths changed by the PR itself (merge-base..head).
+if ! merge_base=$(git merge-base "$base" "$head"); then
+  echo "tests-required: cannot compute merge-base of $base and $head (shallow clone? check out with fetch-depth: 0)" >&2
+  exit 2
+fi
+changed=$(git diff --name-only "$merge_base" "$head")
 
 # 3. Classify.
 code_changed=0

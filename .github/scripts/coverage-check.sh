@@ -7,6 +7,9 @@
 # Usage: coverage-check.sh <base-ref> <head-ref>
 #
 # Behavior:
+#   - BASE is the merge-base of <base-ref> and <head-ref>, i.e. the commit
+#     the PR forked from, so coverage changes that landed on the target
+#     branch after the fork are not attributed to the PR.
 #   - Runs `go test -cover -count=1 ./...` (default tags) on BASE and on
 #     HEAD, parses the per-package "coverage: NN.N% of statements" line
 #     emitted by `go test`, and compares per-package.
@@ -41,8 +44,12 @@ cd "$repo_root"
 
 # Resolve refs to short SHAs early so log messages are stable even if the
 # refs are symbolic ("origin/main", "HEAD").
-base_sha=$(git rev-parse --short "$base_ref")
 head_sha=$(git rev-parse --short "$head_ref")
+if ! merge_base=$(git merge-base "$base_ref" "$head_ref"); then
+  echo "coverage-check: cannot compute merge-base of $base_ref and $head_ref (shallow clone? check out with fetch-depth: 0)" >&2
+  exit 2
+fi
+base_sha=$(git rev-parse --short "$merge_base")
 
 # 1. Override token in any commit message between base..head.
 if git log --format=%B "$base_ref..$head_ref" 2>/dev/null | grep -qF '[skip-coverage-check]'; then
@@ -133,7 +140,7 @@ measure_one() {
   ' "$out_file" | sort > "$pkgs_file"
 }
 
-measure_one "$base_ref" "$base_out" "$base_pkgs"
+measure_one "$merge_base" "$base_out" "$base_pkgs"
 measure_one "$head_ref" "$head_out" "$head_pkgs"
 
 # Build a comparison table.
@@ -223,7 +230,7 @@ echo
 
 if [ "$drops" -gt 0 ]; then
   cat <<EOF >&2
-coverage-check: $drops package(s) dropped coverage vs $base_ref by more than ${tolerance}pp.
+coverage-check: $drops package(s) dropped coverage vs merge-base $base_sha by more than ${tolerance}pp.
 
 Add tests for the affected package(s) to bring HEAD coverage back to at
 least the BASE level. If this PR genuinely cannot or should not maintain
@@ -241,4 +248,4 @@ EOF
   exit 1
 fi
 
-echo "coverage-check: no per-package coverage drops vs $base_ref — OK"
+echo "coverage-check: no per-package coverage drops vs merge-base $base_sha — OK"

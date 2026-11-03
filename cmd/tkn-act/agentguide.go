@@ -91,11 +91,9 @@ see section names, and --section <name> to print one section.`,
 						fmt.Errorf("unknown section %q; valid: %s",
 							section, strings.Join(AgentGuideSections(), ", ")))
 				}
-				writeBody(out, body)
-				return nil
+				return writeGuide(out, section, body)
 			default:
-				writeBody(out, AgentGuideContent())
-				return nil
+				return writeGuide(out, "", AgentGuideContent())
 			}
 		},
 	}
@@ -131,6 +129,25 @@ func runListSections(out io.Writer) error {
 			return err
 		}
 	}
+	return nil
+}
+
+// agentGuideJSON is the `agent-guide -o json` shape: the guide is
+// markdown, so JSON mode wraps it rather than printing raw markdown.
+type agentGuideJSON struct {
+	Section  string `json:"section,omitempty"`
+	Markdown string `json:"markdown"`
+}
+
+// writeGuide prints body as markdown, or wrapped in agentGuideJSON
+// when -o json is set.
+func writeGuide(out io.Writer, section, body string) error {
+	if gf.output == "json" {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(agentGuideJSON{Section: section, Markdown: body})
+	}
+	writeBody(out, body)
 	return nil
 }
 

@@ -221,3 +221,39 @@ spec:
 		t.Errorf("calls = %d, want 1 (timeouts are not retried)", got)
 	}
 }
+
+// TestEnginePipelineTaskTimeout: Tekton v1 PipelineTask.timeout bounds
+// the task and takes precedence over the Task-level timeout.
+func TestEnginePipelineTaskTimeout(t *testing.T) {
+	b, _ := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  timeout: 10s
+  steps: [{name: s, image: alpine, script: 'sleep 5'}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - {name: a, taskRef: {name: t}, timeout: 50ms}
+`))
+	fb := &recBackend{hangFor: map[string]time.Duration{"a": 500 * time.Millisecond}}
+	sink := &sliceSink{}
+	e := engine.New(fb, sink, engine.Options{MaxParallel: 1})
+	res, _ := e.RunPipeline(context.Background(), engine.PipelineInput{Bundle: b, Name: "p"})
+	if res.Status != "timeout" {
+		t.Errorf("status = %s, want timeout", res.Status)
+	}
+	for _, ev := range sink.events {
+		if ev.Kind == reporter.EvtTaskEnd && ev.Task == "a" {
+			if !strings.Contains(ev.Message, "50ms") {
+				t.Errorf("task-end message = %q, want the PipelineTask timeout (50ms)", ev.Message)
+			}
+			return
+		}
+	}
+	t.Error("no task-end event for 'a'")
+}

@@ -5,6 +5,7 @@ package validator
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -137,7 +138,7 @@ func ValidateWithOptions(b *loader.Bundle, pipelineName string, providedParams m
 // ValidateWithOptions. It does NOT examine resolver-backed taskRefs
 // (those are intentionally allowed to skip the "unknown Task" rule;
 // the resolver layer fetches them at dispatch time).
-func validateCore(b *loader.Bundle, pipelineName string, _ map[string]bool) []error {
+func validateCore(b *loader.Bundle, pipelineName string, providedParams map[string]bool) []error {
 	var errs []error
 
 	pl, ok := b.Pipelines[pipelineName]
@@ -149,6 +150,11 @@ func validateCore(b *loader.Bundle, pipelineName string, _ map[string]bool) []er
 	all := append([]tektontypes.PipelineTask{}, pl.Spec.Tasks...)
 	all = append(all, pl.Spec.Finally...)
 	resolvedTasks := map[string]tektontypes.TaskSpec{} // pipelineTaskName → resolved Task
+	// resolvedOrder lists resolvedTasks' keys in pipeline order
+	// (tasks, then finally). Every per-Task rule iterates it instead of
+	// the map so `validate -o json` errors[] order is deterministic.
+	var resolvedOrder []string
+	inlineSpec := map[string]bool{} // pipelineTaskName → uses an embedded taskSpec
 	for _, pt := range all {
 		switch {
 		case pt.TaskRef != nil && pt.TaskSpec != nil:
@@ -166,11 +172,31 @@ func validateCore(b *loader.Bundle, pipelineName string, _ map[string]bool) []er
 				errs = append(errs, fmt.Errorf("pipeline task %q references unknown Task %q", pt.Name, pt.TaskRef.Name))
 				continue
 			}
+			if _, dup := resolvedTasks[pt.Name]; !dup {
+				resolvedOrder = append(resolvedOrder, pt.Name)
+			}
 			resolvedTasks[pt.Name] = t.Spec
 		case pt.TaskSpec != nil:
+			if _, dup := resolvedTasks[pt.Name]; !dup {
+				resolvedOrder = append(resolvedOrder, pt.Name)
+			}
 			resolvedTasks[pt.Name] = *pt.TaskSpec
+			inlineSpec[pt.Name] = true
 		default:
 			errs = append(errs, fmt.Errorf("pipeline task %q has no taskRef or taskSpec", pt.Name))
+		}
+	}
+
+	// 1b. Required pipeline params must be provided. providedParams nil
+	// means "caller doesn't know which params will be passed" (e.g.
+	// `validate` without --param) and skips the check; `run` always
+	// passes a non-nil set so a missing param is a validation error
+	// (exit 4) rather than an engine failure after the run started.
+	if providedParams != nil {
+		for _, decl := range pl.Spec.Params {
+			if decl.Default == nil && !providedParams[decl.Name] {
+				errs = append(errs, fmt.Errorf("pipeline %q: missing required param %q (no default; pass --param %s=<value>)", pipelineName, decl.Name, decl.Name))
+			}
 		}
 	}
 
@@ -275,6 +301,9 @@ func validateCore(b *loader.Bundle, pipelineName string, _ map[string]bool) []er
 			if op != "in" && op != "notin" {
 				errs = append(errs, fmt.Errorf("pipeline task %q: unsupported when operator %q (only 'in' and 'notin')", pt.Name, w.Operator))
 			}
+			if len(w.Values) == 0 {
+				errs = append(errs, fmt.Errorf("pipeline task %q: when expression on input %q must have non-empty values", pt.Name, w.Input))
+			}
 		}
 	}
 
@@ -286,12 +315,27 @@ func validateCore(b *loader.Bundle, pipelineName string, _ map[string]bool) []er
 	}
 
 	// 8. Task timeout must parse as a Go duration.
-	for name, spec := range resolvedTasks {
+	for _, name := range resolvedOrder {
+		spec := resolvedTasks[name]
 		if spec.Timeout == "" {
 			continue
 		}
-		if _, err := time.ParseDuration(spec.Timeout); err != nil {
+		if d, err := time.ParseDuration(spec.Timeout); err != nil {
 			errs = append(errs, fmt.Errorf("pipeline task %q: invalid timeout %q: %v", name, spec.Timeout, err))
+		} else if d < 0 {
+			errs = append(errs, fmt.Errorf("pipeline task %q: timeout must not be negative, got %q", name, spec.Timeout))
+		}
+	}
+
+	// 8a. PipelineTask.timeout (Tekton v1): parseable, non-negative.
+	for _, pt := range all {
+		if pt.Timeout == "" {
+			continue
+		}
+		if d, err := time.ParseDuration(pt.Timeout); err != nil {
+			errs = append(errs, fmt.Errorf("pipeline task %q: invalid timeout %q: %v", pt.Name, pt.Timeout, err))
+		} else if d < 0 {
+			errs = append(errs, fmt.Errorf("pipeline task %q: timeout must not be negative, got %q", pt.Name, pt.Timeout))
 		}
 	}
 
@@ -376,11 +420,97 @@ func validateCore(b *loader.Bundle, pipelineName string, _ map[string]bool) []er
 					}
 				})
 			}
+			// when / matrix fields carry the same $(tasks.X.results.Y)
+			// references; an unknown X there is just as fatal.
+			forEachWhenAndMatrixString(pt, func(field, s string) {
+				for _, ref := range extractTaskRefs(s) {
+					if !known[ref] {
+						errs = append(errs, fmt.Errorf("pipeline task %q %s references unknown task %q in $(tasks...results...) (must be in spec.tasks or spec.finally)", pt.Name, field, ref))
+					}
+				}
+			})
+		}
+
+		// 8e. Main (non-finally) tasks must not consume finally-task
+		// results: finally tasks run after the whole main DAG, so the
+		// value can never exist when the consumer runs (Tekton rejects
+		// this at admission).
+		finallyNames := map[string]bool{}
+		for _, pt := range pl.Spec.Finally {
+			finallyNames[pt.Name] = true
+		}
+		for _, pt := range pl.Spec.Tasks {
+			forEachPipelineTaskString(pt, func(field, s string) {
+				for _, ref := range extractTaskRefs(s) {
+					if finallyNames[ref] {
+						errs = append(errs, fmt.Errorf("pipeline task %q %s references result of finally task %q; only finally tasks may consume finally-task results", pt.Name, field, ref))
+					}
+				}
+			})
 		}
 	}
 
+	// 8f. Tekton v1.14+ variable-prefix rule (validateVarSubstitutionExpressions):
+	// in PipelineTask params / when / matrix values, every $(...) must
+	// start with a known prefix. Anything else is almost always a shell
+	// command substitution that belongs in a step script (or a ${VAR}).
+	// Step scripts are NOT checked — `$(date)` is legal there.
+	for _, pt := range all {
+		forEachPipelineTaskString(pt, func(field, s string) {
+			for _, expr := range extractVarExprs(s) {
+				if !hasAllowedVarPrefix(expr) {
+					errs = append(errs, fmt.Errorf("pipeline task %q %s: invalid variable reference \"$(%s)\": unknown prefix (allowed: %s); if you meant a shell variable, use ${VAR}", pt.Name, field, expr, strings.Join(allowedVarPrefixes, ", ")))
+				}
+			}
+		})
+	}
+
+	// 8g. $(params.X) references must name a declared param. Pipeline-
+	// task-level fields resolve against Pipeline.spec.params; a Task's
+	// steps / sidecars / stepTemplate resolve against that Task's
+	// spec.params (an embedded taskSpec additionally sees the
+	// pipeline's params, matching Tekton's param propagation).
+	pipelineParams := map[string]bool{}
+	for _, p := range pl.Spec.Params {
+		pipelineParams[p.Name] = true
+	}
+	for _, pt := range all {
+		forEachPipelineTaskString(pt, func(field, s string) {
+			for _, name := range extractParamRefs(s) {
+				if !pipelineParams[name] {
+					errs = append(errs, fmt.Errorf("pipeline task %q %s references undeclared pipeline param %q", pt.Name, field, name))
+				}
+			}
+		})
+	}
+	for _, name := range resolvedOrder {
+		spec := resolvedTasks[name]
+		declared := map[string]bool{}
+		for _, p := range spec.Params {
+			declared[p.Name] = true
+		}
+		if inlineSpec[name] {
+			for p := range pipelineParams {
+				declared[p] = true
+			}
+		}
+		forEachTaskSpecString(spec, func(field, s string) {
+			for _, ref := range extractParamRefs(s) {
+				if !declared[ref] {
+					errs = append(errs, fmt.Errorf("pipeline task %q %s references undeclared param %q", name, field, ref))
+				}
+			}
+		})
+	}
+
+	// 8h. Step names must be unique within a Task.
+	for _, name := range resolvedOrder {
+		errs = append(errs, duplicateStepNameErrors(fmt.Sprintf("pipeline task %q", name), resolvedTasks[name])...)
+	}
+
 	// 9. Step.OnError values must be empty, "continue", or "stopAndFail".
-	for taskName, spec := range resolvedTasks {
+	for _, taskName := range resolvedOrder {
+		spec := resolvedTasks[taskName]
 		for _, st := range spec.Steps {
 			switch st.OnError {
 			case "", "continue", "stopAndFail":
@@ -391,7 +521,8 @@ func validateCore(b *loader.Bundle, pipelineName string, _ map[string]bool) []er
 	}
 
 	// 10. Volume kinds: must be exactly one of emptyDir/hostPath/configMap/secret.
-	for taskName, spec := range resolvedTasks {
+	for _, taskName := range resolvedOrder {
+		spec := resolvedTasks[taskName]
 		volNames := map[string]bool{}
 		for _, v := range spec.Volumes {
 			volNames[v.Name] = true
@@ -436,7 +567,8 @@ func validateCore(b *loader.Bundle, pipelineName string, _ map[string]bool) []er
 	// 12. Sidecars: name uniqueness within the Task (and against Step
 	// names), image required, and every volumeMount must reference a
 	// declared Task-level volume.
-	for ptName, spec := range resolvedTasks {
+	for _, ptName := range resolvedOrder {
+		spec := resolvedTasks[ptName]
 		if len(spec.Sidecars) == 0 {
 			continue
 		}
@@ -541,7 +673,8 @@ func validateCore(b *loader.Bundle, pipelineName string, _ map[string]bool) []er
 	// Task.spec.stepTemplate.image counts. Only inline Steps
 	// participate; ref-Steps inherit their image from the StepAction
 	// body (rules 12-13 already caught the bad cases).
-	for taskName, spec := range resolvedTasks {
+	for _, taskName := range resolvedOrder {
+		spec := resolvedTasks[taskName]
 		merged := mergeStepTemplateForImage(spec)
 		for _, st := range merged.Steps {
 			if st.Ref != nil {
@@ -556,7 +689,13 @@ func validateCore(b *loader.Bundle, pipelineName string, _ map[string]bool) []er
 	// 18. StepAction params with array/object defaults are rejected at
 	// validate time (the inner pass only honors string defaults; this
 	// prevents silent drops).
-	for saName, sa := range b.StepActions {
+	saNames := make([]string, 0, len(b.StepActions))
+	for n := range b.StepActions {
+		saNames = append(saNames, n)
+	}
+	sort.Strings(saNames)
+	for _, saName := range saNames {
+		sa := b.StepActions[saName]
 		for _, decl := range sa.Spec.Params {
 			if decl.Default == nil {
 				continue
@@ -720,10 +859,13 @@ func ValidateTaskSpec(taskName string, spec tektontypes.TaskSpec) []error {
 		errs = append(errs, fmt.Errorf("task %q: spec.steps: must have at least one step", taskName))
 	}
 	if spec.Timeout != "" {
-		if _, err := time.ParseDuration(spec.Timeout); err != nil {
+		if d, err := time.ParseDuration(spec.Timeout); err != nil {
 			errs = append(errs, fmt.Errorf("task %q: invalid timeout %q: %v", taskName, spec.Timeout, err))
+		} else if d < 0 {
+			errs = append(errs, fmt.Errorf("task %q: timeout must not be negative, got %q", taskName, spec.Timeout))
 		}
 	}
+	errs = append(errs, duplicateStepNameErrors(fmt.Sprintf("task %q", taskName), spec)...)
 	for _, st := range spec.Steps {
 		switch st.OnError {
 		case "", "continue", "stopAndFail":

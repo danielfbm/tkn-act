@@ -859,6 +859,50 @@ func TestBuildPipelineRunInlinesStepTemplate(t *testing.T) {
 	}
 }
 
+// TestBuildPipelineRunUsesComputeResources: the inlined v1 taskSpec
+// must carry Step.computeResources (not the v1beta1 `resources` key,
+// which Tekton v1 ignores) plus securityContext / timeout verbatim.
+func TestBuildPipelineRunUsesComputeResources(t *testing.T) {
+	be, _, _, _, _ := fakeBackend(t)
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{Name: "a", TaskRef: &tektontypes.TaskRef{Name: "t"}}},
+	}}
+	pl.Metadata.Name = "p"
+	uid := int64(65532)
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{
+		Steps: []tektontypes.Step{{
+			Name: "s", Image: "alpine:3", Script: "true", Timeout: "10s",
+			Resources:       &tektontypes.StepResources{Limits: tektontypes.ResourceList{Memory: "64Mi"}},
+			SecurityContext: &corev1.SecurityContext{RunAsUser: &uid},
+		}},
+	}}
+	tk.Metadata.Name = "t"
+	prObj, err := be.BuildPipelineRunObject(backend.PipelineRunInvocation{
+		RunID: "12345678", PipelineRunName: "p-12345678",
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"t": tk},
+	}, "tkn-act-12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	un := prObj.(*unstructured.Unstructured)
+	tasks, _, _ := unstructured.NestedSlice(un.Object, "spec", "pipelineSpec", "tasks")
+	steps, _, _ := unstructured.NestedSlice(tasks[0].(map[string]any), "taskSpec", "steps")
+	step := steps[0].(map[string]any)
+	if _, ok := step["resources"]; ok {
+		t.Errorf("step still carries v1beta1 `resources`: %v", step)
+	}
+	mem, _, _ := unstructured.NestedString(step, "computeResources", "limits", "memory")
+	if mem != "64Mi" {
+		t.Errorf("computeResources.limits.memory = %q (step %v)", mem, step)
+	}
+	if step["timeout"] != "10s" {
+		t.Errorf("timeout = %v", step["timeout"])
+	}
+	if _, ok, _ := unstructured.NestedFieldNoCopy(step, "securityContext", "runAsUser"); !ok {
+		t.Errorf("securityContext dropped: %v", step)
+	}
+}
+
 // TestRunPipelineSurfacesResults: when the Tekton controller writes
 // `status.results` on the PipelineRun, the cluster backend must
 // forward those into PipelineRunResult.Results so the engine can
@@ -908,7 +952,7 @@ func TestRunPipelineSurfacesResults(t *testing.T) {
 // hand-written conversion can't silently drop these fields.
 //
 // Step-level displayName / description are intentionally NOT carried
-// onto the inlined PipelineRun: through v1.12 (current LTS pin) Step
+// onto the inlined PipelineRun: through v1.15 (current LTS pin) Step
 // has at most displayName (no description), and historically v0.65
 // had neither. The admission webhook strict-decodes and rejects
 // unknown fields. We consume both locally for the docker backend and
@@ -1053,5 +1097,38 @@ func TestBuildPipelineRunInlinesMatrix(t *testing.T) {
 	params, ok := matrix["params"].([]any)
 	if !ok || len(params) != 1 {
 		t.Fatalf("matrix.params len = %d (want 1), value = %v", len(params), matrix["params"])
+	}
+}
+
+// TestBuildPipelineRunKeepsPipelineTaskTimeout: Tekton v1's
+// PipelineTask.timeout must survive into the submitted PipelineRun and
+// win over a Task.spec.timeout being hoisted onto the same task.
+func TestBuildPipelineRunKeepsPipelineTaskTimeout(t *testing.T) {
+	be, _, _, _, _ := fakeBackend(t)
+
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{Name: "a", TaskRef: &tektontypes.TaskRef{Name: "t"}, Timeout: "2s"}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{
+		Timeout: "1m",
+		Steps:   []tektontypes.Step{{Name: "s", Image: "alpine:3", Script: "sleep 30"}},
+	}}
+	tk.Metadata.Name = "t"
+
+	prObj, err := be.BuildPipelineRunObject(backend.PipelineRunInvocation{
+		RunID: "12345678", PipelineRunName: "p-12345678",
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"t": tk},
+	}, "tkn-act-12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	un := prObj.(*unstructured.Unstructured)
+	tasks, _, _ := unstructured.NestedSlice(un.Object, "spec", "pipelineSpec", "tasks")
+	if len(tasks) != 1 {
+		t.Fatalf("want 1 task, got %d", len(tasks))
+	}
+	if got := tasks[0].(map[string]any)["timeout"]; got != "2s" {
+		t.Errorf("pipelineSpec.tasks[0].timeout = %v, want \"2s\" (PipelineTask.timeout wins)", got)
 	}
 }

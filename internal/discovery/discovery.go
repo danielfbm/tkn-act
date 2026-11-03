@@ -20,6 +20,15 @@ var ErrNoneFound = errors.New("no tekton YAML found")
 // Find returns YAML files in dir that look like Tekton resources, in
 // deterministic order. Returns an error if nothing is found.
 func Find(dir string) ([]string, error) {
+	// A missing / non-directory dir is an input error, not "nothing
+	// found" (which `list` reports as a valid empty result).
+	st, err := os.Stat(dir)
+	if err != nil {
+		return nil, fmt.Errorf("directory %s: %w", dir, err)
+	}
+	if !st.IsDir() {
+		return nil, fmt.Errorf("%s is not a directory", dir)
+	}
 	var out []string
 
 	for _, name := range []string{"pipelinerun.yaml", "pipeline.yaml"} {

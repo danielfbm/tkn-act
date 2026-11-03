@@ -20,6 +20,10 @@ ensures the table doesn't lie:
    column names a directory MUST have that directory exist on disk.
 4. Every directory under `testdata/limitations/` MUST be referenced by
    at least one `gap` / `in-progress` row (no orphan limitations).
+5. A `shipped` row's `backends` cell MUST agree with its fixture's
+   `DockerOnly` / `ClusterOnly` flag in `internal/e2e/fixtures.All()`:
+   `both` requires neither flag, `docker` forbids `ClusterOnly`,
+   `cluster` forbids `DockerOnly`.
 
 A failing `parity-check` blocks the PR the same way `tests-required` does.
 
@@ -102,18 +106,20 @@ The columns:
 |---|---|---|---|---|---|---|
 | `params` (string / array / object) | `Pipeline.spec.params`, `Task.spec.params` | shipped | both | params-and-results | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
 | `runAfter` DAG with topological ordering | `PipelineTask.runAfter` | shipped | both | params-and-results | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
-| `when` expressions | `PipelineTask.when` | shipped | both | when-and-finally | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
-| `finally` tasks | `Pipeline.spec.finally` | shipped | both | when-and-finally | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
+| `when` expressions | `PipelineTask.when` | shipped | both | when-and-finally | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md; skip semantics (when-skip doesn't block `runAfter` dependents, result consumers skipped "Results were missing", implicit edges from `when` refs) per docs/superpowers/specs/2026-11-03-audit-and-tekton-v1.15-design.md, also covered by `when-skip-scheduling` |
+| `finally` tasks | `Pipeline.spec.finally` | shipped | both | when-and-finally | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md; finally tasks run in parallel (bounded by `--parallel`) and are skipped when a consumed result is missing, per docs/superpowers/specs/2026-11-03-audit-and-tekton-v1.15-design.md |
 | Per-Task `results` | `Task.spec.results` | shipped | both | params-and-results | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
 | Per-Step `results` | `Step.results` | shipped | both | step-results | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
 | Pipeline-level `results` (surfaced on run-end) | `Pipeline.spec.results` | shipped | both | pipeline-results | none | docs/superpowers/plans/2026-05-03-pipeline-results.md (Track 1 #6) |
-| Param substitution: `$(params.X)`, `$(tasks.X.results.Y)`, `$(context.*)`, `$(workspaces.X.path)`, `$(step.results.X.path)` | n/a | shipped | both | params-and-results | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
+| Param substitution: `$(params.X)`, `$(params.arr[N])`, `$(params.obj.key)`, `$(tasks.X.results.Y)` (incl. `[N]` / object `.key`), `$(context.*)` (`pipelineRun.{name,namespace,uid}`, `pipeline.name`, `taskRun.{name,namespace,uid}`, `task.name`, `task.retry-count`, `pipelineTask.retries`), `$(workspaces.X.path)`, `$(workspaces.X.bound)`, `$(step.results.X.path)` | n/a | shipped | both | params-and-results | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md; docs/superpowers/plans/2026-11-03-audit-and-tekton-v1.15.md (WS-C1); reference in docs/agent-guide/variables.md |
+| Substitution edge cases: non-Tekton `$(cmd)` (shell) left literal, whole-array pass-through `$(params.arr[*])` (whole value or spliced item), `[*]` in `when.values`, `$(tasks.status)` / `$(tasks.<t>.status)` in finally | n/a | shipped | both | substitution | none | docs/superpowers/plans/2026-11-03-audit-and-tekton-v1.15.md (WS-C1) |
 
 ### Workspaces & volumes
 
 | Feature | Spec field | Status | Backends | e2e fixture | Limitations fixture | Plan / Spec / PR |
 |---|---|---|---|---|---|---|
 | Workspaces (PVC on cluster, bind-mount on docker) | `Pipeline.spec.workspaces`, `PipelineTask.workspaces` | shipped | both | workspaces | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
+| Workspace `subPath` / Task workspace `mountPath` / `readOnly` | `PipelineTask.workspaces[].subPath`, `Task.spec.workspaces[].{mountPath,readOnly}` | shipped | both | workspace-subpath | none | docs/superpowers/plans/2026-11-03-audit-and-tekton-v1.15.md (WS-D D9). Docker creates a missing subPath dir (0777) like kubelet; `$(workspaces.X.path)` follows `mountPath`. |
 | `volumes.emptyDir` | `Task.spec.volumes` | shipped | both | volumes | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
 | `volumes.hostPath` | `Task.spec.volumes` | shipped | both | volumes | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
 | `volumes.configMap` | `Task.spec.volumes` | shipped | both | volumes | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
@@ -126,14 +132,14 @@ The columns:
 |---|---|---|---|---|---|---|
 | `Step.onError: continue` | `Step.onError` | shipped | both | onerror | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
 | `PipelineTask.retries` | `PipelineTask.retries` | shipped | both | retries | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
-| `Task.spec.timeout` (per-task wall clock) | `TaskSpec.timeout` | shipped | both | timeout | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
+| `Task.spec.timeout` / `PipelineTask.timeout` (per-task wall clock) | `TaskSpec.timeout`, `PipelineTask.timeout` | shipped | both | timeout | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md; `PipelineTask.timeout` (Tekton v1's canonical field) was silently dropped before the 2026-11-03 audit — now parsed, validated, and wins over the Task-level value on both backends. |
 
 ### Pipeline policy
 
 | Feature | Spec field | Status | Backends | e2e fixture | Limitations fixture | Plan / Spec / PR |
 |---|---|---|---|---|---|---|
 | `Pipeline.spec.timeouts.{pipeline,tasks,finally}` | `PipelineSpec.timeouts` | shipped | both | pipeline-timeout | none | docs/superpowers/plans/2026-05-03-pipelinerun-timeouts.md (Track 1 #2); also covered by `tasks-timeout`, `finally-timeout` |
-| `PipelineTask.matrix` (parameter-matrix fan-out) | `PipelineTask.matrix` | shipped | both | matrix | none | docs/superpowers/plans/2026-05-04-pipeline-matrix.md (Track 1 #3); also covered by `matrix-include`. Both e2e fixtures are currently flagged DockerOnly: historically Tekton v0.65 did not surface matrix-fanned task results as Pipeline-level results via `$(tasks.X.results.Y[*])` even with `enable-api-fields=alpha`. Cluster-mode reconstruction of per-TaskRun MatrixInfo is exercised by `internal/backend/cluster/run_test.go::TestMatchMatrixRowFromTaskRun*`. Re-validate via the 2026-05-13 Tekton bump (default → v1.12.0; CI matrix v1.3.0 + v1.12.0) — see [docs/superpowers/specs/2026-05-13-tekton-bump-and-matrix-design.md](superpowers/specs/2026-05-13-tekton-bump-and-matrix-design.md). |
+| `PipelineTask.matrix` (parameter-matrix fan-out) | `PipelineTask.matrix` | shipped | docker | matrix | none | docs/superpowers/plans/2026-05-04-pipeline-matrix.md (Track 1 #3); also covered by `matrix-include`. **Docker-verified only:** both e2e fixtures are flagged DockerOnly in `internal/e2e/fixtures.All()`, so cluster-integration does not run them. Historically Tekton v0.65 did not surface matrix-fanned task results as Pipeline-level results via `$(tasks.X.results.Y[*])` even with `enable-api-fields=alpha`. `--cluster` still runs matrix pipelines (expansion is done by the Tekton controller) and per-TaskRun MatrixInfo reconstruction is unit-tested by `internal/backend/cluster/run_test.go::TestMatchMatrixRowFromTaskRun*`, but the end-to-end cluster leg is **pending re-validation against the current CI matrix (Tekton v1.9.9 + v1.15.5)**: flip this cell to `both` once a probe PR that drops DockerOnly passes cluster-integration. See [docs/superpowers/specs/2026-11-03-audit-and-tekton-v1.15-design.md](superpowers/specs/2026-11-03-audit-and-tekton-v1.15-design.md). |
 | `PipelineTask.matrix.include` overlap with cross-product param | `PipelineTask.matrix.include` (overlap fold) | gap | both | none | matrix-include-overlap | Real Tekton folds the include row into the matching cross-product row; tkn-act validate-rejects the overlap to prevent docker-vs-cluster divergence. Tracked as Track 1 #3 follow-up; see docs/superpowers/specs/2026-05-04-pipeline-matrix-design.md § 7. |
 
 ### Task structure
@@ -144,6 +150,10 @@ The columns:
 | Step state isolation (cwd / env / `/tmp`) | n/a — fundamental | by-design | both | none | step-state | This is correct Tekton behavior; the limitations example documents the foot-gun. |
 | `Task.stepTemplate` | `TaskSpec.stepTemplate` | shipped | both | step-template | none | docs/superpowers/plans/2026-05-03-step-template.md (Track 1 #4) |
 | `Task.sidecars` (long-lived helper containers) | `Task.spec.sidecars` | shipped | both | sidecars | none | docs/superpowers/plans/2026-05-04-task-sidecars.md (Track 1 #1) |
+| `Step.computeResources` (v1; v1beta1 `resources` accepted as alias) | `Step.computeResources`, `StepTemplate.computeResources`, `Sidecar.computeResources` | shipped | both | step-security-context | none | docs/superpowers/plans/2026-11-03-audit-and-tekton-v1.15.md (WS-D D7). Docker maps `limits.cpu` / `limits.memory`; other resource names are forwarded to cluster only. |
+| `Step.securityContext` | `Step.securityContext`, `StepTemplate.securityContext`, `Sidecar.securityContext` | shipped | both | step-security-context | none | WS-D D7. Docker honours runAsUser / runAsGroup / runAsNonRoot / privileged / readOnlyRootFilesystem / allowPrivilegeEscalation / capabilities / seccompProfile (RuntimeDefault, Unconfined); any other sub-field fails the Task on docker (never silently dropped). |
+| `Step.timeout` | `Step.timeout` | shipped | both | step-timeout | none | WS-D D7. Docker stops the step container and records exit 1 (`onError: continue` still applies). |
+| `Step.envFrom` / `env[].valueFrom` | `Step.envFrom`, `Step.env[].valueFrom` | gap | cluster | none | none | WS-D D7. Passed through verbatim on `--cluster`; the docker backend fails the Task with "not supported on the docker backend" instead of dropping it. |
 | `displayName` / `description` on Task / Pipeline / Step | various | shipped | both | display-name-description | none | docs/superpowers/plans/2026-05-04-display-name-description.md (Track 1 #7) |
 
 ### Resolution & catalogs
@@ -152,7 +162,7 @@ The columns:
 |---|---|---|---|---|---|---|
 | `taskRef.name` (in-bundle reference) | `PipelineTask.taskRef` | shipped | both | hello | none | docs/superpowers/specs/2026-05-01-tkn-act-design.md |
 | `StepActions` (`tekton.dev/v1beta1` referenceable steps) | `Step.ref` | shipped | both | step-actions | none | docs/superpowers/plans/2026-05-04-step-actions.md (Track 1 #8) |
-| Resolvers — git / hub / cluster / bundles / remote | `taskRef.resolver` | shipped | both | resolver-git | none | docs/superpowers/plans/2026-05-04-resolvers.md (Track 1 #9) — Phases 1-6 shipped: types + lazy-dispatch (Phase 1), `git` direct resolver via go-git/v5 (Phase 2; canonical e2e fixture), `hub` + `http` direct resolvers (Phase 3; covered by `resolver-hub` / `resolver-http` siblings), `bundles` via go-containerregistry + off-by-default `cluster` direct resolver (Phase 4; covered by `resolver-bundles`), Mode B remote resolver via `resolution.tekton.dev/v1beta1` `ResolutionRequest` CRD with v1alpha1 fallback (Phase 5; covered by `resolver-remote`), `--offline` end-to-end + `tkn-act cache list/prune/clear` subcommands + on-disk cross-run caching for every direct resolver + pretty-output `(cached)` marker (Phase 6) |
+| Resolvers — git / hub / cluster / bundles / remote | `taskRef.resolver` | shipped | both | resolver-git | none | docs/superpowers/plans/2026-05-04-resolvers.md (Track 1 #9) — Phases 1-6 shipped: types + lazy-dispatch (Phase 1), `git` direct resolver via go-git/v5 (Phase 2; canonical e2e fixture), `hub` + `http` direct resolvers (Phase 3; covered by `resolver-hub` / `resolver-http` siblings; **gap:** the direct `hub` resolver implements the Tekton Hub API only — `type: artifact`, upstream v1.15's default, fails with a clear error and an unset `type` is treated as `tekton`, see `docs/agent-guide/resolvers.md`), `bundles` via go-containerregistry + off-by-default `cluster` direct resolver (Phase 4; covered by `resolver-bundles`), Mode B remote resolver via `resolution.tekton.dev/v1beta1` `ResolutionRequest` CRD with v1alpha1 fallback (Phase 5; covered by `resolver-remote`), `--offline` end-to-end + `tkn-act cache list/prune/clear` subcommands + on-disk cross-run caching for every direct resolver + pretty-output `(cached)` marker (Phase 6) |
 | Custom Tasks (`taskRef.apiVersion != tekton.dev/v1`) | `PipelineTask.taskRef.apiVersion` | out-of-scope | n/a | none | none | v1 spec non-goal. |
 | Tekton Chains (signing) | n/a | out-of-scope | n/a | none | none | v1 spec non-goal. |
 | Tekton Results (long-term storage) | n/a | out-of-scope | n/a | none | none | v1 spec non-goal. |
@@ -174,7 +184,7 @@ The columns:
 | `tkn-act doctor -o json` | shipped | Stable shape. |
 | `tkn-act help-json` | shipped | Stable shape. |
 | `tkn-act agent-guide` | shipped | Embeds the `cmd/tkn-act/agentguide_data/` tree generated from `docs/agent-guide/`. Supports `--list` and `--section <name>`. |
-| `tkn-act run -o json` event stream | shipped | Stable kinds: `run-start`, `run-end`, `task-start`, `task-end`, `task-skip`, `task-retry`, `step-start`, `step-end`, `step-log`, `error`, `resolver-start`, `resolver-end`. The two `resolver-*` kinds are additive (Track 1 #9 Phase 1); agents that don't recognize them ignore them. |
+| `tkn-act run -o json` event stream | shipped | Stable kinds: `run-start`, `run-end`, `task-start`, `task-end`, `task-skip`, `task-retry`, `step-start`, `step-end`, `step-log`, `error`, `resolver-start`, `resolver-end`, `sidecar-start`, `sidecar-end`, `sidecar-log`, `debug`. The `resolver-*`, `sidecar-*` and `debug` kinds are additive; agents that don't recognize them ignore them. `step-start` / `step-end` are reserved but not currently emitted (gap; see docs/superpowers/specs/2026-11-03-audit-and-tekton-v1.15-design.md non-goals). |
 | Stable exit codes (0,1,2,3,4,5,6,130) | shipped | See `internal/exitcode/exitcode.go`. |
 | `task-retry` events from cluster mode | shipped | Post-hoc from TaskRun.status.retriesStatus; PR #6. |
 

@@ -53,6 +53,8 @@ TKN_ACT_SSH_INSECURE=1 tkn-act run --docker-host=ssh://… …
 
 The remote daemon socket defaults to `/var/run/docker.sock`. Override per-host via `$TKN_ACT_DOCKER_SOCKET` when the daemon listens elsewhere.
 
+The SSH handshake is bounded: it gives up after 10s (or the run context's deadline, whichever is sooner) so a host that accepts TCP but never speaks SSH fails fast instead of hanging. The initial daemon ping is bounded at 30s. The client requests the host-key algorithms that `known_hosts` actually lists for the host, so a server that also offers a different key type no longer fails verification with a misleading mismatch.
+
 ### Remote-mode volume staging
 
 When the daemon is remote, bind-mounting a host path doesn't work — the daemon's filesystem can't see it. `tkn-act` detects remote daemons and switches workspaces, script storage, and per-Task result dirs from bind mounts to a **single docker volume per run**, named `tkn-act-<runID>`, with each Task and Step seeing only the subpath it needs.
@@ -99,6 +101,25 @@ tkn-act run --pause-image registry.internal/pause:3.9 …
 The override applies to both the pause container (sidecar netns owner) and the stager container (remote-mode volume staging).
 
 Daemon-side registry mirrors (`/etc/docker/daemon.json` `registry-mirrors`) work normally for the Steps' own images — `tkn-act` doesn't pull Step images itself, the daemon does, so whatever the daemon resolves is what runs.
+
+### Step / workspace fidelity
+
+These Tekton fields behave on docker as they do on `--cluster`:
+
+- **Workspaces** — a Task workspace's `mountPath` (default `/workspace/<name>`) is where it is mounted and what `$(workspaces.<name>.path)` resolves to; Task-level `readOnly: true` mounts it read-only; a PipelineTask binding's `subPath` mounts that subdirectory (created if missing). A `subPath` that escapes the workspace (`../x`, absolute) fails the Task.
+- **Results / workspace dirs are world-writable (`0777`)**, like Tekton's emptyDir, so images running as a non-root `USER` (e.g. distroless `65532`) can write `$(results.<name>.path)`.
+- **`computeResources`** (Tekton v1 name; the v1beta1 `resources` key is accepted as an alias) — `limits.cpu` / `limits.memory` become container limits. Other resource names are forwarded on `--cluster` only.
+- **`securityContext`** on Steps, Sidecars and `stepTemplate` — `runAsUser` / `runAsGroup` (container user), `runAsNonRoot` (checked against `runAsUser` or the image's `USER`), `privileged`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false` (`no-new-privileges`), `capabilities.add/drop`, `seccompProfile` `RuntimeDefault` / `Unconfined`. Any other sub-field (`seLinuxOptions`, `windowsOptions`, localhost seccomp, …) fails the Task with "not supported on the docker backend" — it is never silently dropped.
+- **`Step.timeout`** — the step container is stopped when the budget runs out; the step counts as failed (exit 1, a `stderr` step-log line says why), so `onError: continue` still applies.
+- **`envFrom` and `env[].valueFrom`** are not supported on docker (no ConfigMap/Secret API to read from); the Task fails with a clear message. Use `--cluster`, or inline the values with `env[].value`.
+
+### Logs
+
+Lines longer than 1 MiB are truncated with a `[tkn-act: line truncated, N bytes dropped]` marker and streaming continues. A Step's (and sidecar's) final log lines are flushed before its task-end / sidecar-end event (bounded wait of 5s after the container exits).
+
+### Private registries
+
+Image pulls send the credentials `docker login` stored for the image's registry: `$DOCKER_CONFIG/config.json` (default `~/.docker/config.json`) `auths` entries and credential helpers / `credsStore` are honoured. Images pulled by the daemon on its own (already cached, `imagePullPolicy: Never`) need no credentials.
 
 ### Common gotchas
 

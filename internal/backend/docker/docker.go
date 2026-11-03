@@ -4,7 +4,6 @@
 package docker
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -23,7 +22,6 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/system"
 	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
 )
 
 type Options struct {
@@ -110,13 +108,20 @@ func (b *Backend) dbg() debug.Emitter {
 	return debug.Nop()
 }
 
+// daemonPingTimeout bounds the reachability probe in New so an
+// unresponsive daemon (or SSH host) fails fast instead of hanging.
+const daemonPingTimeout = 30 * time.Second
+
 func New(opts Options) (*Backend, error) {
 	dockerHost := resolveDockerHost(opts.Host)
 	cli, err := newDockerClient(dockerHost)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := cli.Ping(context.Background()); err != nil {
+	pingCtx, cancelPing := context.WithTimeout(context.Background(), daemonPingTimeout)
+	_, err = cli.Ping(pingCtx)
+	cancelPing()
+	if err != nil {
 		return nil, fmt.Errorf("docker daemon not reachable: %w", err)
 	}
 	if opts.SidecarStartGrace == 0 {
@@ -325,6 +330,16 @@ func (b *Backend) Cleanup(_ context.Context) error {
 func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (backend.TaskResult, error) {
 	res := backend.TaskResult{Started: time.Now(), Status: backend.TaskSucceeded, Results: map[string]string{}}
 
+	// Refuse fields the docker backend can't honour (envFrom, valueFrom,
+	// unsupported securityContext sub-fields) before starting anything,
+	// rather than silently running a differently-configured container.
+	if err := checkDockerSupport(inv.Task); err != nil {
+		res.Status = backend.TaskInfraFailed
+		res.Err = err
+		res.Ended = time.Now()
+		return res, nil
+	}
+
 	// Per-Task sidecar lifecycle. When a Task declares one or more
 	// sidecars, tkn-act starts a tiny pause container that owns the
 	// netns, then starts every sidecar joining that netns, then
@@ -422,7 +437,7 @@ func (b *Backend) RunTask(ctx context.Context, inv backend.TaskInvocation) (back
 		// Ensure this step's per-step results dir exists on the host before
 		// the container starts; later steps see it read-only.
 		stepResultsHost := filepath.Join(inv.ResultsHost, "steps", step.Name)
-		if err := os.MkdirAll(stepResultsHost, 0o755); err != nil {
+		if err := mkdirWorldWritable(stepResultsHost); err != nil {
 			res.Status = backend.TaskInfraFailed
 			res.Err = fmt.Errorf("step %q: mkdir step results: %w", step.Name, err)
 			res.Ended = time.Now()
@@ -568,7 +583,8 @@ func substituteStepRefs(st tektontypes.Step, stepResults map[string]map[string]s
 			if eErr != nil {
 				return st, eErr
 			}
-			out.Env[i] = tektontypes.EnvVar{Name: e.Name, Value: v}
+			e.Value = v
+			out.Env[i] = e
 		}
 	}
 	return out, nil
@@ -594,7 +610,11 @@ func (b *Backend) ensureImage(ctx context.Context, img, policy string) error {
 	b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
 		return "image pull start", map[string]any{"image": img, "policy": policy}
 	})
-	rc, err := b.cli.ImagePull(ctx, img, image.PullOptions{})
+	auth, err := registryAuthFor(img)
+	if err != nil {
+		return err
+	}
+	rc, err := b.cli.ImagePull(ctx, img, image.PullOptions{RegistryAuth: auth})
 	if err != nil {
 		b.dbg().Emit(debug.Backend, func() (string, map[string]any) {
 			return "image pull failed", map[string]any{"image": img, "error": err.Error()}
@@ -652,31 +672,12 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 		}
 	}
 
-	// Workspace mounts. Remote mode subpaths into workspaces/<wsName>
-	// keyed by the Pipeline workspace name so writes from Task A are
-	// visible to Task B (the PVC-equivalent semantics). The host-path
-	// reverse lookup is what joins inv.Workspaces[tName].HostPath
-	// (Task-local key) to the Pipeline name buckets in the volume.
-	for tName, wm := range inv.Workspaces {
-		if b.remote {
-			pipelineName, ok := b.pipelineWorkspaceName(wm.HostPath)
-			if !ok {
-				return 0, fmt.Errorf("step %q workspace %q: cannot map host path %q to a Pipeline workspace name", step.Name, tName, wm.HostPath)
-			}
-			extraMounts = append(extraMounts, b.remoteVolumeMount(
-				"/workspace/"+tName,
-				filepath.Join(stageWorkspaces, pipelineName),
-				wm.ReadOnly,
-			))
-		} else {
-			extraMounts = append(extraMounts, mount.Mount{
-				Type:     mount.TypeBind,
-				Source:   wm.HostPath,
-				Target:   "/workspace/" + tName,
-				ReadOnly: wm.ReadOnly,
-			})
-		}
+	// Workspace mounts (mountPath / readOnly / subPath honoured).
+	wsMounts, err := b.workspaceMounts(ctx, inv, fmt.Sprintf("step %q", step.Name))
+	if err != nil {
+		return 0, err
 	}
+	extraMounts = append(extraMounts, wsMounts...)
 
 	// Task-level results mount.
 	if b.remote {
@@ -782,6 +783,26 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 		Env:        env,
 		WorkingDir: step.WorkingDir,
 	}
+	if err := applySecurityContext(step.SecurityContext, cfg, hostConf); err != nil {
+		return 0, fmt.Errorf("step %q: %w", step.Name, err)
+	}
+	if needsImageUserCheck(step.SecurityContext) {
+		if err := b.checkImageNonRoot(ctx, step.Image); err != nil {
+			return 0, fmt.Errorf("step %q: %w", step.Name, err)
+		}
+	}
+	var stepTimeout <-chan time.Time
+	if step.Timeout != "" {
+		d, err := parseStepTimeout(step.Timeout)
+		if err != nil {
+			return 0, fmt.Errorf("step %q: %w", step.Name, err)
+		}
+		if d > 0 {
+			t := time.NewTimer(d)
+			defer t.Stop()
+			stepTimeout = t.C
+		}
+	}
 	containerName := fmt.Sprintf("tkn-act-%s-%s-%s", inv.RunID, inv.TaskRunName, step.Name)
 
 	created, err := b.cli.ContainerCreate(ctx, cfg, hostConf, nil, nil, containerName)
@@ -815,7 +836,19 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 	if err != nil {
 		return 0, fmt.Errorf("logs %s: %w", containerName, err)
 	}
-	go streamLogs(logRC, inv.LogSink, inv.TaskName, step.Name, step.DisplayName)
+	logsDone := make(chan struct{})
+	go func() {
+		defer close(logsDone)
+		streamLogs(logRC, inv.LogSink, inv.TaskName, step.Name, step.DisplayName)
+	}()
+	// Join the log stream (bounded) before returning, so a Step's last
+	// lines are reported before its task-end and before the deferred
+	// ContainerRemove tears the stream down.
+	defer func() {
+		if !waitLogs(logsDone, logJoinTimeout) {
+			_ = logRC.Close()
+		}
+	}()
 
 	statusCh, errCh := b.cli.ContainerWait(ctx, created.ID, container.WaitConditionNotRunning)
 	select {
@@ -825,6 +858,16 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 		}
 	case st := <-statusCh:
 		return int(st.StatusCode), nil
+	case <-stepTimeout:
+		// Step.timeout exceeded: stop the container and fail the Step
+		// like a non-zero exit (so onError: continue still applies).
+		grace := 1
+		_ = b.cli.ContainerStop(context.Background(), created.ID, container.StopOptions{Timeout: &grace})
+		if inv.LogSink != nil {
+			inv.LogSink.StepLog(inv.TaskName, step.Name, step.DisplayName, "stderr",
+				fmt.Sprintf("tkn-act: step %q exceeded its timeout of %s", step.Name, step.Timeout))
+		}
+		return stepTimeoutExitCode, nil
 	case <-ctx.Done():
 		_ = b.cli.ContainerStop(context.Background(), created.ID, container.StopOptions{})
 		return 0, ctx.Err()
@@ -833,28 +876,14 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 }
 
 func streamLogs(rc io.ReadCloser, sink backend.LogSink, taskName, stepName, stepDisplayName string) {
-	defer func() { _ = rc.Close() }()
 	if sink == nil {
+		defer func() { _ = rc.Close() }()
 		_, _ = io.Copy(io.Discard, rc)
 		return
 	}
-	stdoutR, stdoutW := io.Pipe()
-	stderrR, stderrW := io.Pipe()
-	go func() {
-		_, _ = stdcopy.StdCopy(stdoutW, stderrW, rc)
-		_ = stdoutW.Close()
-		_ = stderrW.Close()
-	}()
-	go scan(stdoutR, sink, taskName, stepName, stepDisplayName, "stdout")
-	scan(stderrR, sink, taskName, stepName, stepDisplayName, "stderr")
-}
-
-func scan(r io.Reader, sink backend.LogSink, taskName, stepName, stepDisplayName, stream string) {
-	s := bufio.NewScanner(r)
-	s.Buffer(make([]byte, 64*1024), 1024*1024)
-	for s.Scan() {
-		sink.StepLog(taskName, stepName, stepDisplayName, stream, s.Text())
-	}
+	demuxLogs(rc, func(stream, line string) {
+		sink.StepLog(taskName, stepName, stepDisplayName, stream, line)
+	}, "stdout", "stderr")
 }
 
 func parseMemory(s string) (int64, error) {
