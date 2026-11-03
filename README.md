@@ -160,7 +160,11 @@ are exercised by both backends in CI — divergences are explicit
   `--resolver-allow-insecure-http` is set. **`hub` and `http` direct
   resolvers ship in Phase 3** (HTTPS-only by default; loopback http
   exempt; bearer-token via `HubOptions.Token` / `HTTPOptions.Token` /
-  env `TKNACT_HTTP_RESOLVER_TOKEN`; 5xx single-retry budget). **`bundles`
+  env `TKN_ACT_HTTP_RESOLVER_TOKEN` — legacy `TKNACT_HTTP_RESOLVER_TOKEN`
+  still honored; 5xx single-retry budget; https→http redirects refused,
+  `Authorization` dropped on cross-host redirects, 10 MiB body cap;
+  `hub` implements the Tekton Hub API only — `type: artifact` (upstream's
+  v1.15 default) is a documented gap). **`bundles`
   and `cluster` direct resolvers ship in Phase 4** — `bundles` pulls
   Tekton OCI bundles via `go-containerregistry`, walks layer
   `dev.tekton.image.{name,kind,apiVersion}` annotations, and returns

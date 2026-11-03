@@ -39,12 +39,17 @@ end-to-end + on-disk cache + `tkn-act cache` subcommands):
   |---|---|---|---|
   | `url` | yes | — | `file://`, `https://`, `ssh://`, or `git@host:path`. Plain `http://` refused unless `--resolver-allow-insecure-http`. |
   | `revision` | no | `main` | Branch, tag, or full SHA. SHAs trigger a full clone + ResolveRevision fallback path. |
-  | `pathInRepo` | yes | — | Relative path to the YAML inside the repo. `..` traversal refused. |
+  | `pathInRepo` | yes | — | Relative path to the YAML inside the repo. `..` traversal refused; a symlink (file or parent dir) whose target leaves the clone is refused with `escapes the repository root`. |
   Cache layout: `<--resolver-cache-dir>/git/<sha256(url+revision)>/repo/`.
   A second call with identical `(url, revision)` reuses the cached
   working tree without any network IO and emits `resolver-end` with
-  `cached: true`. SSH delegation honors `ssh-agent`; tkn-act never
-  reads SSH keys directly.
+  `cached: true`. **This includes branch revisions**: a cached
+  `revision: main` is not re-fetched when the branch moves upstream.
+  Run `tkn-act cache clear -y` (or `cache prune`) to force a re-clone,
+  or pin `revision` to a tag / full SHA for reproducible runs. Clones
+  are written to a temp dir and renamed into place only when complete,
+  so an interrupted clone is never reused. SSH delegation honors
+  `ssh-agent`; tkn-act never reads SSH keys directly.
 - **CLI flags**: `--resolver-cache-dir`,
   `--resolver-allow=git,hub,http,bundles` (default — `cluster` is
   intentionally absent and must be opted in explicitly),
@@ -74,10 +79,19 @@ end-to-end + on-disk cache + `tkn-act cache` subcommands):
 |---|---|---|---|
 | `inline` | shipped (test harness) | `name` | Magic test resolver. The test harness preloads `(name → bytes)` pairs and the engine looks them up. |
 | `git` | shipped (Phase 2) | `url` (req), `revision` (default `main`), `pathInRepo` (req) | Shallow clone via `go-git/v5`. Cache layout: `<--resolver-cache-dir>/git/<sha256(url+revision)>/repo/`. SSH delegation honors `ssh-agent`. |
-| `hub` | shipped (Phase 3) | `name` (req), `version` (default `latest`), `kind` (default `task`), `catalog` (default `tekton`) | HTTPS GET to `<BaseURL>/v1/resource/<catalog>/<kind>/<name>/<version>/yaml`. Default BaseURL `https://api.hub.tekton.dev`. HTTPS-only (no opt-out for hub). 5xx retries once. Bearer token via `HubOptions.Token` library API; the standard `--resolver-config` file is read for `hub.token`. |
-| `http` | shipped (Phase 3) | `url` (req) | Plain HTTPS GET. 5xx retries once. HTTPS-only by default; `--resolver-allow-insecure-http` opts plain http:// non-loopback URLs in (loopback always allowed for unit tests with `httptest.NewServer`). Bearer token via `HTTPOptions.Token` (library) or env `TKNACT_HTTP_RESOLVER_TOKEN` (CLI escape hatch). |
+| `hub` | shipped (Phase 3), **gap: Artifact Hub** | `name` (req), `version` (default `latest`), `kind` (default `task`), `catalog` (default `tekton`), `type` (`tekton`; see below) | HTTPS GET to `<BaseURL>/v1/resource/<catalog>/<kind>/<name>/<version>/yaml`. Default BaseURL `https://api.hub.tekton.dev`. HTTPS-only (no opt-out for hub). 5xx retries once. Bearer token via `HubOptions.Token` library API; the standard `--resolver-config` file is read for `hub.token`. **`type` divergence:** upstream Tekton (v1.15) defaults `type` to `artifact` (Artifact Hub) and deprecates `tekton`. tkn-act only implements the Tekton Hub API: `type: tekton` works, `type: artifact` fails with `hub: artifact hub not supported yet, set type: tekton`, and an **unset** `type` keeps the Tekton Hub behavior (unlike upstream). |
+| `http` | shipped (Phase 3) | `url` (req) | Plain HTTPS GET. 5xx retries once. HTTPS-only by default; `--resolver-allow-insecure-http` opts plain http:// non-loopback URLs in (loopback — an IP literal in 127.0.0.0/8, `::1`, or `localhost` — always allowed for unit tests with `httptest.NewServer`). Bearer token via `HTTPOptions.Token` (library) or env `TKN_ACT_HTTP_RESOLVER_TOKEN` (legacy name `TKNACT_HTTP_RESOLVER_TOKEN` still honored as a fallback). |
 | `bundles` | shipped (Phase 4) | `bundle` (req — OCI ref like `gcr.io/foo/bar:v1`), `name` (req — resource `metadata.name` to extract), `kind` (default `task`) | Pulls a Tekton OCI bundle via `go-containerregistry`. Walks layers in declaration order, matches on the conventional `dev.tekton.image.{name,kind,apiVersion}` annotations, and returns the YAML embedded in the matching layer's tar. HTTPS-only by default; loopback registries always permit HTTP (so unit tests with `pkg/registry` work); `--resolver-allow-insecure-http` extends that to non-loopback registries. Auth honors `~/.docker/config.json` via `authn.DefaultKeychain`. |
 | `cluster` | shipped (Phase 4) — **OFF BY DEFAULT** | `name` (req), `kind` (default `task`, also accepts `pipeline`), `namespace` (default `default`) | Reads from the user's KUBECONFIG via the kube dynamic client. Strips server-side bookkeeping (`status`, `metadata.uid`/`resourceVersion`/`generation`/`creationTimestamp`/`managedFields`) before serializing back to YAML. **Off by default in `NewDefaultRegistry`** — `KUBECONFIG` may point at production. Opt-in either by adding `cluster` to `--resolver-allow` or by setting `--cluster-resolver-context=<ctx>` (which also names the kubeconfig context). Both require explicit user consent before the resolver registers. |
+
+Hardening shared by `http` and `hub`: a redirect from `https://` to
+`http://` is refused (for `http`, unless `--resolver-allow-insecure-http`),
+the `Authorization` header is dropped whenever a redirect changes
+host:port, response bodies over 10 MiB are rejected, and URLs echoed in
+`source` / error messages have userinfo and query strings masked
+(`https://***@host/path?REDACTED`). `bundles` caps a layer's extracted
+YAML at 10 MiB and only matches layers that carry the
+`dev.tekton.image.kind` annotation the Tekton bundle contract requires.
 
 Failure surfaces as `task-end` `status: "failed"` with `message: "resolver: hub: ..."` / `"resolver: http: ..."` / `"resolver: bundles: ..."` / `"resolver: cluster: ..."`, which routes through the standard pipeline-failure exit code (5).
 
@@ -120,7 +134,16 @@ Flags (all on `tkn-act run`):
 |---|---|---|
 | `--remote-resolver-context <ctx>` | unset | Kubeconfig context to dispatch ResolutionRequests through. Setting non-empty flips registry into Mode B. |
 | `--remote-resolver-namespace <ns>` | `default` | Namespace where ResolutionRequests are submitted. |
-| `--remote-resolver-timeout <duration>` | `60s` | Per-request wait budget for the controller's reconcile. Failure surfaces as `task-end` `status: "failed"` with a `remote: timeout after ...` message. |
+| `--remote-resolver-timeout <duration>` | `60s` | Per-request wait budget for the controller's reconcile. Hardening shared by `http` and `hub`: a redirect from `https://` to
+`http://` is refused (for `http`, unless `--resolver-allow-insecure-http`),
+the `Authorization` header is dropped whenever a redirect changes
+host:port, response bodies over 10 MiB are rejected, and URLs echoed in
+`source` / error messages have userinfo and query strings masked
+(`https://***@host/path?REDACTED`). `bundles` caps a layer's extracted
+YAML at 10 MiB and only matches layers that carry the
+`dev.tekton.image.kind` annotation the Tekton bundle contract requires.
+
+Failure surfaces as `task-end` `status: "failed"` with a `remote: timeout after ...` message. |
 
 ### `--offline` mode + on-disk cache (Phase 6, shipped)
 
@@ -128,6 +151,13 @@ Every direct resolver writes resolved bytes + a small JSON metadata
 sidecar to `--resolver-cache-dir` (default
 `$XDG_CACHE_HOME/tkn-act/resolved/`) under
 `<root>/<resolver>/<sha256(resolver+sortedKVs(SUBSTITUTED-params))>.{yaml,json}`.
+Cache files are written `0600` and directories `0700`; URL-shaped
+param values (e.g. a git `url` with embedded `user:token@`) are
+redacted before they reach the `.json` metadata sidecar.
+
+The resolver allow-list is enforced **before** the cache: a resolver
+excluded by `--resolver-allow` is refused even when an earlier run
+cached its bytes.
 
 Cross-run hits (a Pipeline that ran before, with the same
 substituted resolver-params) skip the network entirely on the
@@ -166,6 +196,12 @@ tkn-act cache prune -o json                # JSON: {root, older_than, pruned}
 tkn-act cache clear -y
 tkn-act cache clear -y -o json             # JSON: {root, cleared}
 ```
+
+Entries include the git resolver's clone directories
+(`<root>/git/<key>/`, listed with `resolver: git`, `path` pointing at
+the directory, `size` the total bytes under it, and `mod_time` its
+last use), so `prune` and `clear` also drop stale clones — `cache
+clear` is how a cached git branch ref is refreshed.
 
 All three subcommands honor `--resolver-cache-dir` (the same flag
 `tkn-act run` uses). The cache root may not exist yet — `cache

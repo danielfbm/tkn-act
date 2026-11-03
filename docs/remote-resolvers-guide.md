@@ -114,6 +114,7 @@ spec:
       taskRef:
         resolver: hub
         params:
+          - {name: type,    value: tekton}      # see note below
           - {name: catalog, value: catalog}     # hub catalog name
           - {name: kind,    value: task}
           - {name: name,    value: run-script}  # task in the catalog
@@ -128,6 +129,14 @@ spec:
             echo "GREETING: $(params.greeting)"
             uname -a
 ```
+
+> **`type` param:** upstream Tekton's hub resolver (v1.15) defaults
+> `type` to `artifact` (Artifact Hub) and deprecates `tekton`. Set
+> `type: tekton` explicitly when the cluster's `hubresolver-config`
+> points at a Tekton Hub API. The same pipeline also works with tkn-act's
+> *direct* `hub` resolver, which only implements the Tekton Hub API
+> (`type: artifact` fails there with "artifact hub not supported yet";
+> an unset `type` is treated as `tekton`).
 
 ### 2. Run it
 

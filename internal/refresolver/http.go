@@ -3,7 +3,6 @@ package refresolver
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -11,9 +10,14 @@ import (
 	"time"
 )
 
-// HTTPTokenEnv is the environment variable name the http resolver consults
+// HTTPTokenEnv is the environment variable the http resolver consults
 // for a bearer token. An explicit HTTPOptions.Token wins over the env var.
-const HTTPTokenEnv = "TKNACT_HTTP_RESOLVER_TOKEN"
+const HTTPTokenEnv = "TKN_ACT_HTTP_RESOLVER_TOKEN"
+
+// HTTPTokenEnvLegacy is the original (pre-TKN_ACT_-prefix) name of
+// HTTPTokenEnv. It is still honored as a fallback when HTTPTokenEnv is
+// unset or empty, because env-var names are part of the public contract.
+const HTTPTokenEnvLegacy = "TKNACT_HTTP_RESOLVER_TOKEN"
 
 // HTTPOptions configures an http resolver. All fields optional.
 type HTTPOptions struct {
@@ -23,8 +27,9 @@ type HTTPOptions struct {
 	// --resolver-allow-insecure-http (a CI-only escape hatch).
 	AllowInsecureHTTP bool
 	// Token, if non-empty, is sent as `Authorization: Bearer <token>`. If
-	// empty the resolver consults the TKNACT_HTTP_RESOLVER_TOKEN env var
-	// at Resolve time; a non-empty env value is then used.
+	// empty the resolver consults the TKN_ACT_HTTP_RESOLVER_TOKEN env var
+	// (falling back to the legacy TKNACT_HTTP_RESOLVER_TOKEN) at Resolve
+	// time; a non-empty env value is then used.
 	Token string
 	// Client overrides http.Client. Tests may inject a httptest server's
 	// transport. The default has a 30-second timeout.
@@ -39,7 +44,12 @@ type HTTPOptions struct {
 //	      with --resolver-allow-insecure-http.
 //
 // 5xx responses retry once with a 250ms backoff. Bearer tokens come from
-// HTTPOptions.Token (precedence) or the TKNACT_HTTP_RESOLVER_TOKEN env var.
+// HTTPOptions.Token (precedence) or the TKN_ACT_HTTP_RESOLVER_TOKEN env
+// var (legacy name TKNACT_HTTP_RESOLVER_TOKEN). Redirects that downgrade
+// https to http are refused unless AllowInsecureHTTP is set, and the
+// Authorization header is dropped when a redirect changes host. Bodies
+// over MaxResolvedBytes are rejected. URLs in Source strings and errors
+// are redacted (userinfo and query string masked).
 type HTTPResolver struct {
 	opts HTTPOptions
 }
@@ -49,6 +59,7 @@ func NewHTTPResolver(opts HTTPOptions) *HTTPResolver {
 	if opts.Client == nil {
 		opts.Client = &http.Client{Timeout: 30 * time.Second}
 	}
+	opts.Client = withSafeRedirects(opts.Client, opts.AllowInsecureHTTP, "http")
 	return &HTTPResolver{opts: opts}
 }
 
@@ -63,7 +74,7 @@ func (h *HTTPResolver) Resolve(ctx context.Context, req Request) (Resolved, erro
 	}
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return Resolved{}, fmt.Errorf("http: invalid url %q: %w", rawURL, err)
+		return Resolved{}, fmt.Errorf("http: invalid url %q: %w", redactURL(rawURL), transportErr(err))
 	}
 	switch parsed.Scheme {
 	case "https":
@@ -72,10 +83,10 @@ func (h *HTTPResolver) Resolve(ctx context.Context, req Request) (Resolved, erro
 		if !h.opts.AllowInsecureHTTP && !isLoopbackHost(parsed.Host) {
 			return Resolved{}, fmt.Errorf(
 				"http: refusing plain-http URL %q; HTTPS is required (use --resolver-allow-insecure-http for non-loopback http:// URLs)",
-				rawURL)
+				redactURL(rawURL))
 		}
 	default:
-		return Resolved{}, fmt.Errorf("http: unsupported scheme %q in %q", parsed.Scheme, rawURL)
+		return Resolved{}, fmt.Errorf("http: unsupported scheme %q in %q", parsed.Scheme, redactURL(rawURL))
 	}
 
 	body, err := h.fetchWithRetry(ctx, rawURL)
@@ -84,7 +95,7 @@ func (h *HTTPResolver) Resolve(ctx context.Context, req Request) (Resolved, erro
 	}
 	return Resolved{
 		Bytes:  body,
-		Source: fmt.Sprintf("http: %s", rawURL),
+		Source: fmt.Sprintf("http: %s", redactURL(rawURL)),
 	}, nil
 }
 
@@ -112,40 +123,45 @@ func (h *HTTPResolver) fetchWithRetry(ctx context.Context, rawURL string) ([]byt
 func (h *HTTPResolver) fetchOnce(ctx context.Context, rawURL string) ([]byte, bool, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, false, fmt.Errorf("http: building request: %w", err)
+		return nil, false, fmt.Errorf("http: building request: %w", transportErr(err))
 	}
 	if tok := h.bearerToken(); tok != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+tok)
 	}
 	httpReq.Header.Set("Accept", "text/yaml, application/yaml, application/octet-stream, */*")
 
+	shown := redactURL(rawURL)
 	resp, err := h.opts.Client.Do(httpReq)
 	if err != nil {
-		return nil, true, fmt.Errorf("http: GET %s: %w", rawURL, err)
+		return nil, true, fmt.Errorf("http: GET %s: %w", shown, transportErr(err))
 	}
 	defer resp.Body.Close()
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		body, rerr := io.ReadAll(resp.Body)
+		body, rerr := readLimited(resp.Body, "response body")
 		if rerr != nil {
-			return nil, true, fmt.Errorf("http: reading body: %w", rerr)
+			return nil, false, fmt.Errorf("http: GET %s: %w", shown, rerr)
 		}
 		return body, false, nil
 	case resp.StatusCode == http.StatusNotFound:
-		return nil, false, fmt.Errorf("http: GET %s: not found (status 404)", rawURL)
+		return nil, false, fmt.Errorf("http: GET %s: not found (status 404)", shown)
 	case resp.StatusCode >= 500:
-		return nil, true, fmt.Errorf("http: GET %s: server error %d", rawURL, resp.StatusCode)
+		return nil, true, fmt.Errorf("http: GET %s: server error %d", shown, resp.StatusCode)
 	default:
-		return nil, false, fmt.Errorf("http: GET %s: unexpected status %d", rawURL, resp.StatusCode)
+		return nil, false, fmt.Errorf("http: GET %s: unexpected status %d", shown, resp.StatusCode)
 	}
 }
 
 // bearerToken returns HTTPOptions.Token if non-empty; otherwise it
-// consults the TKNACT_HTTP_RESOLVER_TOKEN env var.
+// consults TKN_ACT_HTTP_RESOLVER_TOKEN, then the legacy
+// TKNACT_HTTP_RESOLVER_TOKEN.
 func (h *HTTPResolver) bearerToken() string {
 	if h.opts.Token != "" {
 		return h.opts.Token
 	}
-	return os.Getenv(HTTPTokenEnv)
+	if tok := os.Getenv(HTTPTokenEnv); tok != "" {
+		return tok
+	}
+	return os.Getenv(HTTPTokenEnvLegacy)
 }

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -26,8 +27,17 @@ import (
 // The implementation uses go-git for cross-platform portability (no git
 // CLI exec on the host required). Clones are shallow (Depth: 1) for the
 // happy path and land in <cacheDir>/git/<sha256(url+revision)>/repo/.
-// On a cache hit (the directory already exists), bytes are served from
-// the cached working tree without any network IO.
+// On a cache hit (the directory already holds a complete clone), bytes
+// are served from the cached working tree without any network IO —
+// including for moving refs such as branches: a cached `revision: main`
+// is NOT re-fetched. `tkn-act cache clear` (or `cache prune`) removes
+// the clone so the next resolve sees the branch's current head. Clones
+// land in a temp dir next to repo/ and are renamed into place only once
+// complete, so an interrupted clone is never mistaken for a cached one.
+//
+// pathInRepo must stay inside the clone: ".." traversal is refused
+// lexically, and symlinks (in the file or any parent directory) are
+// resolved and refused when their target leaves the repository.
 //
 // HTTPS / file:// URLs are accepted by default; plain http:// is refused
 // unless AllowInsecureHTTP is true. SSH URLs (ssh:// or git@host:path)
@@ -96,8 +106,11 @@ func (g *GitResolver) Resolve(ctx context.Context, req Request) (Resolved, error
 	// repoDir is "<cacheDir>/git/<keyHex>/repo" or a tempdir. Whatever
 	// the resolver placed there, it has the working tree we cloned;
 	// pathInRepo is relative to that root.
-	full := filepath.Join(repoDir, cleanPath)
-	bytes, err := os.ReadFile(full)
+	full, err := resolveInRepo(repoDir, cleanPath, pathInRepo, revision)
+	if err != nil {
+		return Resolved{}, err
+	}
+	bytes, err := readFileLimited(full)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Resolved{}, fmt.Errorf("git: pathInRepo %q not found at revision %q", pathInRepo, revision)
@@ -149,18 +162,78 @@ func (g *GitResolver) acquireRepo(ctx context.Context, repoURL, revision, keyHex
 	defer lock.Unlock()
 
 	if dirExists(repoDir) {
-		return repoDir, nil, nil
+		if repoUsable(repoDir) {
+			return repoDir, nil, nil
+		}
+		// A leftover from an interrupted clone by an older tkn-act (or
+		// a corrupted cache): drop it and clone afresh.
+		if err := os.RemoveAll(repoDir); err != nil {
+			return "", nil, fmt.Errorf("git: removing broken cached clone %s: %w", repoDir, err)
+		}
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", nil, fmt.Errorf("git: mkdir %s: %w", root, err)
 	}
-	if err := cloneShallow(ctx, repoURL, revision, repoDir); err != nil {
-		// Best-effort cleanup so a half-cloned dir doesn't poison the
-		// cache. RemoveAll is OK if the dir is missing.
-		_ = os.RemoveAll(repoDir)
+	// Clone into a sibling temp dir and rename into place only once the
+	// clone is complete, so an interrupted clone never leaves a repo/
+	// dir that a later run would reuse.
+	tmp, err := os.MkdirTemp(root, "repo.tmp-")
+	if err != nil {
+		return "", nil, fmt.Errorf("git: tempdir: %w", err)
+	}
+	if err := cloneShallow(ctx, repoURL, revision, tmp); err != nil {
+		_ = os.RemoveAll(tmp)
 		return "", nil, err
 	}
+	if err := os.Rename(tmp, repoDir); err != nil {
+		_ = os.RemoveAll(tmp)
+		// Another process may have won the race; use its clone.
+		if repoUsable(repoDir) {
+			return repoDir, nil, nil
+		}
+		return "", nil, fmt.Errorf("git: moving clone into cache: %w", err)
+	}
 	return repoDir, nil, nil
+}
+
+// repoUsable reports whether dir holds a complete clone (HEAD resolves).
+func repoUsable(dir string) bool {
+	_, err := readHEADSHA(dir)
+	return err == nil
+}
+
+// resolveInRepo joins cleanPath onto repoDir and resolves every symlink
+// along the way, refusing a target outside the repository (a committed
+// symlink like task.yaml -> ../../../../etc/passwd or -> /home/u/.ssh/id
+// must not turn the resolver into a host-file reader).
+func resolveInRepo(repoDir, cleanPath, pathInRepo, revision string) (string, error) {
+	root, err := filepath.EvalSymlinks(repoDir)
+	if err != nil {
+		return "", fmt.Errorf("git: resolving clone dir: %w", err)
+	}
+	target, err := filepath.EvalSymlinks(filepath.Join(root, cleanPath))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("git: pathInRepo %q not found at revision %q", pathInRepo, revision)
+		}
+		return "", fmt.Errorf("git: resolving pathInRepo %q: %w", pathInRepo, err)
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("git: pathInRepo %q escapes the repository root (symlink target outside the clone)", pathInRepo)
+	}
+	return target, nil
+}
+
+// readFileLimited reads a resolved file, refusing anything larger than
+// MaxResolvedBytes.
+func readFileLimited(p string) ([]byte, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return readLimited(f, "file")
 }
 
 func (g *GitResolver) keyLock(key string) *sync.Mutex {
@@ -174,6 +247,10 @@ func (g *GitResolver) keyLock(key string) *sync.Mutex {
 	return l
 }
 
+// gitFetchedMarker is written next to repo/ after every successful
+// resolve; its presence means "cached", its mtime means "last used".
+const gitFetchedMarker = ".tkn-act-fetched"
+
 // cachedHit reports whether the on-disk cache directory for key already
 // existed before this Resolve call attempted a clone. We check the
 // presence of a marker file written at the end of the previous call,
@@ -183,7 +260,7 @@ func (g *GitResolver) cachedHit(key string) bool {
 	if g.cacheDir == "" {
 		return false
 	}
-	marker := filepath.Join(g.cacheDir, "git", key, ".tkn-act-fetched")
+	marker := filepath.Join(g.cacheDir, "git", key, gitFetchedMarker)
 	_, err := os.Stat(marker)
 	return err == nil
 }
@@ -192,8 +269,12 @@ func (g *GitResolver) markCached(key string) {
 	if g.cacheDir == "" {
 		return
 	}
-	marker := filepath.Join(g.cacheDir, "git", key, ".tkn-act-fetched")
-	_ = os.WriteFile(marker, []byte("ok\n"), 0o644)
+	marker := filepath.Join(g.cacheDir, "git", key, gitFetchedMarker)
+	_ = os.WriteFile(marker, []byte("ok\n"), 0o600)
+	// Bump mtime explicitly: it doubles as the clone's last-use time
+	// for `tkn-act cache prune --older-than`.
+	now := time.Now()
+	_ = os.Chtimes(marker, now, now)
 }
 
 // checkURLScheme rejects plain http:// unless AllowInsecureHTTP is set.
@@ -299,17 +380,6 @@ func sanitizePathInRepo(p string) (string, error) {
 		return "", fmt.Errorf("git: pathInRepo %q escapes the repository root", p)
 	}
 	return cleaned, nil
-}
-
-// redactURL strips embedded credentials (user:pass@host) so error
-// messages, source strings, and any logged URL never leak tokens.
-func redactURL(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.User == nil {
-		return raw
-	}
-	u.User = url.User("***")
-	return u.String()
 }
 
 // shortSHA returns a 7-char prefix of sha when non-empty; otherwise the

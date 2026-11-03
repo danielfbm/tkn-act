@@ -16,7 +16,15 @@ import (
 // invariant. The on-disk layout is:
 //
 //	<root>/<resolver>/<key>.yaml      // resolved bytes
-//	<root>/<resolver>/<key>.json      // metadata (resolver, params, source, sha256, fetched-at)
+//	<root>/<resolver>/<key>.json      // metadata (resolver, redacted params, source, sha256, fetched-at)
+//	<root>/git/<sha256(url+rev)>/     // git resolver clone (repo/ + .tkn-act-fetched marker)
+//
+// Files are written 0600 and directories 0700: resolved bytes may come
+// from private repositories. URL-shaped param values are redacted
+// (userinfo and query string masked) before they land in the metadata
+// sidecar. Git clone directories are listed, pruned and cleared
+// alongside the blob entries so `tkn-act cache clear` also forces a
+// re-clone of moving refs such as branches.
 //
 // Splitting by resolver lets `tkn-act cache prune` / `cache list`
 // scope operations to a single resolver if desired, and matches the
@@ -107,16 +115,18 @@ func (c *DiskCache) Put(req Request, resolved Resolved) error {
 		return errors.New("cache: nil or unrooted DiskCache")
 	}
 	dir := filepath.Join(c.root, sanitize(req.Resolver))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("cache mkdir %s: %w", dir, err)
 	}
+	// MkdirAll leaves pre-existing (older, 0755) dirs alone; tighten.
+	_ = os.Chmod(dir, 0o700)
 	p := c.path(req)
-	if err := os.WriteFile(p, resolved.Bytes, 0o644); err != nil {
+	if err := writePrivateFile(p, resolved.Bytes); err != nil {
 		return fmt.Errorf("cache write %s: %w", p, err)
 	}
 	meta := cacheMeta{
 		Resolver:  req.Resolver,
-		Params:    req.Params,
+		Params:    redactParams(req.Params),
 		Source:    resolved.Source,
 		SHA256:    resolved.SHA256,
 		FetchedAt: time.Now().UTC(),
@@ -125,10 +135,37 @@ func (c *DiskCache) Put(req Request, resolved Resolved) error {
 	if err != nil {
 		return fmt.Errorf("cache marshal meta: %w", err)
 	}
-	if err := os.WriteFile(c.metaPath(req), mb, 0o644); err != nil {
+	if err := writePrivateFile(c.metaPath(req), mb); err != nil {
 		return fmt.Errorf("cache write meta %s: %w", c.metaPath(req), err)
 	}
 	return nil
+}
+
+// writePrivateFile writes b to p with mode 0600, also tightening the
+// mode of a pre-existing file (os.WriteFile keeps an existing mode).
+func writePrivateFile(p string, b []byte) error {
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(p, 0o600)
+}
+
+// redactParams returns a copy of params with URL-shaped values
+// redacted, so tokens embedded in e.g. a git `url` param
+// (https://user:token@host/...) or an http `url` query string never
+// reach the on-disk metadata sidecar.
+func redactParams(params map[string]string) map[string]string {
+	if params == nil {
+		return nil
+	}
+	out := make(map[string]string, len(params))
+	for k, v := range params {
+		if strings.Contains(v, "://") {
+			v = redactURL(v)
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // List walks the cache root and returns every cached blob. Errors
@@ -163,6 +200,9 @@ func (c *DiskCache) List() ([]CacheEntry, error) {
 		}
 		for _, f := range files {
 			if f.IsDir() {
+				if e, ok := gitCloneEntry(rd.Name(), sub, f.Name()); ok {
+					out = append(out, e)
+				}
 				continue
 			}
 			name := f.Name()
@@ -206,11 +246,9 @@ func (c *DiskCache) PruneOlderThan(older time.Duration) (int, error) {
 		if !e.ModTime.Before(cutoff) {
 			continue
 		}
-		if err := os.Remove(e.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := removeEntry(e); err != nil {
 			return n, err
 		}
-		// Best-effort meta removal.
-		_ = os.Remove(strings.TrimSuffix(e.Path, ".yaml") + ".json")
 		n++
 	}
 	return n, nil
@@ -224,12 +262,71 @@ func (c *DiskCache) Clear() (int, error) {
 		return 0, err
 	}
 	for _, e := range entries {
-		if err := os.Remove(e.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := removeEntry(e); err != nil {
 			return 0, err
 		}
-		_ = os.Remove(strings.TrimSuffix(e.Path, ".yaml") + ".json")
 	}
 	return len(entries), nil
+}
+
+// removeEntry deletes one List entry: a git clone directory is removed
+// recursively; a blob is removed together with its meta sidecar.
+func removeEntry(e CacheEntry) error {
+	if st, err := os.Lstat(e.Path); err == nil && st.IsDir() {
+		return os.RemoveAll(e.Path)
+	}
+	if err := os.Remove(e.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	// Best-effort meta removal.
+	_ = os.Remove(strings.TrimSuffix(e.Path, ".yaml") + ".json")
+	return nil
+}
+
+// gitCloneEntry recognizes the git resolver's per-(url, revision)
+// clone directory <root>/git/<64-hex key>/ and describes it as a cache
+// entry. Size is the total size of the regular files under it; ModTime
+// is the last-use marker's mtime (the git resolver touches it on every
+// resolve) or, failing that, the directory's own mtime.
+func gitCloneEntry(resolverDir, sub, name string) (CacheEntry, bool) {
+	if resolverDir != "git" || !isHexKey(name) {
+		return CacheEntry{}, false
+	}
+	dir := filepath.Join(sub, name)
+	st, err := os.Stat(dir)
+	if err != nil {
+		return CacheEntry{}, false
+	}
+	mod := st.ModTime()
+	if mst, err := os.Stat(filepath.Join(dir, gitFetchedMarker)); err == nil {
+		mod = mst.ModTime()
+	}
+	var size int64
+	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // best-effort size; skip unreadable entries
+		}
+		if d.Type().IsRegular() {
+			if info, ierr := d.Info(); ierr == nil {
+				size += info.Size()
+			}
+		}
+		return nil
+	})
+	return CacheEntry{Resolver: resolverDir, Key: name, Path: dir, Size: size, ModTime: mod}, true
+}
+
+func isHexKey(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // path returns the on-disk file path for a Request's resolved bytes.

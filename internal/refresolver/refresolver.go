@@ -338,6 +338,17 @@ func (r *Registry) Resolve(ctx context.Context, req Request) (Resolved, error) {
 	r.dbgEmit("dispatch", req.Resolver, key, nil)
 
 	r.mu.Lock()
+	// The allow-list is enforced before any cache layer: a resolver the
+	// user excluded must not be served from bytes cached by an earlier
+	// run (or earlier in this run) that did allow it. Mode B (remote)
+	// bypasses the allow-list, as below.
+	if r.remote == nil && r.allow != nil {
+		if _, ok := r.allow[req.Resolver]; !ok {
+			r.mu.Unlock()
+			r.dbgEmit("allow-list rejected", req.Resolver, key, nil)
+			return Resolved{}, fmt.Errorf("%w: %q not in --resolver-allow", ErrResolverNotAllowed, req.Resolver)
+		}
+	}
 	if cached, ok := r.perRun[key]; ok {
 		c := cached
 		c.Cached = true
@@ -389,13 +400,6 @@ func (r *Registry) Resolve(ctx context.Context, req Request) (Resolved, error) {
 		r.mu.Unlock()
 		r.dbgEmit("resolve ok", req.Resolver, key, map[string]any{"bytes": len(out.Bytes), "sha256": out.SHA256})
 		return out, nil
-	}
-	if r.allow != nil {
-		if _, ok := r.allow[req.Resolver]; !ok {
-			r.mu.Unlock()
-			r.dbgEmit("allow-list rejected", req.Resolver, key, nil)
-			return Resolved{}, fmt.Errorf("%w: %q not in --resolver-allow", ErrResolverNotAllowed, req.Resolver)
-		}
 	}
 	res, ok := r.direct[req.Resolver]
 	r.mu.Unlock()
@@ -521,3 +525,9 @@ func (i *InlineResolver) Resolve(_ context.Context, req Request) (Resolved, erro
 		SHA256: sha256Bytes(bytes),
 	}, nil
 }
+
+// MaxResolvedBytes caps how many bytes a resolver reads for one
+// resolved resource (http/hub response bodies, a bundle layer's
+// decompressed YAML). Tekton resources are a few KiB; 10 MiB leaves
+// generous headroom while bounding memory against a hostile upstream.
+const MaxResolvedBytes = 10 << 20
