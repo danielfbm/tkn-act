@@ -14,7 +14,6 @@ import (
 	clusterbe "github.com/danielfbm/tkn-act/internal/backend/cluster"
 	"github.com/danielfbm/tkn-act/internal/backend/docker"
 	"github.com/danielfbm/tkn-act/internal/cluster/k3d"
-	"github.com/danielfbm/tkn-act/internal/discovery"
 	"github.com/danielfbm/tkn-act/internal/engine"
 	"github.com/danielfbm/tkn-act/internal/exitcode"
 	"github.com/danielfbm/tkn-act/internal/loader"
@@ -30,6 +29,7 @@ import (
 
 type runFlags struct {
 	files      []string
+	args       []string // positional file args (treated as extra -f)
 	dir        string
 	pipeline   string
 	params     []string
@@ -39,14 +39,18 @@ type runFlags struct {
 func newRunCmd() *cobra.Command {
 	var rf runFlags
 	cmd := &cobra.Command{
-		Use:   "run",
+		Use:   "run [file...]",
 		Short: "Run a pipeline on the local backend",
 		Long: `Run a Tekton Pipeline on the local Docker (or k3d) backend.
 
-If -f is not given, tkn-act discovers Tekton YAML in the current directory
+Positional arguments are treated as additional -f files. If neither -f
+nor a positional file is given, tkn-act discovers Tekton YAML in the current directory
 (pipeline.yaml or .tekton/). If multiple Pipelines are loaded, -p is required.`,
 		Example: `  # Auto-discover and run the only pipeline in the current dir
   tkn-act run
+
+  # Run a specific file (positional form is equivalent to -f)
+  tkn-act run pipeline.yaml
 
   # Run a specific file with a parameter and a workspace
   tkn-act run -f pipeline.yaml --param revision=main -w shared=./build
@@ -56,7 +60,8 @@ If -f is not given, tkn-act discovers Tekton YAML in the current directory
 
   # Run on the ephemeral k3d cluster instead of plain Docker
   tkn-act run --cluster -f pipeline.yaml`,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
+			rf.args = args
 			return runWith(rf)
 		},
 	}
@@ -74,17 +79,9 @@ func runDefault(_ *cobra.Command, _ []string) error {
 }
 
 func runWith(rf runFlags) (retErr error) {
-	files := rf.files
-	dir := rf.dir
-	if dir == "" {
-		dir = "."
-	}
-	if len(files) == 0 {
-		disc, err := discovery.Find(dir)
-		if err != nil {
-			return exitcode.Wrap(exitcode.Usage, err)
-		}
-		files = disc
+	files, err := resolveInputFiles(rf.files, rf.args, rf.dir)
+	if err != nil {
+		return err
 	}
 
 	b, err := loader.LoadFiles(files)
@@ -93,22 +90,17 @@ func runWith(rf runFlags) (retErr error) {
 	}
 
 	// Pick pipeline.
-	pipe := rf.pipeline
-	if pipe == "" {
-		switch len(b.Pipelines) {
-		case 0:
-			return exitcode.Wrap(exitcode.Usage, fmt.Errorf("no Pipeline found in loaded files"))
-		case 1:
-			for n := range b.Pipelines {
-				pipe = n
-			}
-		default:
-			names := make([]string, 0, len(b.Pipelines))
-			for n := range b.Pipelines {
-				names = append(names, n)
-			}
-			return exitcode.Wrap(exitcode.Usage, fmt.Errorf("multiple pipelines loaded (%v); specify -p", names))
-		}
+	pipe, err := selectPipeline(b, rf.pipeline)
+	if err != nil {
+		return err
+	}
+
+	// Parse params before validation so the validator can reject a
+	// missing required pipeline param (exit 4) instead of the engine
+	// failing it after the run record has been opened.
+	paramsMap, providedParams, err := parseParams(rf.params)
+	if err != nil {
+		return err
 	}
 
 	// Validate (resolver-aware). The CacheCheck callback wires the
@@ -118,32 +110,17 @@ func runWith(rf runFlags) (retErr error) {
 	// any task starts (exit 4).
 	resolverCacheRoot := resolveResolverCacheDir(gf.resolverCacheDir)
 	diskCache := refresolver.NewDiskCache(resolverCacheRoot)
-	vopts := validator.Options{
-		Offline:               gf.offline,
-		RegisteredResolvers:   gf.resolverAllow,
-		RemoteResolverEnabled: gf.remoteResolverContext != "",
-		CacheCheck: func(ref validator.UnresolvedRef) bool {
-			return diskCache.Has(refresolver.Request{
-				Resolver: ref.Resolver,
-				Params:   ref.Params,
-			})
-		},
-	}
-	if errs := validator.ValidateWithOptions(b, pipe, nil, vopts); len(errs) > 0 {
-		for _, e := range errs {
-			fmt.Fprintln(os.Stderr, "error:", e)
-		}
+	vopts := buildValidatorOptions(diskCache)
+	if errs := validator.ValidateWithOptions(b, pipe, providedParams, vopts); len(errs) > 0 {
+		reportRunValidationErrors(os.Stdout, os.Stderr, pipe, errs)
 		return exitcode.Wrap(exitcode.Validate, fmt.Errorf("%d validation error(s)", len(errs)))
 	}
 
-	// Parse params.
-	paramsMap := map[string]tektontypes.ParamValue{}
-	for _, kv := range rf.params {
-		k, v, ok := strings.Cut(kv, "=")
-		if !ok {
-			return exitcode.Wrap(exitcode.Usage, fmt.Errorf("--param expects key=value, got %q", kv))
-		}
-		paramsMap[k] = tektontypes.ParamValue{Type: tektontypes.ParamTypeString, StringVal: v}
+	// --resolver-config (hub.token / http.token). Parsed before any
+	// backend work so a malformed file is a usage error.
+	rcfg, err := loadResolverConfig(gf.resolverConfig)
+	if err != nil {
+		return exitcode.Wrap(exitcode.Usage, err)
 	}
 
 	// Workspaces: parse user paths and provision tmpdirs for the rest.
@@ -247,11 +224,12 @@ func runWith(rf runFlags) (retErr error) {
 
 	// Build the refresolver registry. The default registry pre-registers
 	// inline + git + hub + http + bundles; cluster is OFF by default and
-	// only registers when --cluster-resolver-context is set OR `cluster`
-	// is in --resolver-allow (KUBECONFIG may point at production).
-	allowCluster := gf.clusterResolverContext != ""
+	// only registers when --cluster-resolver-context /
+	// --cluster-resolver-kubeconfig is set OR `cluster` is in
+	// --resolver-allow (KUBECONFIG may point at production).
+	allowCluster := clusterResolverOptedIn()
 	reg := refresolver.NewDefaultRegistry(refresolver.Options{
-		Allow:                     gf.resolverAllow,
+		Allow:                     effectiveResolverAllow(),
 		CacheDir:                  resolverCacheRoot,
 		Offline:                   gf.offline,
 		AllowInsecureHTTP:         gf.resolverAllowInsecureHTTP,
@@ -262,6 +240,7 @@ func runWith(rf runFlags) (retErr error) {
 	// Reuse the same DiskCache instance for run-time hits as the one
 	// the validator used at load time (ensures Has → Get consistency).
 	reg.SetCache(diskCache)
+	applyResolverConfig(reg, rcfg)
 
 	// Mode B: when --remote-resolver-context is set, every resolver
 	// dispatch goes through the remote driver instead of the direct
