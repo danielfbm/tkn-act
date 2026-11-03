@@ -48,7 +48,7 @@ Anywhere `<id>` appears below you can pass:
 |---|---|
 | (omitted) or `latest` | The newest run by start time. |
 | `<N>` (decimal integer) | Run with sequence number `N`. `runs list` shows the column. |
-| `<ulid-prefix>` | Any unique prefix of a ULID. Ambiguous prefixes return exit code 2 (usage) with the candidate list on stderr. |
+| `<ulid-prefix>` | Any unique prefix of a ULID (case-insensitive). Ambiguous prefixes return exit code 2 (usage) with the candidate list (`#<seq> <ulid> <pipeline>`) on stderr. |
 
 ### `tkn-act logs [id]`
 
@@ -94,13 +94,28 @@ tkn-act runs list -o json        # machine-readable; array of objects
 ```
 
 `--all` and `-o json` compose. The JSON shape is one object per
-run with stable keys (`seq`, `ulid`, `started`, `ended`, `status`,
-`pipeline`).
+run with stable keys `seq`, `ulid`, `pipeline_ref`, `started_at`,
+`ended_at`, `exit_code`, `status`, plus `pid` / `host` (the writing
+process, used for crash detection). `ended_at` is omitted for runs
+that never finalized.
+
+`status` is the recorded outcome (`succeeded`, `failed`, `timeout`,
+`cancelled` — the same value as the run's `run-end` event) for
+finalized runs. Runs that never finalized are reported as:
+
+- `running` — the writing `tkn-act run` process is still alive (or,
+  for records without liveness info, started less than 24h ago);
+- `unknown` — the run was **abandoned**: its writer crashed or was
+  killed before recording an end (dead PID on this host, or started
+  more than 24h ago). `exit_code` is meaningless (`0`) for these.
 
 ### `tkn-act runs show <id>`
 
 Prints the `meta.json` for a single run. `-o json` emits the file
-verbatim; the default pretty mode formats it as a labeled table.
+(with `status` filled in as `running` / `unknown` for a run that
+never finalized, as above); the default pretty mode formats it as a
+labeled table. `logs` and `runs show` are read-only: they never take
+the state-dir lock or create files.
 Useful for confirming the pipeline ref and args of a past run
 before replaying.
 
@@ -115,6 +130,12 @@ tkn-act runs prune               # apply default retention now
 tkn-act runs prune --all --yes   # nuke every recorded run
 ```
 
+`-o json` prints `{"pruned": <N>, "state_dir": "<path>"}`.
+`--all` removes every run that is not currently in flight —
+finalized and abandoned runs alike. Index entries whose ULID is
+malformed (e.g. a hand-edited `index.json`) are skipped with a
+warning on stderr and never turned into filesystem paths.
+
 `--all` without `--yes/-y` errors with exit code 2 — the
 destructive case is opt-in. `--yes` without `--all` also errors so
 shell-variable typos can't silently bypass the confirmation.
@@ -127,7 +148,11 @@ in the background:
 - Keep the most recent `TKN_ACT_KEEP_RUNS` runs (default `50`).
 - AND drop runs older than `TKN_ACT_KEEP_DAYS` days (default `30`).
 
-A run only survives if it satisfies BOTH conditions. Set either
+A run only survives if it satisfies BOTH conditions. The new run
+counts toward the limit, so after a `tkn-act run` exactly
+`TKN_ACT_KEEP_RUNS` records remain. Runs still in flight are never
+deleted; abandoned runs (see `runs list`) are pruned like finalized
+ones and aged by their start time. Set either
 env var to `0` to disable that gate; set both to `0` to keep
 everything until you manually `runs prune --all`.
 

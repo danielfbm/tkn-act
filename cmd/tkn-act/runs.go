@@ -28,7 +28,7 @@ record there; retention defaults keep the most recent 50 runs and
 drop anything older than 30 days (configurable via
 TKN_ACT_KEEP_RUNS / TKN_ACT_KEEP_DAYS).`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
+			return helpOrGroupJSON(cmd)
 		},
 	}
 	cmd.AddCommand(newRunsListCmd(), newRunsShowCmd(), newRunsPruneCmd())
@@ -72,8 +72,12 @@ func runRunsList(w io.Writer, all bool) error {
 	// ReadIndexEntries returns oldest-first; present newest-first to match the
 	// agent-guide/README contract (and `logs`, which defaults to the newest
 	// run). Reverse a copy so we don't mutate the caller's slice.
+	// Unfinalized runs carry no recorded status; present "running" or
+	// (crashed writer) "unknown" instead of a misleading blank.
+	now := time.Now()
 	reversed := make([]runstore.IndexEntry, len(entries))
 	for i, e := range entries {
+		e.Status = e.EffectiveStatus(now)
 		reversed[len(entries)-1-i] = e
 	}
 	return emitRunsList(w, reversed)
@@ -146,9 +150,17 @@ func runRunsShow(w io.Writer, id string) error {
 		}
 		return exitcode.Wrap(exitcode.Env, err)
 	}
-	meta, err := runstore.ReadMeta(filepath.Join(store.RunDir(entry), "meta.json"))
+	runDir, err := store.RunDir(entry)
 	if err != nil {
 		return exitcode.Wrap(exitcode.Env, err)
+	}
+	meta, err := runstore.ReadMeta(filepath.Join(runDir, "meta.json"))
+	if err != nil {
+		return exitcode.Wrap(exitcode.Env, err)
+	}
+	if meta.EndedAt.IsZero() && meta.Status == "" {
+		// Never finalized: running, or abandoned by a crashed writer.
+		meta.Status = entry.EffectiveStatus(time.Now())
 	}
 	if gf.output == "json" {
 		enc := json.NewEncoder(w)
@@ -191,6 +203,18 @@ TKN_ACT_KEEP_DAYS (default 30) days.
 	return c
 }
 
+// runsPruneResult is the `runs prune -o json` shape.
+type runsPruneResult struct {
+	Pruned   int    `json:"pruned"`
+	StateDir string `json:"state_dir"`
+}
+
+func emitRunsPruneJSON(w io.Writer, n int, stateDir string) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(runsPruneResult{Pruned: n, StateDir: stateDir})
+}
+
 func runRunsPrune(w io.Writer, all, yes bool) error {
 	stateDir := runstore.ResolveStateDir(gf.stateDir)
 	switch {
@@ -207,18 +231,25 @@ func runRunsPrune(w io.Writer, all, yes bool) error {
 	store, err := runstore.OpenReadOnly(stateDir)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if gf.output == "json" {
+				return emitRunsPruneJSON(w, 0, stateDir)
+			}
 			fmt.Fprintf(w, "No state-dir at %s; nothing to prune.\n", stateDir)
 			return nil
 		}
 		return exitcode.Wrap(exitcode.Env, err)
 	}
 	opts := retentionOpts()
+	opts.Warn = func(msg string) { fmt.Fprintln(os.Stderr, "warning:", msg) }
 	if all {
 		opts.All = true
 	}
 	n, err := store.Prune(opts)
 	if err != nil {
 		return exitcode.Wrap(exitcode.Env, err)
+	}
+	if gf.output == "json" {
+		return emitRunsPruneJSON(w, n, stateDir)
 	}
 	noun := "runs"
 	if n == 1 {

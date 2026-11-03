@@ -59,9 +59,9 @@ end-to-end + on-disk cache + `tkn-act cache` subcommands):
   **`--cluster-resolver-context=<ctx>`** (Phase 4) opts the
   off-by-default `cluster` resolver in by naming the kubeconfig
   context to read from, and **`--cluster-resolver-kubeconfig=<path>`**
-  overrides the kubeconfig path. Setting either flag implicitly flips
-  the registry's `AllowCluster=true` so the cluster resolver registers
-  in the default registry. **`--remote-resolver-context=<ctx>`**
+  overrides the kubeconfig path. Setting either flag adds `cluster` to
+  the effective allow-list (for both `run` and `validate`) and
+  registers the cluster resolver — no `--resolver-allow` edit needed. **`--remote-resolver-context=<ctx>`**
   (Phase 5) flips the registry into Mode B; pair with
   `--remote-resolver-namespace=<ns>` (default `default`) and
   `--remote-resolver-timeout=<duration>` (default `60s`) to control
@@ -79,8 +79,8 @@ end-to-end + on-disk cache + `tkn-act cache` subcommands):
 |---|---|---|---|
 | `inline` | shipped (test harness) | `name` | Magic test resolver. The test harness preloads `(name → bytes)` pairs and the engine looks them up. |
 | `git` | shipped (Phase 2) | `url` (req), `revision` (default `main`), `pathInRepo` (req) | Shallow clone via `go-git/v5`. Cache layout: `<--resolver-cache-dir>/git/<sha256(url+revision)>/repo/`. SSH delegation honors `ssh-agent`. |
-| `hub` | shipped (Phase 3), **gap: Artifact Hub** | `name` (req), `version` (default `latest`), `kind` (default `task`), `catalog` (default `tekton`), `type` (`tekton`; see below) | HTTPS GET to `<BaseURL>/v1/resource/<catalog>/<kind>/<name>/<version>/yaml`. Default BaseURL `https://api.hub.tekton.dev`. HTTPS-only (no opt-out for hub). 5xx retries once. Bearer token via `HubOptions.Token` library API; the standard `--resolver-config` file is read for `hub.token`. **`type` divergence:** upstream Tekton (v1.15) defaults `type` to `artifact` (Artifact Hub) and deprecates `tekton`. tkn-act only implements the Tekton Hub API: `type: tekton` works, `type: artifact` fails with `hub: artifact hub not supported yet, set type: tekton`, and an **unset** `type` keeps the Tekton Hub behavior (unlike upstream). |
-| `http` | shipped (Phase 3) | `url` (req) | Plain HTTPS GET. 5xx retries once. HTTPS-only by default; `--resolver-allow-insecure-http` opts plain http:// non-loopback URLs in (loopback — an IP literal in 127.0.0.0/8, `::1`, or `localhost` — always allowed for unit tests with `httptest.NewServer`). Bearer token via `HTTPOptions.Token` (library) or env `TKN_ACT_HTTP_RESOLVER_TOKEN` (legacy name `TKNACT_HTTP_RESOLVER_TOKEN` still honored as a fallback). |
+| `hub` | shipped (Phase 3), **gap: Artifact Hub** | `name` (req), `version` (default `latest`), `kind` (default `task`), `catalog` (default `tekton`), `type` (`tekton`; see below) | HTTPS GET to `<BaseURL>/v1/resource/<catalog>/<kind>/<name>/<version>/yaml`. Default BaseURL `https://api.hub.tekton.dev`. HTTPS-only (no opt-out for hub). 5xx retries once. Bearer token via `--resolver-config` (`hub.token`; see below) or the `HubOptions.Token` library API. **`type` divergence:** upstream Tekton (v1.15) defaults `type` to `artifact` (Artifact Hub) and deprecates `tekton`. tkn-act only implements the Tekton Hub API: `type: tekton` works, `type: artifact` fails with `hub: artifact hub not supported yet, set type: tekton`, and an **unset** `type` keeps the Tekton Hub behavior (unlike upstream). |
+| `http` | shipped (Phase 3) | `url` (req) | Plain HTTPS GET. 5xx retries once. HTTPS-only by default; `--resolver-allow-insecure-http` opts plain http:// non-loopback URLs in (loopback — an IP literal in 127.0.0.0/8, `::1`, or `localhost` — always allowed for unit tests with `httptest.NewServer`). Bearer token via `--resolver-config` (`http.token`, wins), `HTTPOptions.Token` (library), or env `TKN_ACT_HTTP_RESOLVER_TOKEN` (legacy name `TKNACT_HTTP_RESOLVER_TOKEN` still honored as a fallback). |
 | `bundles` | shipped (Phase 4) | `bundle` (req — OCI ref like `gcr.io/foo/bar:v1`), `name` (req — resource `metadata.name` to extract), `kind` (default `task`) | Pulls a Tekton OCI bundle via `go-containerregistry`. Walks layers in declaration order, matches on the conventional `dev.tekton.image.{name,kind,apiVersion}` annotations, and returns the YAML embedded in the matching layer's tar. HTTPS-only by default; loopback registries always permit HTTP (so unit tests with `pkg/registry` work); `--resolver-allow-insecure-http` extends that to non-loopback registries. Auth honors `~/.docker/config.json` via `authn.DefaultKeychain`. |
 | `cluster` | shipped (Phase 4) — **OFF BY DEFAULT** | `name` (req), `kind` (default `task`, also accepts `pipeline`), `namespace` (default `default`) | Reads from the user's KUBECONFIG via the kube dynamic client. Strips server-side bookkeeping (`status`, `metadata.uid`/`resourceVersion`/`generation`/`creationTimestamp`/`managedFields`) before serializing back to YAML. **Off by default in `NewDefaultRegistry`** — `KUBECONFIG` may point at production. Opt-in either by adding `cluster` to `--resolver-allow` or by setting `--cluster-resolver-context=<ctx>` (which also names the kubeconfig context). Both require explicit user consent before the resolver registers. |
 
@@ -92,6 +92,17 @@ host:port, response bodies over 10 MiB are rejected, and URLs echoed in
 (`https://***@host/path?REDACTED`). `bundles` caps a layer's extracted
 YAML at 10 MiB and only matches layers that carry the
 `dev.tekton.image.kind` annotation the Tekton bundle contract requires.
+
+`--resolver-config <file>` (YAML or JSON) carries per-resolver
+credentials. Only these keys are read; any other key is rejected
+(exit 2) so a typo can't silently drop a token:
+
+```yaml
+hub:
+  token: <bearer token sent to the hub API>
+http:
+  token: <bearer token for the http resolver; overrides TKN_ACT_HTTP_RESOLVER_TOKEN>
+```
 
 Failure surfaces as `task-end` `status: "failed"` with `message: "resolver: hub: ..."` / `"resolver: http: ..."` / `"resolver: bundles: ..."` / `"resolver: cluster: ..."`, which routes through the standard pipeline-failure exit code (5).
 

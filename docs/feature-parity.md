@@ -179,7 +179,7 @@ The columns:
 | `tkn-act doctor -o json` | shipped | Stable shape. |
 | `tkn-act help-json` | shipped | Stable shape. |
 | `tkn-act agent-guide` | shipped | Embeds the `cmd/tkn-act/agentguide_data/` tree generated from `docs/agent-guide/`. Supports `--list` and `--section <name>`. |
-| `tkn-act run -o json` event stream | shipped | Stable kinds: `run-start`, `run-end`, `task-start`, `task-end`, `task-skip`, `task-retry`, `step-start`, `step-end`, `step-log`, `error`, `resolver-start`, `resolver-end`. The two `resolver-*` kinds are additive (Track 1 #9 Phase 1); agents that don't recognize them ignore them. |
+| `tkn-act run -o json` event stream | shipped | Stable kinds: `run-start`, `run-end`, `task-start`, `task-end`, `task-skip`, `task-retry`, `step-start`, `step-end`, `step-log`, `error`, `resolver-start`, `resolver-end`, `sidecar-start`, `sidecar-end`, `sidecar-log`, `debug`. The `resolver-*`, `sidecar-*` and `debug` kinds are additive; agents that don't recognize them ignore them. `step-start` / `step-end` are reserved but not currently emitted (gap; see docs/superpowers/specs/2026-11-03-audit-and-tekton-v1.15-design.md non-goals). |
 | Stable exit codes (0,1,2,3,4,5,6,130) | shipped | See `internal/exitcode/exitcode.go`. |
 | `task-retry` events from cluster mode | shipped | Post-hoc from TaskRun.status.retriesStatus; PR #6. |
 

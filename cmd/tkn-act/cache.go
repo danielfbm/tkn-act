@@ -62,7 +62,7 @@ Subcommands: list, prune, clear.`,
   # Wipe everything (-y required for non-interactive use)
   tkn-act cache clear -y`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
+			return helpOrGroupJSON(cmd)
 		},
 	}
 

@@ -29,7 +29,12 @@ func openRunRecord(warnSink io.Writer, stateDir, pipelineName string, args []str
 		fmt.Fprintf(warnSink, "warning: state-dir %s: %v (run will not be persisted)\n", stateDir, err)
 		return nil
 	}
-	if _, err := store.Prune(retentionOpts()); err != nil {
+	// Reserve one KeepRuns slot for the run about to be recorded so the
+	// store holds exactly TKN_ACT_KEEP_RUNS runs afterwards (not N+1).
+	opts := retentionOpts()
+	opts.Reserve = 1
+	opts.Warn = func(msg string) { fmt.Fprintf(warnSink, "warning: retention prune: %s\n", msg) }
+	if _, err := store.Prune(opts); err != nil {
 		fmt.Fprintf(warnSink, "warning: retention prune: %v\n", err)
 	}
 	r, err := store.NewRun(time.Now(), pipelineName, args)
@@ -62,8 +67,10 @@ func envInt(name string, def int) int {
 }
 
 // finalizeRun records the run's terminal state in meta.json and
-// index.json. status is "succeeded" when retErr is nil, otherwise
-// "failed"; exit code is derived via exitcode.From. Finalize errors
+// index.json. status is "succeeded" when retErr is nil; otherwise it
+// mirrors the run-end status implied by the exit code ("cancelled" for
+// 130, "timeout" for 6, "failed" for anything else); exit code is
+// derived via exitcode.From. Finalize errors
 // are reported to warnSink so the user knows the on-disk record is
 // incomplete; the calling run's exit code is unchanged either way.
 func finalizeRun(warnSink io.Writer, run *runstore.Run, retErr error) {
@@ -71,7 +78,14 @@ func finalizeRun(warnSink io.Writer, run *runstore.Run, retErr error) {
 	code := 0
 	if retErr != nil {
 		code = exitcode.From(retErr)
-		status = "failed"
+		switch code {
+		case exitcode.Cancelled:
+			status = "cancelled"
+		case exitcode.Timeout:
+			status = "timeout"
+		default:
+			status = "failed"
+		}
 	}
 	if err := run.Finalize(time.Now(), code, status); err != nil {
 		fmt.Fprintf(warnSink, "warning: finalize run record: %v\n", err)
