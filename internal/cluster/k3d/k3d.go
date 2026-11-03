@@ -12,15 +12,28 @@ import (
 	"github.com/danielfbm/tkn-act/internal/cmdrunner"
 )
 
+// DefaultK3sImage is the k3s node image `k3d cluster create` uses.
+// Pinned explicitly so the Kubernetes version doesn't drift with the
+// default baked into whichever k3d binary is installed. Keep it inside
+// the Kubernetes range the default Tekton release
+// (tekton.DefaultTektonVersion, v1.15.5: requires >=1.28, tests
+// 1.29-1.34) is tested against, and bump KUBECTL_VERSION in the
+// Makefile and .github/workflows/cluster-integration.yml to the same
+// minor.
+const DefaultK3sImage = "rancher/k3s:v1.34.12-k3s1"
+
 type Options struct {
 	ClusterName    string
 	KubeconfigPath string
-	Runner         cmdrunner.Runner
+	// Image is the k3s node image; empty means DefaultK3sImage.
+	Image  string
+	Runner cmdrunner.Runner
 }
 
 type Driver struct {
 	name    string
 	kubecfg string
+	image   string
 	runner  cmdrunner.Runner
 }
 
@@ -31,7 +44,10 @@ func New(opt Options) *Driver {
 	if opt.ClusterName == "" {
 		opt.ClusterName = "tkn-act"
 	}
-	return &Driver{name: opt.ClusterName, kubecfg: opt.KubeconfigPath, runner: opt.Runner}
+	if opt.Image == "" {
+		opt.Image = DefaultK3sImage
+	}
+	return &Driver{name: opt.ClusterName, kubecfg: opt.KubeconfigPath, image: opt.Image, runner: opt.Runner}
 }
 
 func (d *Driver) Name() string       { return d.name }
@@ -71,6 +87,7 @@ func (d *Driver) Ensure(ctx context.Context) error {
 	}
 	if !exists {
 		_, err := d.runner.Output(ctx, "k3d", "cluster", "create", d.name,
+			"--image", d.image,
 			"--no-lb", "--wait", "--timeout", "120s",
 			"--k3s-arg", "--disable=traefik@server:0",
 		)
