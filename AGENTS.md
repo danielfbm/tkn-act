@@ -136,7 +136,9 @@ outside `vendor/`, it must also modify or add at least one `*_test.go` file.
 
 This rule is enforced in CI by `.github/scripts/tests-required.sh` (run as
 the `tests-required` job in `.github/workflows/ci.yml`). The script fails
-the PR if the diff has Go code changes without an accompanying test change.
+the PR if its own diff (`git merge-base base head`..head, so changes that
+landed on the target branch after the fork don't count) has Go code
+changes without an accompanying test change.
 
 For genuinely test-immune changes (dependency bumps, doc typos in Go
 comments, regenerated boilerplate, generated stubs), include the literal
@@ -153,7 +155,8 @@ this as a hard precondition for opening a PR.
 The `coverage` job in `.github/workflows/ci.yml` runs
 `.github/scripts/coverage-check.sh` on every PR. It runs
 `go test -cover -count=1 ./...` (default test set, no build tags) on both
-the PR's base SHA and head SHA, then compares per-package: if any package
+the PR's merge-base with the target branch (the commit it forked from)
+and head SHA, then compares per-package: if any package
 on HEAD has lower coverage than on BASE by more than 0.5 percentage points,
 the gate fails and prints a per-package table showing the drop. The 0.5pp
 tolerance absorbs `go test -cover` measurement noise (goroutine scheduling

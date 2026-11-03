@@ -31,7 +31,7 @@ Seven workflows live under `.github/workflows/`:
 ### Coverage gate
 
 `coverage` (in `ci.yml`, PR-only) runs
-`.github/scripts/coverage-check.sh` against the PR's base and head SHAs.
+`.github/scripts/coverage-check.sh` against the PR's merge-base (with the target branch) and head SHAs.
 The script:
 
 1. Checks each ref out into a detached worktree.
