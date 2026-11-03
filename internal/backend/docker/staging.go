@@ -536,6 +536,16 @@ func tarHostDir(hostDir string) (io.Reader, error) {
 // can't redirect a subsequent file write outside the destination.
 func untarToDir(r io.Reader, dstDir, stripPrefix string) error {
 	cleanRoot := filepath.Clean(dstDir)
+	// Every filesystem mutation goes through an os.Root so the kernel
+	// path walk refuses to traverse a symlink that resolves outside
+	// dstDir. The lexical pathContainedIn checks below can't see that:
+	// a tar carrying `l2 -> .`, `l1 -> l2/..` and then `l1/evil` passes
+	// every lexical check yet would write evil into dstDir's parent.
+	root, err := os.OpenRoot(cleanRoot)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
 	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
@@ -572,18 +582,22 @@ func untarToDir(r io.Reader, dstDir, stripPrefix string) error {
 		if !pathContainedIn(target, cleanRoot) {
 			continue
 		}
+		rel, err := filepath.Rel(cleanRoot, filepath.Clean(target))
+		if err != nil || rel == "." {
+			continue
+		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, os.FileMode(hdr.Mode)&0o777); err != nil {
-				return err
+			if err := root.MkdirAll(rel, os.FileMode(hdr.Mode)&0o777); err != nil {
+				return fmt.Errorf("extract %q: %w", name, err)
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
+			if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
+				return fmt.Errorf("extract %q: %w", name, err)
 			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&0o777)
+			f, err := root.OpenFile(rel, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&0o777)
 			if err != nil {
-				return err
+				return fmt.Errorf("extract %q: %w", name, err)
 			}
 			if _, err := io.Copy(f, tr); err != nil {
 				_ = f.Close()
@@ -597,7 +611,10 @@ func untarToDir(r io.Reader, dstDir, stripPrefix string) error {
 			// and ensure that resolved path stays inside the dstDir.
 			// Absolute Linknames and relative ones both go through
 			// filepath.Join so an Linkname like "../../etc/passwd"
-			// gets the same prefix check as the entry name.
+			// gets the same prefix check as the entry name. This check
+			// is lexical only; link chains that really resolve outside
+			// (`l1 -> l2/..` with `l2 -> .`) are stopped by the os.Root
+			// walk on any later write through them.
 			linkResolved := hdr.Linkname
 			if !filepath.IsAbs(linkResolved) {
 				linkResolved = filepath.Join(filepath.Dir(target), linkResolved)
@@ -605,12 +622,12 @@ func untarToDir(r io.Reader, dstDir, stripPrefix string) error {
 			if !pathContainedIn(linkResolved, cleanRoot) {
 				continue
 			}
-			_ = os.Remove(target)
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
+			_ = root.Remove(rel)
+			if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
+				return fmt.Errorf("extract %q: %w", name, err)
 			}
-			if err := os.Symlink(hdr.Linkname, target); err != nil {
-				return err
+			if err := root.Symlink(hdr.Linkname, rel); err != nil {
+				return fmt.Errorf("extract %q: %w", name, err)
 			}
 		}
 	}
