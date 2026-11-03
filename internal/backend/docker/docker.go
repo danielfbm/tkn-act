@@ -657,31 +657,12 @@ func (b *Backend) runStep(ctx context.Context, inv backend.TaskInvocation, step 
 		}
 	}
 
-	// Workspace mounts. Remote mode subpaths into workspaces/<wsName>
-	// keyed by the Pipeline workspace name so writes from Task A are
-	// visible to Task B (the PVC-equivalent semantics). The host-path
-	// reverse lookup is what joins inv.Workspaces[tName].HostPath
-	// (Task-local key) to the Pipeline name buckets in the volume.
-	for tName, wm := range inv.Workspaces {
-		if b.remote {
-			pipelineName, ok := b.pipelineWorkspaceName(wm.HostPath)
-			if !ok {
-				return 0, fmt.Errorf("step %q workspace %q: cannot map host path %q to a Pipeline workspace name", step.Name, tName, wm.HostPath)
-			}
-			extraMounts = append(extraMounts, b.remoteVolumeMount(
-				"/workspace/"+tName,
-				filepath.Join(stageWorkspaces, pipelineName),
-				wm.ReadOnly,
-			))
-		} else {
-			extraMounts = append(extraMounts, mount.Mount{
-				Type:     mount.TypeBind,
-				Source:   wm.HostPath,
-				Target:   "/workspace/" + tName,
-				ReadOnly: wm.ReadOnly,
-			})
-		}
+	// Workspace mounts (mountPath / readOnly / subPath honoured).
+	wsMounts, err := b.workspaceMounts(ctx, inv, fmt.Sprintf("step %q", step.Name))
+	if err != nil {
+		return 0, err
 	}
+	extraMounts = append(extraMounts, wsMounts...)
 
 	// Task-level results mount.
 	if b.remote {

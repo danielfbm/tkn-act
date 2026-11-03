@@ -248,6 +248,21 @@ type WorkspaceDecl struct {
 	Optional    bool   `json:"optional,omitempty"`
 }
 
+// DefaultWorkspaceMountPath is where Tekton mounts a Task workspace
+// that declares no mountPath.
+func DefaultWorkspaceMountPath(name string) string {
+	return "/workspace/" + name
+}
+
+// EffectiveMountPath is the in-container path of the workspace: the
+// declared mountPath, or /workspace/<name> when unset.
+func (d WorkspaceDecl) EffectiveMountPath() string {
+	if d.MountPath != "" {
+		return d.MountPath
+	}
+	return DefaultWorkspaceMountPath(d.Name)
+}
+
 // ---- Pipeline ----
 
 type Pipeline struct {

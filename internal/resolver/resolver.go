@@ -35,6 +35,11 @@ type Context struct {
 	// CurrentStep is the step being resolved; required to resolve
 	// $(step.results.<name>.path) to /tekton/steps/<step>/results/<name>.
 	CurrentStep string
+	// WorkspacePaths maps a Task workspace name to its in-container
+	// mount path (the declared mountPath). Names absent from the map
+	// resolve $(workspaces.<name>.path) to Tekton's default
+	// /workspace/<name>.
+	WorkspacePaths map[string]string
 }
 
 // First char allows digits to align with RFC 1123 names (Tekton accepts
@@ -341,6 +346,9 @@ func lookup(key string, ctx Context) (string, error) {
 		rest := strings.TrimPrefix(key, "workspaces.")
 		if strings.HasSuffix(rest, ".path") {
 			name := strings.TrimSuffix(rest, ".path")
+			if p, ok := ctx.WorkspacePaths[name]; ok && p != "" {
+				return p, nil
+			}
 			return "/workspace/" + name, nil
 		}
 		return "", fmt.Errorf("unknown workspaces ref %q", key)

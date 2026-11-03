@@ -597,6 +597,7 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 		ContextVars:  rctx.ContextVars,
 	}
 
+	taskCtx.WorkspacePaths = workspaceMountPaths(spec.Workspaces)
 	// Substitute throughout the resolved Task spec.
 	resolved := substituteSpec(spec, taskCtx)
 

@@ -94,6 +94,19 @@ func TestWorkspacePath(t *testing.T) {
 	}
 }
 
+// TestWorkspacePathHonoursMountPath: a Task workspace's declared
+// mountPath wins over the /workspace/<name> default.
+func TestWorkspacePathHonoursMountPath(t *testing.T) {
+	ctx := resolver.Context{WorkspacePaths: map[string]string{"src": "/custom/src"}}
+	got, err := resolver.Substitute("$(workspaces.src.path) $(workspaces.other.path)", ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "/custom/src /workspace/other" {
+		t.Errorf("got %q", got)
+	}
+}
+
 // TestResolveTaskResultArrayStar pins the resolver extension that
 // matrix-fanned task-result aggregation depends on. Tekton writes
 // the per-expansion string results as a JSON-array literal under

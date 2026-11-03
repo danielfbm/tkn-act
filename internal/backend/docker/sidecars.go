@@ -221,30 +221,15 @@ func (b *Backend) startOneSidecar(ctx context.Context, inv backend.TaskInvocatio
 		}
 	}
 
-	// Workspace mounts — same path layout as Steps so a sidecar
-	// can co-operate with the Task on the workspace. Remote mode
-	// subpaths into the same Pipeline-name buckets as Steps so a
-	// sidecar's writes are visible to subsequent Tasks too.
-	for tName, wm := range inv.Workspaces {
-		if b.remote {
-			pipelineName, ok := b.pipelineWorkspaceName(wm.HostPath)
-			if !ok {
-				return "", nil, fmt.Errorf("sidecar %q workspace %q: cannot map host path %q to a Pipeline workspace name", sc.Name, tName, wm.HostPath)
-			}
-			extraMounts = append(extraMounts, b.remoteVolumeMount(
-				"/workspace/"+tName,
-				filepath.Join(stageWorkspaces, pipelineName),
-				wm.ReadOnly,
-			))
-		} else {
-			extraMounts = append(extraMounts, mount.Mount{
-				Type:     mount.TypeBind,
-				Source:   wm.HostPath,
-				Target:   "/workspace/" + tName,
-				ReadOnly: wm.ReadOnly,
-			})
-		}
+	// Workspace mounts — same layout as Steps (mountPath, readOnly,
+	// subPath) so a sidecar can co-operate with the Task on the
+	// workspace, and in remote mode its writes land in the same
+	// Pipeline-name buckets so subsequent Tasks see them.
+	wsMounts, err := b.workspaceMounts(ctx, inv, fmt.Sprintf("sidecar %q", sc.Name))
+	if err != nil {
+		return "", nil, err
 	}
+	extraMounts = append(extraMounts, wsMounts...)
 
 	// Sidecar volumeMounts from the Task's volumes set.
 	for _, vm := range sc.VolumeMounts {
