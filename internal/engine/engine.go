@@ -666,7 +666,7 @@ func (e *Engine) runOne(ctx context.Context, in PipelineInput, pl tektontypes.Pi
 	// not apply it. Apply it around the backend call instead.
 	runCtx := ctx
 	var lazyTimeout time.Duration
-	if pt.TaskRef != nil && pt.TaskRef.Resolver != "" && resolved.Timeout != "" {
+	if pt.TaskRef != nil && pt.TaskRef.Resolver != "" && pt.Timeout == "" && resolved.Timeout != "" {
 		d, perr := time.ParseDuration(resolved.Timeout)
 		if perr != nil {
 			return TaskOutcome{Status: "failed", Message: fmt.Sprintf("task timeout %q: %v", resolved.Timeout, perr)}

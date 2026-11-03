@@ -1099,3 +1099,36 @@ func TestBuildPipelineRunInlinesMatrix(t *testing.T) {
 		t.Fatalf("matrix.params len = %d (want 1), value = %v", len(params), matrix["params"])
 	}
 }
+
+// TestBuildPipelineRunKeepsPipelineTaskTimeout: Tekton v1's
+// PipelineTask.timeout must survive into the submitted PipelineRun and
+// win over a Task.spec.timeout being hoisted onto the same task.
+func TestBuildPipelineRunKeepsPipelineTaskTimeout(t *testing.T) {
+	be, _, _, _, _ := fakeBackend(t)
+
+	pl := tektontypes.Pipeline{Spec: tektontypes.PipelineSpec{
+		Tasks: []tektontypes.PipelineTask{{Name: "a", TaskRef: &tektontypes.TaskRef{Name: "t"}, Timeout: "2s"}},
+	}}
+	pl.Metadata.Name = "p"
+	tk := tektontypes.Task{Spec: tektontypes.TaskSpec{
+		Timeout: "1m",
+		Steps:   []tektontypes.Step{{Name: "s", Image: "alpine:3", Script: "sleep 30"}},
+	}}
+	tk.Metadata.Name = "t"
+
+	prObj, err := be.BuildPipelineRunObject(backend.PipelineRunInvocation{
+		RunID: "12345678", PipelineRunName: "p-12345678",
+		Pipeline: pl, Tasks: map[string]tektontypes.Task{"t": tk},
+	}, "tkn-act-12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	un := prObj.(*unstructured.Unstructured)
+	tasks, _, _ := unstructured.NestedSlice(un.Object, "spec", "pipelineSpec", "tasks")
+	if len(tasks) != 1 {
+		t.Fatalf("want 1 task, got %d", len(tasks))
+	}
+	if got := tasks[0].(map[string]any)["timeout"]; got != "2s" {
+		t.Errorf("pipelineSpec.tasks[0].timeout = %v, want \"2s\" (PipelineTask.timeout wins)", got)
+	}
+}

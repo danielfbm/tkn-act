@@ -127,3 +127,35 @@ func anyErrContains(errs []error, sub string) bool {
 	}
 	return false
 }
+
+func TestPipelineTaskTimeoutValidated(t *testing.T) {
+	for _, tc := range []struct{ val, want string }{
+		{"not-a-duration", "invalid timeout"},
+		{"-1s", "must not be negative"},
+		{"30s", ""},
+		{"0s", ""},
+	} {
+		b, _ := loader.LoadBytes([]byte(`
+apiVersion: tekton.dev/v1
+kind: Task
+metadata: {name: t}
+spec:
+  steps: [{name: s, image: alpine, script: 'true'}]
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata: {name: p}
+spec:
+  tasks:
+    - {name: a, taskRef: {name: t}, timeout: "` + tc.val + `"}
+`))
+		errs := validator.Validate(b, "p", nil)
+		if tc.want == "" {
+			if anyErrContains(errs, "timeout") {
+				t.Errorf("timeout %q: unexpected error: %v", tc.val, errs)
+			}
+		} else if !anyErrContains(errs, tc.want) {
+			t.Errorf("timeout %q: want error containing %q, got %v", tc.val, tc.want, errs)
+		}
+	}
+}

@@ -453,6 +453,11 @@ type PipelineTask struct {
 	// Retries is the number of additional attempts after the first failure.
 	// 0 (or unset) means run once.
 	Retries int `json:"retries,omitempty"`
+	// Timeout is Tekton v1's PipelineTask.timeout: the wall clock for
+	// one attempt of the TaskRun (Go duration string). It takes
+	// precedence over the tkn-act Task.spec.timeout extension. "0s"
+	// means no timeout, as in Tekton.
+	Timeout string `json:"timeout,omitempty"`
 	// Matrix declares a Cartesian-product fan-out of this PipelineTask
 	// across one or more named string-list params, with optional named
 	// `include` rows. Mirrors Tekton v1 PipelineTask.matrix.

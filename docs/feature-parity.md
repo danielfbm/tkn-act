@@ -132,7 +132,7 @@ The columns:
 |---|---|---|---|---|---|---|
 | `Step.onError: continue` | `Step.onError` | shipped | both | onerror | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
 | `PipelineTask.retries` | `PipelineTask.retries` | shipped | both | retries | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
-| `Task.spec.timeout` (per-task wall clock) | `TaskSpec.timeout` | shipped | both | timeout | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md |
+| `Task.spec.timeout` / `PipelineTask.timeout` (per-task wall clock) | `TaskSpec.timeout`, `PipelineTask.timeout` | shipped | both | timeout | none | docs/superpowers/specs/2026-05-02-tkn-act-docker-fidelity-design.md; `PipelineTask.timeout` (Tekton v1's canonical field) was silently dropped before the 2026-11-03 audit — now parsed, validated, and wins over the Task-level value on both backends. |
 
 ### Pipeline policy
 

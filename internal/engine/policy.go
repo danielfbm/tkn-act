@@ -110,11 +110,16 @@ func withMaybeTimeout(parent context.Context, d time.Duration) (context.Context,
 	return context.WithTimeout(parent, d)
 }
 
-// taskTimeoutFor returns the resolved task timeout. The PipelineTask itself
-// doesn't carry a timeout in v1.2 — it lives on the resolved TaskSpec, so we
-// have to look it up. Resolver-backed taskRefs return 0 here: their spec
+// taskTimeoutFor returns the effective task timeout: PipelineTask.timeout
+// when set, else the resolved TaskSpec's timeout. Resolver-backed taskRefs return 0 here: their spec
 // is fetched lazily inside runOne, which applies the timeout itself.
 func taskTimeoutFor(in PipelineInput, pt tektontypes.PipelineTask) (time.Duration, error) {
+	// Tekton v1 PipelineTask.timeout wins over the Task-level value
+	// (the cluster backend applies the same precedence when it hoists
+	// Task.spec.timeout onto the inlined PipelineTask).
+	if pt.Timeout != "" {
+		return time.ParseDuration(pt.Timeout)
+	}
 	var spec tektontypes.TaskSpec
 	switch {
 	case pt.TaskSpec != nil:

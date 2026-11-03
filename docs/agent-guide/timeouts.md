@@ -5,6 +5,7 @@ and exit code 6:
 
 | Field | Scope | Where |
 |---|---|---|
+| `PipelineTask.timeout` (per-task, Tekton v1) | Wall clock for one attempt of that pipeline task; retries reset it. Wins over `Task.spec.timeout`. `0s` = no timeout. | v1.x (2026-11) |
 | `Task.spec.timeout` (per-task) | Wall clock for one Task attempt; retries reset it. | v1.2 |
 | `Pipeline.spec.timeouts.pipeline` | Whole-run wall clock (tasks + finally). | v1.3 |
 | `Pipeline.spec.timeouts.tasks` | Wall clock for the tasks DAG only. | v1.3 |
@@ -26,6 +27,10 @@ run. The run-end status is `cancelled`.
 
 `Task.spec.timeout` also applies to tasks fetched by a resolver
 (`taskRef.resolver`). The timeout is read from the fetched Task.
+
+When both are set, `PipelineTask.timeout` wins over the Task's own
+`spec.timeout` on both backends (the cluster backend submits it as the
+PipelineTask's `timeout`, which is where Tekton reads it).
 
 `tasks` and `finally` are independent budgets — exhausting `tasks` does not
 shorten `finally`, and vice versa.

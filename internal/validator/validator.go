@@ -327,6 +327,18 @@ func validateCore(b *loader.Bundle, pipelineName string, providedParams map[stri
 		}
 	}
 
+	// 8a. PipelineTask.timeout (Tekton v1): parseable, non-negative.
+	for _, pt := range all {
+		if pt.Timeout == "" {
+			continue
+		}
+		if d, err := time.ParseDuration(pt.Timeout); err != nil {
+			errs = append(errs, fmt.Errorf("pipeline task %q: invalid timeout %q: %v", pt.Name, pt.Timeout, err))
+		} else if d < 0 {
+			errs = append(errs, fmt.Errorf("pipeline task %q: timeout must not be negative, got %q", pt.Name, pt.Timeout))
+		}
+	}
+
 	// 8b. Pipeline-level timeouts: parseable, positive, and tasks+finally ≤ pipeline.
 	if t := pl.Spec.Timeouts; t != nil {
 		var pdur, tdur, fdur time.Duration
